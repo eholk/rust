@@ -1,0 +1,34 @@
+// An incomplete graph of what objects hold references to what
+// objects. This should either be a DAG or we should have special
+// handling in place to break cycles.
+
+// Solid lines indicate a ref counting reference, dashed lines are
+// non-ref counting references. The solid lines should be acyclic (or
+// care should be taken care to break the cycles), and the lifetime
+// for dashed references needs to be contained by a dotted
+// reference. I think this more or less means that cycles including
+// dashed lines need to be dominated by some incoming solid line.
+
+digraph "Rust Runtime Reference Structure" {
+    rust_kernel -> rust_scheduler;
+    rust_kernel -> "rust_handle<rust_task>" [style=dashed];
+    rust_message_queue -> "rust_handle<rust_task>";
+    "rust_handle<rust_task>" -> rust_task;
+    rust_task -> rust_message_queue [style=dashed];
+    rust_scheduler -> rust_task;
+    "maybe_proxy<rust_task>" -> rust_task [style=dashed];
+    "rust_proxy<rust_task>" -> "rust_handle<rust_task>" [style=dashed];
+    rust_task -> rust_scheduler [style=dashed];
+    rust_crate_cache -> rust_scheduler [style=dashed];
+    rust_scheduler -> rust_crate_cache [style=dashed];
+    rust_scheduler -> rust_kernel [style=dashed];
+    // rust_timer is dead code for the moment.
+    rust_timer -> rust_scheduler [style=dashed];
+    rust_chan -> rust_scheduler [style=dashed];
+    rust_log -> rust_scheduler [style=dashed];
+    // The scheduler contains three of these, but not as references
+    rust_task_list -> rust_scheduler [style=dashed];
+    rust_message_queue -> rust_kernel [style=dashed];
+    "rust_handle<rust_task>" -> rust_message_queue [style=dashed];
+   
+}
