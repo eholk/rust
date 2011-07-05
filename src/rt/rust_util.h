@@ -7,7 +7,7 @@
 
 template <typename T>
 rc_base<T>::rc_base() :
-    ref_count(1)
+    ref_count(0)
 {
 }
 
