@@ -6,6 +6,7 @@
 #include "rust_srv.h"
 
 rust_srv::rust_srv() :
+    ref_count(0),
     local_region(this, false),
     synchronized_region(this, true) {
     // Nop.

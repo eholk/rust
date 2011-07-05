@@ -35,7 +35,7 @@ struct rust_scheduler : public kernel_owned<rust_scheduler>,
     // Fields known only by the runtime:
     rust_log _log;
     uint32_t log_lvl;
-    rust_srv *srv;
+    smart_ptr<rust_srv> srv;
     const char *const name;
 
     rust_task_list newborn_tasks;

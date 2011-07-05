@@ -18,7 +18,7 @@ rust_kernel::rust_kernel(rust_srv *srv) :
 
 void
 rust_kernel::create_scheduler(const char *name) {
-    rust_srv *srv = _srv->clone();
+    smart_ptr<rust_srv> srv = _srv->clone();
     sched = new (this) rust_scheduler(this, srv, name);
     sched->root_task = create_task(NULL, name);
     KLOG("created scheduler: " PTR ", name: %s, index: %d",
@@ -30,10 +30,8 @@ rust_kernel::destroy_scheduler() {
     _kernel_lock.lock();
     KLOG("deleting scheduler: " PTR ", name: %s, index: %d",
          (rust_scheduler*)sched, sched->name, sched->list_index);
-    rust_srv *srv = sched->srv;
     sched->root_task = NULL;
     sched = NULL;
-    delete srv;
     _kernel_lock.signal_all();
     _kernel_lock.unlock();
 }
@@ -154,16 +152,16 @@ rust_kernel::~rust_kernel() {
 
     KLOG("freeing queues");
 
+    // Destroy scheduler must happen down here to make sure the cloned service
+    // lives long enough for all the logging to happen.
+    destroy_scheduler();
+
     rust_message_queue *queue = NULL;
     while (message_queues.pop(&queue)) {
         K(_srv, queue->is_empty(), "Kernel message queue should be empty "
           "before killing the kernel.");
         delete queue;
     }
-
-    // Destroy scheduler must happen down here to make sure the cloned service
-    // lives long enough for all the logging to happen.
-    destroy_scheduler();
 }
 
 void *

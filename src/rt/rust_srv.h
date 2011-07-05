@@ -1,3 +1,4 @@
+// -*- c++ -*-
 #ifndef RUST_SRV_H
 #define RUST_SRV_H
 
@@ -5,6 +6,7 @@
 
 class rust_srv {
 public:
+    RUST_REFCOUNTED(rust_srv);
     memory_region local_region;
     memory_region synchronized_region;
     virtual void log(char const *msg);

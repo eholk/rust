@@ -101,7 +101,7 @@ rust_start(uintptr_t main_fn, int argc, char **argv, void* crate_map) {
     update_log_settings(crate_map, getenv("RUST_LOG"));
     enable_claims(getenv("CHECK_CLAIMS"));
 
-    rust_srv *srv = new rust_srv();
+    smart_ptr<rust_srv> srv = new rust_srv();
     rust_kernel *kernel = new rust_kernel(srv);
     kernel->start();
     smart_ptr<rust_scheduler> sched = kernel->get_scheduler();
@@ -126,7 +126,7 @@ rust_start(uintptr_t main_fn, int argc, char **argv, void* crate_map) {
 
     delete args;
     delete kernel;
-    delete srv;
+    srv = NULL;
 
 #if !defined(__WIN32__)
     // Don't take down the process if the main thread exits without an
