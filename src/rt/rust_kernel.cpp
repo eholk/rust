@@ -13,25 +13,16 @@ rust_kernel::rust_kernel(rust_srv *srv) :
     _srv(srv),
     _interrupt_kernel_loop(FALSE) 
 {
-    sched = create_scheduler("main");
+    create_scheduler("main");
 }
 
-rust_scheduler *
+void
 rust_kernel::create_scheduler(const char *name) {
-    _kernel_lock.lock();
-    rust_message_queue *message_queue =
-        new (this) rust_message_queue(_srv, this);
     rust_srv *srv = _srv->clone();
-    rust_scheduler *sched =
-        new (this) rust_scheduler(this, message_queue, srv, name);
-    rust_handle<rust_scheduler> *handle = internal_get_sched_handle(sched);
-    message_queue->associate(handle);
-    message_queues.append(message_queue);
+    sched = new (this) rust_scheduler(this, srv, name);
+    sched->root_task = create_task(NULL, name);
     KLOG("created scheduler: " PTR ", name: %s, index: %d",
          sched, name, sched->list_index);
-    _kernel_lock.signal_all();
-    _kernel_lock.unlock();
-    return sched;
 }
 
 void
@@ -39,7 +30,6 @@ rust_kernel::destroy_scheduler() {
     _kernel_lock.lock();
     KLOG("deleting scheduler: " PTR ", name: %s, index: %d",
         sched, sched->name, sched->list_index);
-    sched->message_queue->disassociate();
     rust_srv *srv = sched->srv;
     delete sched;
     delete srv;
@@ -47,40 +37,23 @@ rust_kernel::destroy_scheduler() {
     _kernel_lock.unlock();
 }
 
-rust_handle<rust_scheduler> *
-rust_kernel::internal_get_sched_handle(rust_scheduler *sched) {
-    rust_handle<rust_scheduler> *handle = NULL;
-    if (_sched_handles.get(sched, &handle) == false) {
+rust_handle<rust_task> *
+rust_kernel::internal_get_task_handle(rust_task *task) {
+    rust_handle<rust_task> *handle = NULL;
+    if (_task_handles.get(task, &handle) == false) {
         handle =
-            new (this) rust_handle<rust_scheduler>(this,
-                                                   sched->message_queue,
-                                                   sched);
-        _sched_handles.put(sched, handle);
+            new (this) rust_handle<rust_task>(this,
+                                              task->message_queue,
+                                              task);
+        _task_handles.put(task, handle);
     }
-    return handle;
-}
-
-rust_handle<rust_scheduler> *
-rust_kernel::get_sched_handle(rust_scheduler *sched) {
-    _kernel_lock.lock();
-    rust_handle<rust_scheduler> *handle = internal_get_sched_handle(sched);
-    _kernel_lock.unlock();
     return handle;
 }
 
 rust_handle<rust_task> *
 rust_kernel::get_task_handle(rust_task *task) {
-    _kernel_lock.lock();
-    rust_handle<rust_task> *handle = NULL;
-    if (_task_handles.get(task, &handle) == false) {
-        handle =
-            new (this) rust_handle<rust_task>(this,
-                                              task->sched->message_queue,
-                                              task);
-        _task_handles.put(task, handle);
-    }
-    _kernel_lock.unlock();
-    return handle;
+    scoped_lock with(_kernel_lock);
+    return internal_get_task_handle(task);
 }
 
 rust_handle<rust_port> *
@@ -90,7 +63,7 @@ rust_kernel::get_port_handle(rust_port *port) {
     if (_port_handles.get(port, &handle) == false) {
         handle = new (this)
             rust_handle<rust_port>(this,
-                                   port->task->sched->message_queue,
+                                   port->task->message_queue,
                                    port);
         _port_handles.put(port, handle);
     }
@@ -245,6 +218,27 @@ int rust_kernel::start_task_threads(int num_threads)
     }
 
     return sched->rval;
+}
+
+rust_task *
+rust_kernel::create_task(rust_task *spawner, const char *name) {
+    rust_message_queue *message_queue =
+        new (this) rust_message_queue(_srv, this);
+
+    rust_task *task =
+        new (this) rust_task (this->sched, &sched->newborn_tasks, spawner, 
+                              name, message_queue);
+
+    rust_handle<rust_task> *handle = get_task_handle(task);
+    message_queue->associate(handle);
+    message_queues.append(message_queue);
+    
+    DLOG(this->sched, task, "created task: " PTR ", spawner: %s, name: %s",
+         task, spawner ? spawner->name : "null", name);
+    if(spawner)
+        task->pin(spawner->pinned_on);
+    sched->newborn_tasks.append(task);
+    return task;
 }
 
 #ifdef __WIN32__

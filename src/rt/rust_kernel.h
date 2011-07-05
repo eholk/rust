@@ -20,7 +20,8 @@ rust_handle :
 public:
     rust_kernel *kernel;
     rust_message_queue *message_queue;
-    T *_referent;
+    smart_ptr<T> _referent;
+
     T * referent() {
         return _referent;
     }
@@ -65,13 +66,12 @@ class rust_kernel : public rust_thread {
     void terminate_kernel_loop();
     void pump_message_queues();
 
-    rust_handle<rust_scheduler> *
-    internal_get_sched_handle(rust_scheduler *sched);
-
     array_list<rust_task_thread *> threads;
 
-    rust_scheduler *create_scheduler(const char *name);
+    void create_scheduler(const char *name);
     void destroy_scheduler();
+
+    rust_handle<rust_task> *internal_get_task_handle(rust_task *task);
 
 public:
     rust_scheduler *sched;
@@ -86,7 +86,6 @@ public:
      */
     indexed_list<rust_message_queue> message_queues;
 
-    rust_handle<rust_scheduler> *get_sched_handle(rust_scheduler *sched);
     rust_handle<rust_task> *get_task_handle(rust_task *task);
     rust_handle<rust_port> *get_port_handle(rust_port *port);
 
@@ -115,6 +114,8 @@ public:
     inline rust_scheduler *get_scheduler() const { return sched; }
 
     int start_task_threads(int num_threads);
+
+    rust_task *create_task(rust_task *spawner, const char *name);
 
 #ifdef __WIN32__
     void win32_require(LPCTSTR fn, BOOL ok);

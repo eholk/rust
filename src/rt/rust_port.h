@@ -4,6 +4,8 @@
 class rust_port : public maybe_proxy<rust_port>,
                   public task_owned<rust_port> {
 
+    bool receive_from_chan(rust_chan *chan, void *dptr);
+    
 public:
     rust_task *task;
     size_t unit_sz;
@@ -11,7 +13,7 @@ public:
     ptr_vec<rust_chan> chans;
 
     // Data sent to this port from remote tasks is buffered in this channel.
-    rust_chan *remote_channel;
+    smart_ptr<rust_chan> remote_channel;
 
     rust_port(rust_task *task, size_t unit_sz);
     ~rust_port();

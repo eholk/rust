@@ -33,12 +33,22 @@ rust_port::~rust_port() {
     delete remote_channel;
 }
 
+bool rust_port::receive_from_chan(rust_chan *chan, void *dptr) {
+    if (chan->buffer.is_empty() == false) {
+        chan->buffer.dequeue(dptr);
+        LOG(task, comm, "<=== read data ===");
+        return true;
+    }
+    return false;
+}
+
 bool rust_port::receive(void *dptr) {
+    if(receive_from_chan(remote_channel, dptr)) {
+        return true;
+    }
+
     for (uint32_t i = 0; i < chans.length(); i++) {
-        rust_chan *chan = chans[i];
-        if (chan->buffer.is_empty() == false) {
-            chan->buffer.dequeue(dptr);
-            LOG(task, comm, "<=== read data ===");
+        if(receive_from_chan(chans[i], dptr)) {
             return true;
         }
     }

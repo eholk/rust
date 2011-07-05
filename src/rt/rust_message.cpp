@@ -112,7 +112,7 @@ void data_message::kernel_process() {
 rust_message_queue::rust_message_queue(rust_srv *srv, rust_kernel *kernel) 
     : region(srv, true),
       kernel(kernel),
-      sched_handle(NULL) {
+      task_handle(NULL) {
     // Nop.
 }
 

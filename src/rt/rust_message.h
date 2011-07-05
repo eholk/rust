@@ -1,6 +1,8 @@
 #ifndef RUST_MESSAGE_H
 #define RUST_MESSAGE_H
 
+#include "sync/synchronized_queue.h"
+
 /**
  * Rust messages are used for inter-thread communication. They are enqueued
  * and allocated in the target domain.
@@ -88,35 +90,35 @@ public:
          rust_handle<rust_task> *source, rust_handle<rust_port> *port);
 };
 
-class rust_message_queue : public lock_free_queue<rust_message*>,
+class rust_message_queue : public synchronized_queue<rust_message*>,
                            public kernel_owned<rust_message_queue> {
 public:
     memory_region region;
     rust_kernel *kernel;
-    rust_handle<rust_scheduler> *sched_handle;
+    rust_handle<rust_task> *task_handle;
     int32_t list_index;
     rust_message_queue(rust_srv *srv, rust_kernel *kernel);
 
-    void associate(rust_handle<rust_scheduler> *sched_handle) {
-        this->sched_handle = sched_handle;
+    void associate(rust_handle<rust_task> *task_handle) {
+        this->task_handle = task_handle;
     }
 
     /**
-     * The Rust domain relinquishes control to the Rust kernel.
+     * The Rust task relinquishes control to the Rust kernel.
      */
     void disassociate() {
-        this->sched_handle = NULL;
+        this->task_handle = NULL;
     }
 
     /**
-     * Checks if a Rust domain is responsible for draining the message queue.
+     * Checks if a Rust task is responsible for draining the message queue.
      */
     bool is_associated() {
-        return this->sched_handle != NULL;
+        return this->task_handle != NULL;
     }
 
     void enqueue(rust_message* message) {
-        lock_free_queue<rust_message*>::enqueue(message);
+        synchronized_queue<rust_message *>::enqueue(message);
         kernel->notify_message_enqueued(this, message);
     }
 };

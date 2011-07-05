@@ -21,7 +21,7 @@ rust_chan::rust_chan(rust_task *task,
 }
 
 rust_chan::~rust_chan() {
-    LOG(task, comm, "del rust_chan(task=0x%" PRIxPTR ")", (uintptr_t) this);
+    LOG(task, comm, "del rust_chan(task=%p)", (uintptr_t) this);
 
     A(task->sched, is_associated() == false,
       "Channel must be disassociated before being freed.");

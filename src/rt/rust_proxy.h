@@ -24,15 +24,17 @@ public:
         return (T *)_referent;
     }
 
-    bool is_proxy() {
+    bool is_proxy() const {
         return _referent != this;
     }
 
-    rust_proxy<T> *as_proxy() {
+    rust_proxy<T> *as_proxy() const {
+        assert(is_proxy());
         return (rust_proxy<T> *) this;
     }
 
-    T *as_referent() {
+    T *as_referent() const {
+        assert(!is_proxy());
         return (T *) this;
     }
 };

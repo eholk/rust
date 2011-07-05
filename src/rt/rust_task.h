@@ -90,11 +90,15 @@ rust_task : public maybe_proxy<rust_task>,
 
     wakeup_callback *_on_wakeup;
 
+    // Incoming messages from other tasks.
+    rust_message_queue *message_queue;
+
     // Only a pointer to 'name' is kept, so it must live as long as this task.
     rust_task(rust_scheduler *sched,
               rust_task_list *state,
               rust_task *spawner,
-              const char *name);
+              const char *name,
+              rust_message_queue *message_queue);
 
     ~rust_task();
 
@@ -165,6 +169,9 @@ rust_task : public maybe_proxy<rust_task>,
     void unpin();
 
     void on_wakeup(wakeup_callback *callback);
+
+    void drain_incoming_message_queue(bool process);
+    bool has_messages();
 };
 
 //

@@ -136,7 +136,7 @@ endif
 
 ifdef CFG_CLANG
   CFG_INFO := $(info cfg: using clang)
-  CFG_GCCISH_CFLAGS += -Wall -Werror -fno-rtti -fno-exceptions -g
+  CFG_GCCISH_CFLAGS += -Wall -Werror -fno-exceptions -g # -fno-rtti 
   CFG_GCCISH_LINK_FLAGS += -g
   CFG_COMPILE_C = $(CFG_GCCISH_CROSS)clang++ $(CFG_GCCISH_CFLAGS) \
     $(CFG_CLANG_CFLAGS) -c -o $(1) $(2)
@@ -147,7 +147,7 @@ ifdef CFG_CLANG
 else
 ifdef CFG_GCC
   CFG_INFO := $(info cfg: using gcc)
-  CFG_GCCISH_CFLAGS += -Wall -Werror -fno-rtti -fno-exceptions -g
+  CFG_GCCISH_CFLAGS += -Wall -Werror -fno-exceptions -g # -fno-rtti
   CFG_GCCISH_LINK_FLAGS += -g
   CFG_COMPILE_C = $(CFG_GCCISH_CROSS)g++ $(CFG_GCCISH_CFLAGS) \
     $(CFG_GCC_CFLAGS) -c -o $(1) $(2)

@@ -97,7 +97,7 @@ rust_log::trace_ln(uint32_t thread_id, char *prefix, char *message) {
 }
 
 void
-rust_log::trace_ln(rust_task *task, uint32_t level, char *message) {
+rust_log::trace_ln(const rust_task *task, uint32_t level, char *message) {
 #if defined(__WIN32__)
     uint32_t thread_id = 0;
 #else

@@ -114,6 +114,36 @@ template <typename T> struct rc_base {
     ~rc_base();
 };
 
+template<class T>
+class smart_ptr {
+    T *p;
+public:
+    smart_ptr() : p(NULL) {};
+    smart_ptr(T *p) : p(p) { p->ref(); }
+
+    ~smart_ptr() {
+        if(p) {
+            p->deref();
+        }
+    }
+
+    T *operator=(T* p) {
+        if(this->p) {
+            this->p->deref();
+        }
+        if(p) {
+            p->ref();
+        }
+        this->p = p;
+
+        return p;
+    }
+
+    T *operator->() const { return p; };
+
+    operator T*() { return p; }
+};
+
 template <typename T> struct task_owned {
     void operator delete(void *ptr) {
         ((T *)ptr)->task->free(ptr);

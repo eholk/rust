@@ -3,9 +3,8 @@
 #include "rust_internal.h"
 #include "globals.h"
 
-rust_scheduler::rust_scheduler(rust_kernel *kernel,
-    rust_message_queue *message_queue, rust_srv *srv,
-    const char *name) :
+rust_scheduler::rust_scheduler(rust_kernel *kernel, rust_srv *srv,
+                               const char *name) :
     interrupt_flag(0),
     _log(srv, this),
     log_lvl(log_note),
@@ -19,8 +18,7 @@ rust_scheduler::rust_scheduler(rust_kernel *kernel,
     root_task(NULL),
     curr_task(NULL),
     rval(0),
-    kernel(kernel),
-    message_queue(message_queue)
+    kernel(kernel)
 {
     LOGPTR(this, "new dom", (uintptr_t)this);
     isaac_init(this, &rctx);
@@ -29,7 +27,6 @@ rust_scheduler::rust_scheduler(rust_kernel *kernel,
     pthread_attr_setstacksize(&attr, 1024 * 1024);
     pthread_attr_setdetachstate(&attr, true);
 #endif
-    root_task = create_task(NULL, name);
 }
 
 rust_scheduler::~rust_scheduler() {
@@ -50,14 +47,13 @@ rust_scheduler::activate(rust_task *task) {
 
     task->ctx.next = &ctx;
     DLOG(this, task, "descheduling...");
-    kernel->scheduler_lock.unlock();
     task->ctx.swap(ctx);
-    kernel->scheduler_lock.lock();
     DLOG(this, task, "task has returned");
 }
 
 void
-rust_scheduler::log(rust_task* task, uint32_t level, char const *fmt, ...) {
+rust_scheduler::log(const rust_task* task, 
+                    uint32_t level, char const *fmt, ...) {
     char buf[BUF_BYTES];
     va_list args;
     va_start(args, fmt);
@@ -87,6 +83,14 @@ rust_scheduler::reap_dead_tasks(int id) {
     I(this, kernel->scheduler_lock.lock_held_by_current_thread());
     for (size_t i = 0; i < dead_tasks.length(); ) {
         rust_task *task = dead_tasks[i];
+        if(task->has_messages() && task->can_schedule(id)) {
+            task->running_on = id;
+            kernel->scheduler_lock.unlock();
+            task->drain_incoming_message_queue(true);
+            kernel->scheduler_lock.lock();
+            task->running_on = -1;
+        }
+
         // Make sure this task isn't still running somewhere else...
         if (task->ref_count == 0 && task->can_schedule(id)) {
             I(this, task->tasks_waiting_to_join.is_empty());
@@ -98,21 +102,6 @@ rust_scheduler::reap_dead_tasks(int id) {
             continue;
         }
         ++i;
-    }
-}
-
-/**
- * Drains and processes incoming pending messages.
- */
-void rust_scheduler::drain_incoming_message_queue(bool process) {
-    rust_message *message;
-    while (message_queue->dequeue(&message)) {
-        DLOG(this, comm, "<== receiving \"%s\" " PTR,
-            message->label, message);
-        if (process) {
-            message->process();
-        }
-        delete message;
     }
 }
 
@@ -148,29 +137,33 @@ rust_scheduler::log_state() {
     if (!running_tasks.is_empty()) {
         log(NULL, log_note, "running tasks:");
         for (size_t i = 0; i < running_tasks.length(); i++) {
-            log(NULL, log_note, "\t task: %s @0x%" PRIxPTR " timeout: %d",
+            log(NULL, log_note, "\t task: %s @0x%" PRIxPTR " timeout: %d %s",
                 running_tasks[i]->name,
                 running_tasks[i],
-                running_tasks[i]->yield_timer.get_timeout());
+                running_tasks[i]->yield_timer.get_timeout(),
+                running_tasks[i]->has_messages() ? "(*)" : "( )");
         }
     }
 
     if (!blocked_tasks.is_empty()) {
         log(NULL, log_note, "blocked tasks:");
         for (size_t i = 0; i < blocked_tasks.length(); i++) {
-            log(NULL, log_note, "\t task: %s @0x%" PRIxPTR ", blocked on: 0x%"
-                PRIxPTR " '%s'",
+            log(NULL, log_note, 
+                "\t task: %s @0x%" PRIxPTR ", blocked on: 0x%"
+                PRIxPTR " '%s' %s",
                 blocked_tasks[i]->name, blocked_tasks[i],
-                blocked_tasks[i]->cond, blocked_tasks[i]->cond_name);
+                blocked_tasks[i]->cond, blocked_tasks[i]->cond_name,
+                blocked_tasks[i]->has_messages() ? "(*)" : "( )");
         }
     }
 
     if (!dead_tasks.is_empty()) {
         log(NULL, log_note, "dead tasks:");
         for (size_t i = 0; i < dead_tasks.length(); i++) {
-            log(NULL, log_note, "\t task: %s 0x%" PRIxPTR ", ref_count: %d",
+            log(NULL, log_note, "\t task: %s 0x%"PRIxPTR", ref_count: %d %s",
                 dead_tasks[i]->name, dead_tasks[i],
-                dead_tasks[i]->ref_count);
+                dead_tasks[i]->ref_count,
+                dead_tasks[i]->has_messages() ? "(*)" : "( )");
         }
     }
 }
@@ -200,7 +193,18 @@ rust_scheduler::start_main_loop(int id) {
         DLOG(this, dom, "worker %d, number_of_live_tasks = %d",
              id, number_of_live_tasks());
 
-        drain_incoming_message_queue(true);
+        // Check if any blocked tasks have messages
+        for(size_t i = 0; i < blocked_tasks.length(); ++i) {
+            if(blocked_tasks[i]->has_messages()) {
+                printf("draining messages on %p\n", blocked_tasks[i]);
+                rust_task *task = blocked_tasks[i];
+                task->running_on = id;
+                kernel->scheduler_lock.unlock();
+                task->drain_incoming_message_queue(true);
+                kernel->scheduler_lock.lock();
+                task->running_on = -1;
+            }
+        }
 
         rust_task *scheduled_task = schedule_task(id);
 
@@ -214,6 +218,8 @@ rust_scheduler::start_main_loop(int id) {
                  "all tasks are blocked, scheduler id %d yielding ...",
                  id);
             kernel->scheduler_lock.unlock();
+            // FIXME: properly sleep until more tasks are ready to run.
+            abort();
             sync::sleep(100);
             kernel->scheduler_lock.lock();
             DLOG(this, task,
@@ -240,12 +246,15 @@ rust_scheduler::start_main_loop(int id) {
              "Running task %p on worker %d",
              scheduled_task, id);
         scheduled_task->running_on = id;
+        kernel->scheduler_lock.unlock();
+        scheduled_task->drain_incoming_message_queue(true);
         activate(scheduled_task);
+        kernel->scheduler_lock.lock();
         scheduled_task->running_on = -1;
 
         DLOG(this, task,
              "returned from task %s @0x%" PRIxPTR
-             " in state '%s', sp=0x%x, worker id=%d" PRIxPTR,
+             " in state '%s', sp=0x%x, worker id=%d",
              scheduled_task->name,
              (uintptr_t)scheduled_task,
              scheduled_task->state->name,
@@ -259,6 +268,16 @@ rust_scheduler::start_main_loop(int id) {
          "terminated scheduler loop, reaping dead tasks ...");
 
     while (dead_tasks.length() > 0) {
+        DLOG(this, dom,
+             "waiting for %d dead tasks to become dereferenced, "
+             "scheduler yielding ...",
+             dead_tasks.length());
+        log_state();
+        kernel->scheduler_lock.unlock();
+        sync::yield();
+        kernel->scheduler_lock.lock();
+
+#if 0
         if (message_queue->is_empty()) {
             DLOG(this, dom,
                 "waiting for %d dead tasks to become dereferenced, "
@@ -269,8 +288,12 @@ rust_scheduler::start_main_loop(int id) {
             sync::yield();
             kernel->scheduler_lock.lock();
         } else {
+            kernel->scheduler_lock.unlock();
             drain_incoming_message_queue(true);
+            kernel->scheduler_lock.lock();
         }
+#endif
+
         reap_dead_tasks(id);
     }
 
@@ -283,18 +306,6 @@ rust_scheduler::start_main_loop(int id) {
 rust_crate_cache *
 rust_scheduler::get_cache() {
     return &cache;
-}
-
-rust_task *
-rust_scheduler::create_task(rust_task *spawner, const char *name) {
-    rust_task *task =
-        new (this->kernel) rust_task (this, &newborn_tasks, spawner, name);
-    DLOG(this, task, "created task: " PTR ", spawner: %s, name: %s",
-                        task, spawner ? spawner->name : "null", name);
-    if(spawner)
-        task->pin(spawner->pinned_on);
-    newborn_tasks.append(task);
-    return task;
 }
 
 //

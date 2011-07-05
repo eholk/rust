@@ -53,7 +53,8 @@ size_t const n_callee_saves = 4;
 size_t const callee_save_fp = 0;
 
 rust_task::rust_task(rust_scheduler *sched, rust_task_list *state,
-                     rust_task *spawner, const char *name) :
+                     rust_task *spawner, const char *name,
+                     rust_message_queue *message_queue) :
     maybe_proxy<rust_task>(this),
     stk(NULL),
     runtime_sp(0),
@@ -74,7 +75,8 @@ rust_task::rust_task(rust_scheduler *sched, rust_task_list *state,
     pinned_on(-1),
     local_region(&sched->srv->local_region),
     synchronized_region(&sched->srv->synchronized_region),
-    _on_wakeup(NULL)
+    _on_wakeup(NULL),
+    message_queue(message_queue)
 {
     LOGPTR(sched, "new task", (uintptr_t)this);
     DLOG(sched, task, "sizeof(task) = %d (0x%x)", sizeof *this, sizeof *this);
@@ -89,6 +91,9 @@ rust_task::rust_task(rust_scheduler *sched, rust_task_list *state,
 
 rust_task::~rust_task()
 {
+    // FIXME: can we do this here?
+    message_queue->disassociate();
+
     DLOG(sched, task, "~rust_task %s @0x%" PRIxPTR ", refcnt=%d",
          name, (uintptr_t)this, ref_count);
 
@@ -99,8 +104,6 @@ rust_task::~rust_task()
 
     del_stk(this, stk);
 }
-
-extern "C" void rust_new_exit_task_glue();
 
 struct spawn_args {
     rust_task *task;
@@ -119,22 +122,12 @@ void task_start_wrapper(spawn_args *a)
     a->f(&rval, task, a->a3, a->a4);
 
     LOG(task, task, "task exited with value %d", rval);
+    LOG(task, task, "task ref_count: %d", task->ref_count);
 
-    {
-        scoped_lock with(task->kernel->scheduler_lock);
-
-        // FIXME: the old exit glue does some magical argument copying
-        // stuff. This is probably still needed.
-
-        // This is duplicated from upcall_exit, which is probably dead code by
-        // now.
-        LOG(task, task, "task ref_count: %d", task->ref_count);
-        A(task->sched, task->ref_count >= 0,
-          "Task ref_count should not be negative on exit!");
-        task->die();
-        task->notify_tasks_waiting_to_join();
-
-    }
+    A(task->sched, task->ref_count >= 0,
+      "Task ref_count should not be negative on exit!");
+    task->die();
+    task->notify_tasks_waiting_to_join();
     task->yield(1);
 }
 
@@ -147,8 +140,6 @@ rust_task::start(uintptr_t spawnee_fn,
     I(sched, stk->data != NULL);
     I(sched, !kernel->scheduler_lock.lock_held_by_current_thread());
     
-    scoped_lock with(kernel->scheduler_lock);
-
     char *sp = (char *)rust_sp;
 
     sp -= sizeof(spawn_args);
@@ -399,10 +390,11 @@ rust_task::free(void *p, bool is_gc)
 
 void
 rust_task::transition(rust_task_list *src, rust_task_list *dst) {
-    I(sched, kernel->scheduler_lock.lock_held_by_current_thread());
+    I(sched, !kernel->scheduler_lock.lock_held_by_current_thread());
     DLOG(sched, task,
          "task %s " PTR " state change '%s' -> '%s' while in '%s'",
          name, (uintptr_t)this, src->name, dst->name, state->name);
+    scoped_lock with(kernel->scheduler_lock);
     I(sched, state == src);
     src->remove(this);
     dst->append(this);
@@ -548,6 +540,25 @@ void rust_task::unpin() {
 
 void rust_task::on_wakeup(rust_task::wakeup_callback *callback) {
     _on_wakeup = callback;
+}
+
+/**
+ * Drains and processes incoming pending messages.
+ */
+void rust_task::drain_incoming_message_queue(bool process) {
+    rust_message *message;
+    while (message_queue->dequeue(&message)) {
+        DLOG(this->sched, comm, "<== receiving \"%s\" " PTR,
+             message->label, message);
+        if (process) {
+            message->process();
+        }
+        delete message;
+    }
+}
+
+bool rust_task::has_messages() {
+    return !message_queue->is_empty();
 }
 
 //

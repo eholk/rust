@@ -11,9 +11,8 @@ rust_test_runtime::~rust_test_runtime() {
 
 void
 rust_domain_test::worker::run() {
-    rust_scheduler *handle = kernel->get_scheduler();
     for (int i = 0; i < TASKS; i++) {
-        handle->create_task(NULL, "child");
+        kernel->create_task(NULL, "child");
     }
     sync::random_sleep(1000);
 }
