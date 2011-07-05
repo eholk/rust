@@ -30,5 +30,11 @@ digraph "Rust Runtime Reference Structure" {
     rust_task_list -> rust_scheduler [style=dashed];
     rust_message_queue -> rust_kernel [style=dashed];
     "rust_handle<rust_task>" -> rust_message_queue [style=dashed];
-   
+    rust_chan -> rust_task;
+    rust_port -> rust_chan;
+    rust_port -> rust_task [style=dashed];
+    rust_kernel -> rust_message_queue [style=dashed];
+    rust_start -> rust_srv;
+    rust_scheduler -> rust_srv;
+    
 }
