@@ -104,7 +104,7 @@ rust_start(uintptr_t main_fn, int argc, char **argv, void* crate_map) {
     rust_srv *srv = new rust_srv();
     rust_kernel *kernel = new rust_kernel(srv);
     kernel->start();
-    rust_scheduler *sched = kernel->get_scheduler();
+    smart_ptr<rust_scheduler> sched = kernel->get_scheduler();
     command_line_args *args 
         = new (kernel) command_line_args(sched->root_task, argc, argv);
 
@@ -121,6 +121,9 @@ rust_start(uintptr_t main_fn, int argc, char **argv, void* crate_map) {
     DLOG(sched, dom, "Using %d worker threads.", num_threads);
 
     int ret = kernel->start_task_threads(num_threads);
+
+    sched = NULL;
+
     delete args;
     delete kernel;
     delete srv;

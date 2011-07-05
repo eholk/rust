@@ -16,7 +16,6 @@ rust_scheduler::rust_scheduler(rust_kernel *kernel, rust_srv *srv,
     dead_tasks(this, "dead"),
     cache(this),
     root_task(NULL),
-    curr_task(NULL),
     rval(0),
     kernel(kernel)
 {
@@ -32,10 +31,13 @@ rust_scheduler::rust_scheduler(rust_kernel *kernel, rust_srv *srv,
 rust_scheduler::~rust_scheduler() {
     DLOG(this, dom, "~rust_scheduler %s @0x%" PRIxPTR, name, (uintptr_t)this);
 
+    I(this, ref_count == 0);
+
     newborn_tasks.delete_all();
     running_tasks.delete_all();
     blocked_tasks.delete_all();
     dead_tasks.delete_all();
+
 #ifndef __WIN32__
     pthread_attr_destroy(&attr);
 #endif
@@ -92,13 +94,14 @@ rust_scheduler::reap_dead_tasks(int id) {
         }
 
         // Make sure this task isn't still running somewhere else...
-        if (task->ref_count == 0 && task->can_schedule(id)) {
+        if (task->can_schedule(id)) {
             I(this, task->tasks_waiting_to_join.is_empty());
             dead_tasks.remove(task);
             DLOG(this, task,
-                "deleting unreferenced dead task %s @0x%" PRIxPTR,
-                task->name, task);
-            delete task;
+                 "scheduler dropping reference to dead task %s @0x%" PRIxPTR,
+                 task->name, task);
+            //task->sched = NULL;
+            task->deref();
             continue;
         }
         ++i;

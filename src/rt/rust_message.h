@@ -95,7 +95,7 @@ class rust_message_queue : public synchronized_queue<rust_message*>,
 public:
     memory_region region;
     rust_kernel *kernel;
-    rust_handle<rust_task> *task_handle;
+    smart_ptr<rust_handle<rust_task> > task_handle;
     int32_t list_index;
     rust_message_queue(rust_srv *srv, rust_kernel *kernel);
 

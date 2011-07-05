@@ -119,7 +119,7 @@ class smart_ptr {
     T *p;
 public:
     smart_ptr() : p(NULL) {};
-    smart_ptr(T *p) : p(p) { p->ref(); }
+    smart_ptr(T *p) : p(p) { if(p) { p->ref(); } }
 
     ~smart_ptr() {
         if(p) {
@@ -141,7 +141,7 @@ public:
 
     T *operator->() const { return p; };
 
-    operator T*() { return p; }
+    operator T*() const { return p; }
 };
 
 template <typename T> struct task_owned {

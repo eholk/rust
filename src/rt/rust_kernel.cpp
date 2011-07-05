@@ -22,16 +22,17 @@ rust_kernel::create_scheduler(const char *name) {
     sched = new (this) rust_scheduler(this, srv, name);
     sched->root_task = create_task(NULL, name);
     KLOG("created scheduler: " PTR ", name: %s, index: %d",
-         sched, name, sched->list_index);
+         (rust_scheduler*)sched, name, sched->list_index);
 }
 
 void
 rust_kernel::destroy_scheduler() {
     _kernel_lock.lock();
     KLOG("deleting scheduler: " PTR ", name: %s, index: %d",
-        sched, sched->name, sched->list_index);
+         (rust_scheduler*)sched, sched->name, sched->list_index);
     rust_srv *srv = sched->srv;
-    delete sched;
+    sched->root_task = NULL;
+    sched = NULL;
     delete srv;
     _kernel_lock.signal_all();
     _kernel_lock.unlock();
@@ -134,8 +135,6 @@ rust_kernel::terminate_kernel_loop() {
 }
 
 rust_kernel::~rust_kernel() {
-    destroy_scheduler();
-
     terminate_kernel_loop();
 
     // It's possible that the message pump misses some messages because
@@ -161,6 +160,10 @@ rust_kernel::~rust_kernel() {
           "before killing the kernel.");
         delete queue;
     }
+
+    // Destroy scheduler must happen down here to make sure the cloned service
+    // lives long enough for all the logging to happen.
+    destroy_scheduler();
 }
 
 void *
@@ -178,7 +181,8 @@ rust_kernel::free_handles(hash_map<T*, rust_handle<T>* > &map) {
     rust_handle<T> *value;
     while (map.pop(&key, &value)) {
         KLOG("...freeing " PTR, value);
-        delete value;
+        value->deref();
+        //delete value;
     }
 }
 
@@ -229,7 +233,7 @@ rust_kernel::create_task(rust_task *spawner, const char *name) {
         new (this) rust_task (this->sched, &sched->newborn_tasks, spawner, 
                               name, message_queue);
 
-    rust_handle<rust_task> *handle = get_task_handle(task);
+    smart_ptr<rust_handle<rust_task> > handle = get_task_handle(task);
     message_queue->associate(handle);
     message_queues.append(message_queue);
     
@@ -237,6 +241,8 @@ rust_kernel::create_task(rust_task *spawner, const char *name) {
          task, spawner ? spawner->name : "null", name);
     if(spawner)
         task->pin(spawner->pinned_on);
+    // Add a reference for the scheduler
+    task->ref();
     sched->newborn_tasks.append(task);
     return task;
 }

@@ -74,7 +74,7 @@ class rust_kernel : public rust_thread {
     rust_handle<rust_task> *internal_get_task_handle(rust_task *task);
 
 public:
-    rust_scheduler *sched;
+    smart_ptr<rust_scheduler> sched;
     lock_and_signal scheduler_lock;
 
     /**

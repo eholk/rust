@@ -71,8 +71,6 @@ rust_task : public maybe_proxy<rust_task>,
     // List of tasks waiting for this task to finish.
     array_list<maybe_proxy<rust_task> *> tasks_waiting_to_join;
 
-    rust_handle<rust_task> *handle;
-
     context ctx;
     
     // This flag indicates that a worker is either currently running the task
@@ -123,8 +121,8 @@ rust_task : public maybe_proxy<rust_task>,
     void die();
     void unblock();
 
-    void check_active() { I(sched, sched->curr_task == this); }
-    void check_suspended() { I(sched, sched->curr_task != this); }
+    void check_active() { I(sched, running_on >= 0); }
+    void check_suspended() { I(sched, running_on >= 0); }
 
     // Print a backtrace, if the "bt" logging option is on.
     void backtrace();
