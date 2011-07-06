@@ -15,9 +15,9 @@ class rust_message;
 template <typename T> class
 rust_handle :
     public rust_cond,
-    public rc_base<rust_handle<T> >,
     public kernel_owned<rust_handle<T> > {
 public:
+    RUST_REFCOUNTED(rust_handle);
     rust_kernel *kernel;
     rust_message_queue *message_queue;
     smart_ptr<T> _referent;
@@ -28,9 +28,10 @@ public:
     rust_handle(rust_kernel *kernel,
                 rust_message_queue *message_queue,
                 T *referent) :
-                kernel(kernel),
-                message_queue(message_queue),
-                _referent(referent) {
+        ref_count(0),
+        kernel(kernel),
+        message_queue(message_queue),
+        _referent(referent) {
         // Nop.
     }
 };

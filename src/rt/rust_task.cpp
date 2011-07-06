@@ -98,8 +98,7 @@ rust_task::~rust_task()
 
     /* FIXME: tighten this up, there are some more
        assertions that hold at task-lifecycle events. */
-    I(sched, ref_count == 0 ||
-      (ref_count == 1 && this == sched->root_task));
+    I(sched, ref_count == 0);
 
     del_stk(this, stk);
 }

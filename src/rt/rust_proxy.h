@@ -12,11 +12,22 @@ template <typename T> struct rust_proxy;
  * The base class of all objects that may delegate.
  */
 template <typename T> struct
-maybe_proxy : public rc_base<T>, public rust_cond {
+maybe_proxy : public rust_cond {
+    void destroy() {
+        if(is_proxy()) {
+            delete as_proxy();
+        }
+        else {
+            delete as_referent();
+        }
+    }
+
+public:
+    RUST_REFCOUNTED_WITH_DTOR(maybe_proxy<T>, destroy(); );
 protected:
     T *_referent;
 public:
-    maybe_proxy(T *referent) : _referent(referent) {
+    maybe_proxy(T *referent) : ref_count(1), _referent(referent) {
         // Nop.
     }
 

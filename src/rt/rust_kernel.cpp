@@ -18,7 +18,7 @@ rust_kernel::rust_kernel(rust_srv *srv) :
 
 void
 rust_kernel::create_scheduler(const char *name) {
-    smart_ptr<rust_srv> srv = _srv->clone();
+    smart_ptr<rust_srv> srv(_srv->clone());
     sched = new (this) rust_scheduler(this, srv, name);
     sched->root_task = create_task(NULL, name);
     KLOG("created scheduler: " PTR ", name: %s, index: %d",
@@ -44,6 +44,7 @@ rust_kernel::internal_get_task_handle(rust_task *task) {
             new (this) rust_handle<rust_task>(this,
                                               task->message_queue,
                                               task);
+        handle->ref();
         _task_handles.put(task, handle);
     }
     return handle;
@@ -231,7 +232,7 @@ rust_kernel::create_task(rust_task *spawner, const char *name) {
         new (this) rust_task (this->sched, &sched->newborn_tasks, spawner, 
                               name, message_queue);
 
-    smart_ptr<rust_handle<rust_task> > handle = get_task_handle(task);
+    rust_handle<rust_task> *handle = get_task_handle(task);
     message_queue->associate(handle);
     message_queues.append(message_queue);
     

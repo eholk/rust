@@ -104,8 +104,8 @@ static size_t const BUF_BYTES = 2048;
   RUST_REFCOUNTED_WITH_DTOR(T, delete (T*)this)
 #define RUST_REFCOUNTED_WITH_DTOR(T, dtor) \
   intptr_t ref_count;      \
-  void ref() { ++ref_count; } \
-  void deref() { if (--ref_count == 0) { dtor; } }
+  void ref() { assert(ref_count >= 0); ++ref_count; }    \
+  void deref() { assert(ref_count >= 1); if (--ref_count == 0) { dtor; } }
 
 template <typename T> struct rc_base {
     RUST_REFCOUNTED(T)
@@ -117,6 +117,11 @@ template <typename T> struct rc_base {
 template<class T>
 class smart_ptr {
     T *p;
+
+    smart_ptr(const smart_ptr &sp) : p(sp.p) {
+        if(p) { p->ref(); }
+    }
+
 public:
     smart_ptr() : p(NULL) {};
     smart_ptr(T *p) : p(p) { if(p) { p->ref(); } }

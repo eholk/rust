@@ -19,6 +19,7 @@ private:
     memory_region *_parent;
     size_t _live_allocations;
     array_list<void *> _allocation_list;
+    array_list<void *> _free_list;
     const bool _detailed_leaks;
     const bool _synchronized;
     lock_and_signal _lock;

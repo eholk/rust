@@ -27,6 +27,12 @@ void memory_region::free(void *mem) {
     if (_allocation_list.replace(mem, NULL) == false) {
         printf("free: ptr 0x%" PRIxPTR " is not in allocation_list\n",
             (uintptr_t) mem);
+
+        if(_free_list.index_of(mem) >= 0) {
+            printf("free: ptr 0x%"PRIxPTR" was already freed.\n",
+                   (uintptr_t)mem);
+        }
+
         _srv->fatal("not in allocation_list", __FILE__, __LINE__, "");
     }
 #endif
@@ -35,6 +41,7 @@ void memory_region::free(void *mem) {
     }
     _live_allocations--;
     _srv->free(mem);
+    _free_list.append(mem);
     if (_synchronized) { _lock.unlock(); }
 }
 

@@ -11,7 +11,7 @@
 
 digraph "Rust Runtime Reference Structure" {
     rust_kernel -> rust_scheduler;
-    rust_kernel -> "rust_handle<rust_task>" [style=dashed];
+    rust_kernel -> "rust_handle<rust_task>";
     rust_message_queue -> "rust_handle<rust_task>";
     "rust_handle<rust_task>" -> rust_task;
     rust_task -> rust_message_queue [style=dashed];
@@ -23,11 +23,11 @@ digraph "Rust Runtime Reference Structure" {
     rust_scheduler -> rust_crate_cache [style=dashed];
     rust_scheduler -> rust_kernel [style=dashed];
     // rust_timer is dead code for the moment.
-    rust_timer -> rust_scheduler [style=dashed];
+    //rust_timer -> rust_scheduler [style=dashed];
     rust_chan -> rust_scheduler [style=dashed];
-    rust_log -> rust_scheduler [style=dashed];
+    //rust_log -> rust_scheduler [style=dashed];
     // The scheduler contains three of these, but not as references
-    rust_task_list -> rust_scheduler [style=dashed];
+    //rust_task_list -> rust_scheduler [style=dashed];
     rust_message_queue -> rust_kernel [style=dashed];
     "rust_handle<rust_task>" -> rust_message_queue [style=dashed];
     rust_chan -> rust_task;
@@ -36,5 +36,8 @@ digraph "Rust Runtime Reference Structure" {
     rust_kernel -> rust_message_queue [style=dashed];
     rust_start -> rust_srv;
     rust_scheduler -> rust_srv;
+    rust_start -> rust_kernel [style=dashed];
+    rust_start -> rust_scheduler;
+    rust_kernel -> rust_srv [style=dashed];
     
 }

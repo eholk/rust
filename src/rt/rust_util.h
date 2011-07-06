@@ -180,6 +180,9 @@ rust_vec : public rc_base<rust_vec>
         : alloc(alloc),
           fill(fill)
     {
+        // Set the reference count to one to match what the rest of rust
+        // expects.
+        ref_count = 1;
         if (d)
             memcpy(&data[0], d, fill);
     }
