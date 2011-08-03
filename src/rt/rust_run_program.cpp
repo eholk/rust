@@ -54,13 +54,17 @@ rust_run_program(void* task, const char* argv[],
 }
 
 extern "C" CDECL int
-rust_process_wait(void* task, int proc) {
+rust_process_wait(rust_task* task, int proc) {
     DWORD status;
     while (true) {
         if (GetExitCodeProcess((HANDLE)proc, &status) &&
             status != STILL_ACTIVE)
             return (int)status;
-        WaitForSingleObject((HANDLE)proc, INFINITE);
+        // Wait for up to 100 ms to keep from deadlocking.
+        DWORD rv = WaitForSingleObject((HANDLE)proc, 100);
+        if(rv != WAIT_OBJECT_0 && rv != WAIT_TIMEOUT)
+            fprintf(stderr, "BAD!!! 0x%x\n", (int)rv);
+        task->yield();
     }
 }
 
