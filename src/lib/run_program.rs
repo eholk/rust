@@ -1,16 +1,18 @@
 
 import str::sbuf;
 import vec::vbuf;
+import os::pid_t;
 
 export program;
 export run_program;
 export start_program;
 export program_output;
 export spawn_process;
+export pid_t;
 
 native "rust" mod rustrt {
     fn rust_run_program(argv: vbuf, in_fd: int, out_fd: int, err_fd: int) ->
-       int;
+        int;
 }
 
 fn arg_vec(prog: str, args: vec[str]) -> vec[sbuf] {
@@ -21,12 +23,12 @@ fn arg_vec(prog: str, args: vec[str]) -> vec[sbuf] {
 }
 
 fn spawn_process(prog: str, args: vec[str], in_fd: int, out_fd: int,
-                 err_fd: int) -> int {
+                 err_fd: int) -> pid_t {
     // Note: we have to hold on to this vector reference while we hold a
     // pointer to its buffer
     let argv = arg_vec(prog, args);
     let pid = rustrt::rust_run_program(vec::buf(argv), in_fd, out_fd, err_fd);
-    ret pid;
+    ret pid_t(pid);
 }
 
 fn run_program(prog: str, args: vec[str]) -> int {
@@ -35,7 +37,7 @@ fn run_program(prog: str, args: vec[str]) -> int {
 
 type program =
     obj {
-        fn get_id() -> int;
+        fn get_id() -> pid_t;
         fn input() -> io::writer;
         fn output() -> io::reader;
         fn err() -> io::reader;
@@ -59,12 +61,12 @@ fn start_program(prog: str, args: vec[str]) -> @program_res {
     os::libc::close(pipe_input.in);
     os::libc::close(pipe_output.out);
     os::libc::close(pipe_err.out);
-    obj new_program(pid: int,
+    obj new_program(pid: pid_t,
                     mutable in_fd: int,
                     out_file: os::libc::FILE,
                     err_file: os::libc::FILE,
                     mutable finished: bool) {
-        fn get_id() -> int { ret pid; }
+        fn get_id() -> pid_t { ret pid; }
         fn input() -> io::writer {
             ret io::new_writer(io::fd_buf_writer(in_fd, option::none));
         }

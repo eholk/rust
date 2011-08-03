@@ -54,6 +54,8 @@ native "x86stdcall" mod kernel32 {
     fn SetEnvironmentVariableA(n: sbuf, v: sbuf) -> int;
 }
 
+tag pid_t = int;
+
 fn exec_suffix() -> str { ret ".exe"; }
 
 fn target_os() -> str { ret "win32"; }
@@ -83,7 +85,9 @@ native "rust" mod rustrt {
     fn rust_getcwd() -> str;
 }
 
-fn waitpid(pid: int) -> int { ret rustrt::rust_process_wait(pid); }
+fn waitpid(pid: pid_t) -> int {
+    ret rustrt::rust_process_wait(*pid);
+}
 
 fn getcwd() -> str { ret rustrt::rust_getcwd(); }
 

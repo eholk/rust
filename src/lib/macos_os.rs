@@ -57,6 +57,8 @@ mod libc_constants {
     fn S_IWUSR() -> uint { ret 512u; }
 }
 
+tag pid_t = int;
+
 fn exec_suffix() -> str { ret ""; }
 
 fn target_os() -> str { ret "macos"; }
@@ -71,9 +73,9 @@ fn pipe() -> {in: int, out: int} {
 
 fn fd_FILE(fd: int) -> libc::FILE { ret libc::fdopen(fd, str::buf("r")); }
 
-fn waitpid(pid: int) -> int {
+fn waitpid(pid: pid_t) -> int {
     let status = 0;
-    assert (os::libc::waitpid(pid, status, 0) != -1);
+    assert (os::libc::waitpid(*pid, status, 0) != -1);
     ret status;
 }
 
