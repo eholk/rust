@@ -10,14 +10,16 @@ export program_output;
 export spawn_process;
 
 #[cfg(target_os = "win32")]
-mod win32api {
-    import win32api;
+mod _win32api {
+    import win32api::*;
+
+    export HANDLE;
 }
 
 #[cfg(target_os = "win32")]
 native "rust" mod rustrt {
     fn rust_run_program(argv: vbuf, in_fd: int, out_fd: int, err_fd: int) ->
-        win32api::HANDLE;
+        _win32api::HANDLE;
 }
 
 #[cfg(target_os = "macos")]
@@ -33,7 +35,6 @@ fn arg_vec(prog: str, args: vec[str]) -> vec[sbuf] {
     vec::push[sbuf](argptrs, 0 as sbuf);
     ret argptrs;
 }
-
 
 #[cfg(target_os = "macos")]
 #[cfg(target_os = "linux")]
