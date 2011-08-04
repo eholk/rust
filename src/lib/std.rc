@@ -68,6 +68,9 @@ mod os = "linux_os.rs";
 #[cfg(target_os = "linux")]
 mod os_fs = "posix_fs.rs";
 
+#[cfg(target_os = "win32")]
+mod win32api;
+
 mod run = "run_program.rs";
 mod fs;
 

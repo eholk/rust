@@ -1,6 +1,9 @@
 
 import str::sbuf;
 import vec::vbuf;
+import task;
+import win32api;
+import win32api::DWORD;
 
 native "cdecl" mod libc = "" {
     fn open(s: sbuf, flags: int, mode: uint) -> int = "_open";
@@ -54,7 +57,7 @@ native "x86stdcall" mod kernel32 {
     fn SetEnvironmentVariableA(n: sbuf, v: sbuf) -> int;
 }
 
-tag pid_t = int;
+tag pid_t = @win32api::handle;
 
 fn exec_suffix() -> str { ret ".exe"; }
 
@@ -81,12 +84,29 @@ fn pipe() -> {in: int, out: int} {
 fn fd_FILE(fd: int) -> libc::FILE { ret libc::_fdopen(fd, str::buf("r")); }
 
 native "rust" mod rustrt {
-    fn rust_process_wait(handle: int) -> int;
+    fn rust_process_wait(handle: win32api::HANDLE) -> int;
     fn rust_getcwd() -> str;
 }
 
 fn waitpid(pid: pid_t) -> int {
-    ret rustrt::rust_process_wait(*pid);
+    while true {
+        let status : win32api::DWORD = 0u32;
+        let rv = win32api::GetExitCodeProcess(***pid, status);
+        if rv != 0i32 && status != win32api::STILL_ACTIVE {
+            log_err "GetExitCodeProcess Complete";
+            ret status as int;
+        }
+        let rv2 = win32api::WaitForSingleObject(***pid, 100u32);
+        if rv2 != win32api::WAIT_TIMEOUT
+            && rv2 != win32api::WAIT_OBJECT_0 {
+            log_err "WaitForSingleObject failed with unexpected status.";
+            log_err rv2;
+            // fail;
+        }
+        // FIXME: Once we insert yield checks, this will be unnecessary.
+        task::yield();
+    }
+    fail
 }
 
 fn getcwd() -> str { ret rustrt::rust_getcwd(); }

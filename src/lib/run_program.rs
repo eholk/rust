@@ -2,14 +2,22 @@
 import str::sbuf;
 import vec::vbuf;
 import os::pid_t;
+import win32api;
 
 export program;
 export run_program;
 export start_program;
 export program_output;
 export spawn_process;
-export pid_t;
 
+#[cfg(target_os = "win32")]
+native "rust" mod rustrt {
+    fn rust_run_program(argv: vbuf, in_fd: int, out_fd: int, err_fd: int) ->
+        win32api::HANDLE;
+}
+
+#[cfg(target_os = "macos")]
+#[cfg(target_os = "linux")]
 native "rust" mod rustrt {
     fn rust_run_program(argv: vbuf, in_fd: int, out_fd: int, err_fd: int) ->
         int;
@@ -22,13 +30,29 @@ fn arg_vec(prog: str, args: vec[str]) -> vec[sbuf] {
     ret argptrs;
 }
 
+
+#[cfg(target_os = "macos")]
+#[cfg(target_os = "linux")]
 fn spawn_process(prog: str, args: vec[str], in_fd: int, out_fd: int,
                  err_fd: int) -> pid_t {
     // Note: we have to hold on to this vector reference while we hold a
     // pointer to its buffer
     let argv = arg_vec(prog, args);
     let pid = rustrt::rust_run_program(vec::buf(argv), in_fd, out_fd, err_fd);
+    if pid == -1 { fail; }
     ret pid_t(pid);
+}
+
+#[cfg(target_os = "win32")]
+fn spawn_process(prog: str, args: vec[str], in_fd: int, out_fd: int,
+                 err_fd: int) -> pid_t {
+    // FIXME: Rewrite this calling win32 apis directly.
+
+    // Note: we have to hold on to this vector reference while we hold a
+    // pointer to its buffer
+    let argv = arg_vec(prog, args);
+    let pid = rustrt::rust_run_program(vec::buf(argv), in_fd, out_fd, err_fd);
+    ret pid_t(@win32api::handle(pid));
 }
 
 fn run_program(prog: str, args: vec[str]) -> int {
@@ -57,7 +81,6 @@ fn start_program(prog: str, args: vec[str]) -> @program_res {
     let pid = spawn_process(prog, args, pipe_input.in, pipe_output.out,
                             pipe_err.out);
 
-    if pid == -1 { fail; }
     os::libc::close(pipe_input.in);
     os::libc::close(pipe_output.out);
     os::libc::close(pipe_err.out);

@@ -33,7 +33,6 @@ fn test_pipes() {
     os::libc::close(pipe_out.out);
     os::libc::close(pipe_err.out);
 
-    if pid == -1 { fail; }
     let expected = "test";
     writeclose(pipe_in.out, expected);
     let actual = readclose(pipe_out.in);

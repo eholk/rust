@@ -6,7 +6,7 @@
 #include <io.h>
 
 extern "C" CDECL int
-rust_run_program(void* task, const char* argv[],
+rust_run_program(rust_task* task, const char* argv[],
                  int in_fd, int out_fd, int err_fd) {
     STARTUPINFO si;
     ZeroMemory(&si, sizeof(STARTUPINFO));
@@ -49,7 +49,8 @@ rust_run_program(void* task, const char* argv[],
     CloseHandle(si.hStdError);
     free(cmd);
 
-    if (!created) return -1;
+    if (!created)
+      task->fail();
     CloseHandle(pi.hThread);
     return (int)pi.hProcess;
 }
@@ -117,3 +118,4 @@ rust_process_wait(void* task, int proc) {
 // compile-command: "make -k -C $RBUILD 2>&1 | sed -e 's/\\/x\\//x:\\//g'";
 // End:
 //
+
