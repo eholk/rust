@@ -50,7 +50,7 @@ rust_run_program(rust_task* task, const char* argv[],
     free(cmd);
 
     if (!created)
-      task->fail();
+        return -1;
     CloseHandle(pi.hThread);
     return (int)pi.hProcess;
 }

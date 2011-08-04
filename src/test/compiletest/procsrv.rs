@@ -148,7 +148,7 @@ fn worker(p: port[request]) {
         os::libc::close(pipe_in.in);
         os::libc::close(pipe_out.out);
         os::libc::close(pipe_err.out);
-        if pid == -1 {
+        if pid == option::none {
             os::libc::close(pipe_in.out);
             os::libc::close(pipe_out.in);
             os::libc::close(pipe_err.in);
@@ -156,7 +156,7 @@ fn worker(p: port[request]) {
         }
 
         task::send(execparms.respchan,
-                   {pid: pid,
+                   {pid: option::get(pid),
                     infd: pipe_in.out,
                     outfd: pipe_out.in,
                     errfd: pipe_err.in});

@@ -2,6 +2,11 @@
 import str::sbuf;
 import vec::vbuf;
 import os::pid_t;
+import option::none;
+import option::some;
+import option::get;
+import option = option::t;
+import unsafe;
 
 export program;
 export run_program;
@@ -39,29 +44,38 @@ fn arg_vec(prog: str, args: vec[str]) -> vec[sbuf] {
 #[cfg(target_os = "macos")]
 #[cfg(target_os = "linux")]
 fn spawn_process(prog: str, args: vec[str], in_fd: int, out_fd: int,
-                 err_fd: int) -> pid_t {
+                 err_fd: int) -> option[pid_t] {
     // Note: we have to hold on to this vector reference while we hold a
     // pointer to its buffer
     let argv = arg_vec(prog, args);
     let pid = rustrt::rust_run_program(vec::buf(argv), in_fd, out_fd, err_fd);
-    if pid == -1 { fail; }
-    ret pid_t(pid);
+    if pid == -1 {
+        none
+    }
+    else {
+        some(pid_t(pid))
+    }
 }
 
 #[cfg(target_os = "win32")]
 fn spawn_process(prog: str, args: vec[str], in_fd: int, out_fd: int,
-                 err_fd: int) -> pid_t {
+                 err_fd: int) -> option[pid_t] {
     // FIXME: Rewrite this calling win32 apis directly.
 
     // Note: we have to hold on to this vector reference while we hold a
     // pointer to its buffer
     let argv = arg_vec(prog, args);
     let pid = rustrt::rust_run_program(vec::buf(argv), in_fd, out_fd, err_fd);
-    ret pid_t(@win32api::handle(pid));
+    if -1 == unsafe::reinterpret_cast[win32api::HANDLE, int](pid) {
+        none
+    }
+    else {
+        some(pid_t(@win32api::handle(pid)))
+    }
 }
 
 fn run_program(prog: str, args: vec[str]) -> int {
-    ret os::waitpid(spawn_process(prog, args, 0, 0, 0));
+    ret os::waitpid(get(spawn_process(prog, args, 0, 0, 0)));
 }
 
 type program =
@@ -83,8 +97,8 @@ fn start_program(prog: str, args: vec[str]) -> @program_res {
     let pipe_input = os::pipe();
     let pipe_output = os::pipe();
     let pipe_err = os::pipe();
-    let pid = spawn_process(prog, args, pipe_input.in, pipe_output.out,
-                            pipe_err.out);
+    let pid = get(spawn_process(prog, args, pipe_input.in, pipe_output.out,
+                                pipe_err.out));
 
     os::libc::close(pipe_input.in);
     os::libc::close(pipe_output.out);

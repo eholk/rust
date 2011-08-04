@@ -27,8 +27,9 @@ fn test_pipes() {
     let pipe_out = os::pipe();
     let pipe_err = os::pipe();
 
-    let pid = run::spawn_process("cat", [],
-       pipe_in.in, pipe_out.out, pipe_err.out);
+    let pido = run::spawn_process("cat", [],
+                                  pipe_in.in, pipe_out.out, pipe_err.out);
+    let pid = option::get(pido);
     os::libc::close(pipe_in.in);
     os::libc::close(pipe_out.out);
     os::libc::close(pipe_err.out);
