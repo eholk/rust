@@ -45,7 +45,7 @@ native "x86stdcall" mod kernel32 {
                       lpCurrentDirectory : LPCTSTR,
                       lpStartupInfo : &STARTUPINFO,
                       lpProcessInformation : &PROCESS_INFORMATION) -> BOOL;
-    fn GetExitCodeProcess(hHandle : HANDLE, 
+    fn GetExitCodeProcess(hHandle : HANDLE,
                           dwStatus : &DWORD) -> BOOL;
 }
 
@@ -66,7 +66,7 @@ type PROCESS_INFORMATION = {
 };
 
 fn init_ProcessInformation() -> PROCESS_INFORMATION {
-    {   
+    {
         hProcess    : null(),
         hThread     : null(),
         dwProcessId : 0u32,
@@ -84,7 +84,7 @@ fn init_SecurityAttributes() -> SECURITY_ATTRIBUTES {
     {
         nLength: size_of[SECURITY_ATTRIBUTES]() as u32,
         lpSecurityDescriptor: null(),
-        bInheritHandle: 0i32 
+        bInheritHandle: 0i32
     }
 }
 

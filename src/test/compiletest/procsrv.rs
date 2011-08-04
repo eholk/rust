@@ -31,7 +31,7 @@ tag request {
     stop;
 }
 
-type response = {pid: int, infd: int, outfd: int, errfd: int};
+type response = {pid: os::pid_t, infd: int, outfd: int, errfd: int};
 
 fn mk() -> handle {
     let setupport = port();

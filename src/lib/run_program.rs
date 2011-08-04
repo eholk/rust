@@ -2,13 +2,17 @@
 import str::sbuf;
 import vec::vbuf;
 import os::pid_t;
-import win32api;
 
 export program;
 export run_program;
 export start_program;
 export program_output;
 export spawn_process;
+
+#[cfg(target_os = "win32")]
+mod win32api {
+    import win32api;
+}
 
 #[cfg(target_os = "win32")]
 native "rust" mod rustrt {
