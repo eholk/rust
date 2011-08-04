@@ -55,22 +55,6 @@ rust_run_program(rust_task* task, const char* argv[],
     return (int)pi.hProcess;
 }
 
-extern "C" CDECL int
-rust_process_wait(rust_task* task, int proc) {
-    DWORD status;
-    HANDLE hProc = (HANDLE)proc;
-    while (true) {
-        if (GetExitCodeProcess(hProc, &status) &&
-            status != STILL_ACTIVE)
-            return (int)status;
-        // Wait for up to 100 ms to keep from deadlocking.
-        DWORD rv = WaitForSingleObject(hProc, 100);
-        if(rv != WAIT_OBJECT_0 && rv != WAIT_TIMEOUT)
-            fprintf(stderr, "BAD!!! 0x%x\n", (int)rv);
-        task->yield();
-    }
-}
-
 #elif defined(__GNUC__)
 
 #include <sys/file.h>
@@ -98,15 +82,15 @@ rust_run_program(rust_task* task, char* argv[],
     exit(1);
 }
 
+#else
+#error "Platform not supported."
+#endif
+
 extern "C" CDECL int
 rust_process_wait(void* task, int proc) {
     // FIXME: stub; exists to placate linker.
     return 0;
 }
-
-#else
-#error "Platform not supported."
-#endif
 
 //
 // Local Variables:
