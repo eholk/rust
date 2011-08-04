@@ -93,7 +93,6 @@ fn waitpid(pid: pid_t) -> int {
         let status : win32api::DWORD = 0u32;
         let rv = win32api::GetExitCodeProcess(***pid, status);
         if rv != 0i32 && status != win32api::STILL_ACTIVE {
-            log_err "GetExitCodeProcess Complete";
             ret status as int;
         }
         let rv2 = win32api::WaitForSingleObject(***pid, 100u32);
