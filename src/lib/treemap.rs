@@ -43,11 +43,11 @@ fn find<@K, @V>(m: treemap<K, V>, k: K) -> option<V> {
         if k == kk {
             some(v)
         } else if k < kk {
-
             // Again, ugliness to unpack left and right individually.
             alt *m { node(_, _, left, _) { find(left, k) } }
         } else { alt *m { node(_, _, _, right) { find(right, k) } } }
       }
+      _ { log_err *m; fail }
     }
 }
 

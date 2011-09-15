@@ -30,11 +30,18 @@ import std::comm::recv;
 import std::comm::send;
 
 fn map(filename: [u8], emit: map_reduce::putter<[u8], int>) {
-    let f = io::file_reader(str::unsafe_from_bytes(filename));
+    let filename = str::unsafe_from_bytes(filename);
+
+    log_err "mapping " + filename;
+
+    let f = io::file_reader(filename);
 
     while true {
         alt read_word(f) {
-          some(w) { emit(str::bytes(w), 1); }
+          some(w) {
+              log_err "emitting " + w;
+              emit(str::bytes(w), 1);
+          }
           none. { break; }
         }
     }
@@ -77,6 +84,8 @@ mod map_reduce {
         let tasks = [];
         for i in inputs {
             let m = map, c = ctrl, ii = i;
+            log_err "starting mapper for...";
+            log_err i;
             tasks += [task::spawn_joinable(bind map_task(m, c, ii))];
         }
         ret tasks;
@@ -93,13 +102,18 @@ mod map_reduce {
                     ctrl: chan<ctrl_proto<K2, V>>, key: K2, val: V) {
             let c;
             alt treemap::find(im, key) {
-              some(_c) { c = _c }
+              some(_c) {
+                  log_err "found cached channel";
+                  c = _c;
+              }
               none. {
-                let p = port();
-                send(ctrl, find_reducer(key, chan(p)));
-                c = recv(p);
-                treemap::insert(im, key, c);
-                send(c, ref);
+                  log_err "looking up channel.";
+                  let p = port();
+                  send(ctrl, find_reducer(key, chan(p)));
+                  c = recv(p);
+                  log_err "found channel";
+                  treemap::insert(im, key, c);
+                  send(c, ref);
               }
             }
             send(c, emit_val(val));
@@ -168,21 +182,21 @@ mod map_reduce {
               }
               find_reducer(k, cc) {
                 let c;
-                // log_err "finding reducer for " + k;
+                log_err "finding reducer";
                 alt treemap::find(reducers, k) {
                   some(_c) {
-                    // log_err "reusing existing reducer for " + k;
-                    c = _c;
+                      log_err "reusing existing reducer";
+                      c = _c;
                   }
                   none. {
-                    // log_err "creating new reducer for " + k;
-                    let p = port();
-                    let r = reduce, kk = k;
-                    tasks +=
-                        [task::spawn_joinable(bind reduce_task(r, kk,
-                                                               chan(p)))];
-                    c = recv(p);
-                    treemap::insert(reducers, k, c);
+                      log_err "creating new reducer for ";
+                      let p = port();
+                      let r = reduce, kk = k;
+                      tasks +=
+                          [task::spawn_joinable(bind reduce_task(r, kk,
+                                                                 chan(p)))];
+                      c = recv(p);
+                      treemap::insert(reducers, k, c);
                   }
                 }
                 send(cc, c);
@@ -218,10 +232,12 @@ fn main(argv: [str]) {
     // address space otherwise.
     task::set_min_stack(8192u);
 
+    log_err "starting map_reduce";
     let start = time::precise_time_ns();
 
     map_reduce::map_reduce(map, reduce, iargs);
     let stop = time::precise_time_ns();
+    log_err "done";
 
     let elapsed = stop - start;
     elapsed /= 1000000u64;
