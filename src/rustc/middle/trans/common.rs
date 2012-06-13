@@ -350,43 +350,31 @@ type node_info = {
 // code.  Each basic block we generate is attached to a function, typically
 // with many basic blocks per function.  All the basic blocks attached to a
 // function are organized as a directed graph.
-class block_ {
+type block = @{
     // The BasicBlockRef returned from a call to
     // llvm::LLVMAppendBasicBlock(llfn, name), which adds a basic
     // block to the function pointed to by llfn.  We insert
     // instructions into that block by way of this block context.
     // The block pointing to this one in the function's digraph.
-    let llbb: BasicBlockRef;
-    let mut terminated: bool;
-    let mut unreachable: bool;
-    let parent: option<block>;
+    llbb: BasicBlockRef,
+    mut terminated: bool,
+    mut unreachable: bool,
+    parent: block_parent,
     // The 'kind' of basic block this is.
-    let kind: block_kind;
+    kind: block_kind,
     // info about the AST node this block originated from, if any
-    let node_info: option<node_info>;
+    node_info: option<node_info>,
     // The function context for the function to which this block is
     // attached.
-    let fcx: fn_ctxt;
-    new(llbb: BasicBlockRef, parent: option<block>, -kind: block_kind,
-        node_info: option<node_info>, fcx: fn_ctxt) {
-        // sigh
-        self.llbb = llbb; self.terminated = false; self.unreachable = false;
-        self.parent = parent; self.kind = kind; self.node_info = node_info;
-        self.fcx = fcx;
-    }
-}
-
-/* This must be enum and not type, or trans goes into an infinite loop (#2572)
- */
-enum block = @block_;
-
-fn mk_block(llbb: BasicBlockRef, parent: option<block>, -kind: block_kind,
-         node_info: option<node_info>, fcx: fn_ctxt) -> block {
-   block(@block_(llbb, parent, kind, node_info, fcx))
-}
+    fcx: fn_ctxt
+};
 
 // First two args are retptr, env
 const first_real_arg: uint = 2u;
+
+// FIXME move blocks to a class once those are finished, and simply use
+// option<block> for this. (#2532)
+enum block_parent { parent_none, parent_some(block), }
 
 type result = {bcx: block, val: ValueRef};
 type result_t = {bcx: block, val: ValueRef, ty: ty::t};
@@ -424,11 +412,7 @@ fn in_scope_cx(cx: block, f: fn(scope_info)) {
 }
 
 fn block_parent(cx: block) -> block {
-    alt cx.parent {
-      some(b) { b }
-      none    { cx.sess().bug(#fmt("block_parent called on root block %?",
-                                   cx)); }
-    }
+    alt check cx.parent { parent_some(b) { b } }
 }
 
 // Accessors
