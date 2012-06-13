@@ -46,6 +46,9 @@ impl methods for lookup {
     fn tcx() -> ty::ctxt { self.fcx.ccx.tcx }
 
     fn method_from_param(n: uint, did: ast::def_id) -> option<method_origin> {
+
+        #debug["method_from_param"];
+
         let tcx = self.tcx();
         let mut iface_bnd_idx = 0u; // count only iface bounds
         let bounds = tcx.ty_param_bounds.get(did.node);
@@ -111,6 +114,8 @@ impl methods for lookup {
     fn method_from_iface(
         did: ast::def_id, iface_substs: ty::substs) -> option<method_origin> {
 
+        #debug["method_from_iface"];
+
         let ms = *ty::iface_methods(self.tcx(), did);
         for ms.eachi {|i, m|
             if m.ident != self.m_name { cont; }
@@ -146,6 +151,8 @@ impl methods for lookup {
 
     fn method_from_class(did: ast::def_id, class_substs: ty::substs)
         -> option<method_origin> {
+
+        #debug["method_from_class"];
 
         let ms = *ty::iface_methods(self.tcx(), did);
 
@@ -199,6 +206,8 @@ impl methods for lookup {
     fn method_from_scope() -> option<method_origin> {
         let impls_vecs = self.fcx.ccx.impl_map.get(self.expr.id);
 
+        #debug["method_from_scope"];
+
         for list::each(impls_vecs) {|impls|
             let mut results = [];
             for vec::each(*impls) {|im|
@@ -212,9 +221,11 @@ impl methods for lookup {
 
                     // if we can assign the caller to the callee, that's a
                     // potential match.  Collect those in the vector.
-                    alt self.fcx.can_mk_assignty(
+                    let can_assign = self.fcx.can_mk_assignty(
                         self.self_expr, self.borrow_scope,
-                        self.self_ty, impl_ty) {
+                        self.self_ty, impl_ty);
+                    #debug["can_assign = %?", can_assign];
+                    alt can_assign {
                       result::err(_) { /* keep looking */ }
                       result::ok(_) {
                         results += [(impl_ty, impl_substs, m.n_tps, m.did)];

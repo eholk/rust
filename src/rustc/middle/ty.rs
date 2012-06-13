@@ -2975,21 +2975,18 @@ fn is_binopable(_cx: ctxt, ty: t, op: ast::binop) -> bool {
     const t: bool = true;
     const f: bool = false;
 
-    /*.          add,     shift,   bit
-      .             sub,     rel,     logic
-      .                mult,    eq,         */
-    /*other*/
-    /*bool*/
-    /*int*/
-    /*float*/
-    /*str*/
-    /*vec*/
-    /*bot*/
+    /*. add,   shift,     bit,
+      .    sub,     rel,   logic
+      .      mult,      eq,         */
     let tbl =
-        [[f, f, f, f, t, t, f, f], [f, f, f, f, t, t, t, t],
-         [t, t, t, t, t, t, t, f], [t, t, t, f, t, t, f, f],
-         [t, f, f, f, t, t, f, f], [t, f, f, f, t, t, f, f],
-         [f, f, f, f, t, t, f, f], [t, t, t, t, t, t, t, t]]; /*struct*/
+        [[f, f, f, f, t, t, f, f],  /*other*/
+         [f, f, f, f, t, t, t, t],  /*bool*/
+         [t, t, t, t, t, t, t, f],  /*int*/
+         [t, t, t, f, t, t, f, f],  /*float*/
+         [t, f, f, f, t, t, f, f],  /*str*/
+         [f, f, f, f, t, t, f, f],  /*vec*/
+         [f, f, f, f, t, t, f, f],  /*bot*/
+         [t, t, t, t, t, t, t, t]]; /*struct*/
 
     ret tbl[tycat(ty)][opcat(op)];
 }

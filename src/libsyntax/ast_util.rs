@@ -451,9 +451,9 @@ fn id_visitor(vfn: fn@(node_id)) -> visit::vt<()> {
 
         visit_expr: fn@(e: @expr) {
             vfn(e.id);
-            alt e.node { 
+            alt e.node {
               expr_index(*) | expr_assign_op(*) |
-              expr_unary(_, _) | expr_binary(_, _, _) {
+              expr_unary(*) | expr_binary(*) {
                 vfn(ast_util::op_expr_callee_id(e));
               }
               _ { /* fallthrough */ }
@@ -477,12 +477,17 @@ fn id_visitor(vfn: fn@(node_id)) -> visit::vt<()> {
             vfn(id);
         },
 
-        visit_fn: fn@(fk: visit::fn_kind, d: fn_decl,
-                      _b: blk, _sp: span, id: node_id) {
+        visit_fn: fn@(fk: visit::fn_kind, d: ast::fn_decl,
+                      _b: ast::blk, _sp: span, id: ast::node_id) {
             vfn(id);
 
             alt fk {
-              visit::fk_ctor(_, tps, self_id, parent_id) |
+              visit::fk_ctor(nm, tps, self_id, parent_id) {
+                vec::iter(tps) {|tp| vfn(tp.id)}
+                vfn(id);
+                vfn(self_id);
+                vfn(parent_id.node);
+              }
               visit::fk_dtor(tps, self_id, parent_id) {
                 vec::iter(tps) {|tp| vfn(tp.id)}
                 vfn(id);
@@ -497,7 +502,11 @@ fn id_visitor(vfn: fn@(node_id)) -> visit::vt<()> {
                 vfn(m.self_id);
                 vec::iter(tps) {|tp| vfn(tp.id)}
               }
-              visit::fk_anon(*) | visit::fk_fn_block(*) {
+              visit::fk_anon(_, capture_clause)
+              | visit::fk_fn_block(capture_clause) {
+                for vec::each(*capture_clause) {|clause|
+                    vfn(clause.id);
+                }
               }
             }
 
