@@ -15,6 +15,8 @@ enum CallConv {
     ColdCallConv = 9,
     X86StdcallCallConv = 64,
     X86FastcallCallConv = 65,
+    PTXKernel = 71,
+    PTXDevice = 72,
 }
 
 enum Visibility {

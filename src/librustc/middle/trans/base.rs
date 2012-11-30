@@ -30,6 +30,7 @@ use visit::vt;
 use util::common::is_main_name;
 use lib::llvm::{llvm, mk_target_data, mk_type_names};
 use lib::llvm::{ModuleRef, ValueRef, TypeRef, BasicBlockRef};
+use lib::llvm::{PTXKernel, PTXDevice};
 use lib::llvm::{True, False};
 use link::{mangle_internal_name_by_type_only,
               mangle_internal_name_by_seq,
@@ -2128,13 +2129,21 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
                 g
               }
               ast::item_fn(_, purity, _, _) => {
-                let llfn = if purity != ast::extern_fn {
-                    register_fn(ccx, i.span, my_path, i.id)
-                } else {
-                    foreign::register_foreign_fn(ccx, i.span, my_path, i.id)
-                };
-                set_inline_hint_if_appr(i.attrs, llfn);
-                llfn
+                  let llfn = if purity != ast::extern_fn {
+                      register_fn(ccx, i.span, my_path, i.id)
+                  } else {
+                      foreign::register_foreign_fn(ccx, i.span, my_path, i.id)
+                  };
+                  set_inline_hint_if_appr(i.attrs, llfn);
+
+                  if attr::attrs_contains_name(i.attrs, ~"kernel") {
+                      lib::llvm::SetFunctionCallConv(llfn, PTXKernel);
+                  }
+                  else if attr::attrs_contains_name(i.attrs, ~"device") {
+                      lib::llvm::SetFunctionCallConv(llfn, PTXDevice);
+                  }
+                  
+                  llfn
               }
               _ => fail ~"get_item_val: weird result in table"
             }
