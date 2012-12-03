@@ -293,7 +293,11 @@ mod write {
                 // type corresponding to the '-c' or '-S' flag used
 
                 let _: () = str::as_c_str(
-                    sess.targ_cfg.target_strs.target_triple,
+                    if (sess.opts.debugging_opts & session::ptx) == 0 {
+                        sess.targ_cfg.target_strs.target_triple
+                    } else {
+                        ~"nvptx"
+                    },
                     |buf_t| {
                         str::as_c_str(output.to_str(), |buf_o| {
                             WriteOutputFile(

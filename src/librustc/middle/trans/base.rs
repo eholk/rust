@@ -2670,9 +2670,14 @@ fn trans_crate(sess: session::Session,
     let _: () =
         str::as_c_str(data_layout,
                     |buf| llvm::LLVMSetDataLayout(llmod, buf));
-    let _: () =
-        str::as_c_str(targ_triple,
-                    |buf| llvm::LLVMSetTarget(llmod, buf));
+    let llvm_target = if (sess.opts.debugging_opts & session::ptx) == 0 {
+        targ_triple
+    }
+    else {
+        ~"nvptx"
+    };
+    str::as_c_str(llvm_target,
+                  |buf| llvm::LLVMSetTarget(llmod, buf));
     let targ_cfg = sess.targ_cfg;
     let td = mk_target_data(sess.targ_cfg.target_strs.data_layout);
     let tn = mk_type_names();

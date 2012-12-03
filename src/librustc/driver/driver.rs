@@ -721,7 +721,12 @@ fn build_output_filenames(input: input,
         match sopts.output_type {
           link::output_type_none => ~"none",
           link::output_type_bitcode => ~"bc",
-          link::output_type_assembly => ~"s",
+          link::output_type_assembly =>
+            if (sopts.debugging_opts & session::ptx) == 0 {
+                ~"s"
+            } else {
+                ~"ptx"
+            },
           link::output_type_llvm_assembly => ~"ll",
           // Object and exe output both use the '.o' extension here
           link::output_type_object | link::output_type_exe => ~"o"

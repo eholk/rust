@@ -55,6 +55,7 @@ const debug_llvm: uint = 1 << 13;
 const count_type_sizes: uint = 1 << 14;
 const meta_stats: uint = 1 << 15;
 const no_opt: uint = 1 << 16;
+const ptx: uint = 1 << 17;
 
 fn debugging_opts_map() -> ~[(~str, ~str, uint)] {
     ~[(~"verbose", ~"in general, enable more debug printouts", verbose),
@@ -80,6 +81,7 @@ fn debugging_opts_map() -> ~[(~str, ~str, uint)] {
       count_type_sizes),
      (~"meta-stats", ~"gather metadata statistics", meta_stats),
      (~"no-opt", ~"do not optimize, even if -O is passed", no_opt),
+     (~"ptx", ~"generate PTX code", ptx)
     ]
 }
 
