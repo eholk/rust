@@ -127,7 +127,7 @@ fn type_of(cx: @crate_ctxt, t: ty::t) -> TypeRef {
         T_vec(cx, type_of(cx, mt.ty))
       }
       ty::ty_ptr(mt) => T_ptr(type_of(cx, mt.ty)),
-      ty::ty_rptr(_, mt) => T_ptr(type_of(cx, mt.ty)),
+      ty::ty_rptr(_, mt) => T_rptr(cx.sess, type_of(cx, mt.ty)),
 
       ty::ty_evec(mt, ty::vstore_slice(_)) => {
         T_struct(~[T_ptr(type_of(cx, mt.ty)),
