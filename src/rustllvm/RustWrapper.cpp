@@ -52,6 +52,8 @@
 #include <unistd.h>
 #endif
 
+#include <iostream>
+
 using namespace llvm;
 using namespace llvm::sys;
 
@@ -99,6 +101,10 @@ void LLVMRustInitializeTargets() {
   LLVMInitializeX86TargetMC();
   LLVMInitializeX86AsmPrinter();
   LLVMInitializeX86AsmParser();
+  LLVMInitializeNVPTXTargetInfo();
+  LLVMInitializeNVPTXTarget();
+  LLVMInitializeNVPTXTargetMC();
+  LLVMInitializeNVPTXAsmPrinter();
 }
 
 // Custom memory manager for MCJITting. It needs special features
@@ -399,6 +405,12 @@ LLVMRustWriteOutputFile(LLVMPassManagerRef PMR,
 
   std::string Err;
   const Target *TheTarget = TargetRegistry::lookupTarget(triple, Err);
+
+  if (!TheTarget) {
+      std::cerr << Err << std::endl;
+      abort();
+  }
+
   std::string FeaturesStr;
   std::string Trip(triple);
   std::string CPUStr("generic");

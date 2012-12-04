@@ -380,6 +380,7 @@ LLVMInitializeCodeGen
 LLVMInitializeFunctionPassManager
 LLVMInitializeIPA
 LLVMInitializeInstCombine
+LLVMInitializeNVPTXTargetInfo
 LLVMInitializeScalarOpts
 LLVMInitializeTarget
 LLVMInitializeTransformUtils
