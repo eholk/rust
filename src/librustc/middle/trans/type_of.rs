@@ -38,8 +38,14 @@ fn type_of_fn(cx: @crate_ctxt, inputs: ~[ty::arg],
               output: ty::t) -> TypeRef {
     let mut atys: ~[TypeRef] = ~[];
 
+    let addrspace = if (cx.sess.opts.debugging_opts & session::ptx) != 0 {
+        common::nvptx_global_addrspace
+    } else {
+        default_addrspace
+    };
+
     // Arg 0: Output pointer.
-    atys.push(T_ptr(type_of(cx, output)));
+    atys.push(T_root(type_of(cx, output), addrspace));
 
     // Arg 1: Environment
     atys.push(T_opaque_box_ptr(cx));

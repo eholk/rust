@@ -925,7 +925,11 @@ fn T_opaque_box(cx: @crate_ctxt) -> TypeRef {
 }
 
 fn T_opaque_box_ptr(cx: @crate_ctxt) -> TypeRef {
-    return T_box_ptr(T_opaque_box(cx));
+    if (cx.sess.opts.debugging_opts & session::ptx) == 0 {
+        return T_box_ptr(T_opaque_box(cx));
+    } else {
+        llvm::LLVMPointerType(T_opaque_box(cx), nvptx_global_addrspace)
+    }
 }
 
 fn T_unique(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
