@@ -39,11 +39,15 @@ type addrspace = c_uint;
 //    1 is for opaque GC'd boxes.
 //    >= 2 are for specific types (e.g. resources).
 const default_addrspace: addrspace = 0;
-const gc_box_addrspace: addrspace = 1;
+// Start the rest of the address spaces at 6, since nvptx uses the first 5 for
+// its own purposes.
+const gc_box_addrspace: addrspace = 6;
+
+const nvptx_global_addrspace: addrspace = 1;
 
 type addrspace_gen = fn@() -> addrspace;
 fn new_addrspace_gen() -> addrspace_gen {
-    let i = @mut 1;
+    let i = @mut gc_box_addrspace;
     return fn@() -> addrspace { *i += 1; *i };
 }
 
@@ -771,6 +775,16 @@ fn T_ptr(t: TypeRef) -> TypeRef {
     return llvm::LLVMPointerType(t, default_addrspace);
 }
 
+fn T_rptr(sess: session::Session, t: TypeRef) -> TypeRef {
+    let addrspace = if (sess.opts.debugging_opts & session::ptx) != 0 {
+        nvptx_global_addrspace
+    } else {
+        default_addrspace
+    };
+
+    T_root(t, addrspace)
+}
+
 fn T_root(t: TypeRef, addrspace: addrspace) -> TypeRef {
     return llvm::LLVMPointerType(t, addrspace);
 }
@@ -911,7 +925,11 @@ fn T_opaque_box(cx: @crate_ctxt) -> TypeRef {
 }
 
 fn T_opaque_box_ptr(cx: @crate_ctxt) -> TypeRef {
-    return T_box_ptr(T_opaque_box(cx));
+    if (cx.sess.opts.debugging_opts & session::ptx) == 0 {
+        return T_box_ptr(T_opaque_box(cx));
+    } else {
+        llvm::LLVMPointerType(T_opaque_box(cx), nvptx_global_addrspace)
+    }
 }
 
 fn T_unique(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
