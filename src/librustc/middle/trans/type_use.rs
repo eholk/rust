@@ -92,6 +92,9 @@ fn type_uses_for(ccx: @crate_ctxt, fn_id: def_id, n_tps: uint)
                                  abi, _) => {
         if abi == foreign_abi_rust_intrinsic {
             let flags = match cx.ccx.sess.str_of(i.ident) {
+                ~"ptx_tid_x" | ~"ptx_tid_y" | ~"ptx_tid_z" | ~"ptx_tid_w" |
+                ~"ptx_ntid_x" | ~"ptx_ntid_y" | ~"ptx_ntid_z" | ~"ptx_ntid_w" |
+                ~"ptx_ctaid_x" | ~"ptx_ctaid_y" | ~"ptx_ctaid_z" | ~"ptx_ctaid_w" |
                 ~"size_of"  | ~"pref_align_of"    | ~"min_align_of" |
                 ~"init"     | ~"reinterpret_cast" |
                 ~"move_val" | ~"move_val_init" => use_repr,

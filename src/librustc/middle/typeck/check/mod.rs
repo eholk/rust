@@ -2816,6 +2816,18 @@ fn check_intrinsic_type(ccx: @crate_ctxt, it: @ast::foreign_item) {
     }
     let tcx = ccx.tcx;
     let (n_tps, inputs, output) = match ccx.tcx.sess.str_of(it.ident) {
+      ~"ptx_tid_x" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_tid_y" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_tid_z" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_tid_w" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ntid_x" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ntid_y" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ntid_z" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ntid_w" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ctaid_x" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ctaid_y" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ctaid_z" => (0u, ~[], ty::mk_i32(ccx.tcx)),
+      ~"ptx_ctaid_w" => (0u, ~[], ty::mk_i32(ccx.tcx)),
       ~"size_of" |
       ~"pref_align_of" | ~"min_align_of" => (1u, ~[], ty::mk_uint(ccx.tcx)),
       ~"init" => (1u, ~[], param(ccx, 0u)),

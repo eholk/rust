@@ -1024,6 +1024,54 @@ fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
                                              T_ptr(T_nil()));
             Store(bcx, morestack_addr, fcx.llretptr);
         }
+        ~"ptx_tid_x" => {
+            let ptx_tid_x = ccx.intrinsics.get(~"llvm.ptx.read.tid.x");
+            Store(bcx, Call(bcx, ptx_tid_x, ~[]), fcx.llretptr);
+        }
+        ~"ptx_tid_y" => {
+            let ptx_tid_y = ccx.intrinsics.get(~"llvm.ptx.read.tid.y");
+            Store(bcx, Call(bcx, ptx_tid_y, ~[]), fcx.llretptr);
+        }
+        ~"ptx_tid_z" => {
+            let ptx_tid_z = ccx.intrinsics.get(~"llvm.ptx.read.tid.z");
+            Store(bcx, Call(bcx, ptx_tid_z, ~[]), fcx.llretptr);
+        }
+        ~"ptx_tid_w" => {
+            let ptx_tid_w = ccx.intrinsics.get(~"llvm.ptx.read.tid.w");
+            Store(bcx, Call(bcx, ptx_tid_w, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ntid_x" => {
+            let ptx_ntid_x = ccx.intrinsics.get(~"llvm.ptx.read.ntid.x");
+            Store(bcx, Call(bcx, ptx_ntid_x, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ntid_y" => {
+            let ptx_ntid_y = ccx.intrinsics.get(~"llvm.ptx.read.ntid.y");
+            Store(bcx, Call(bcx, ptx_ntid_y, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ntid_z" => {
+            let ptx_ntid_z = ccx.intrinsics.get(~"llvm.ptx.read.ntid.z");
+            Store(bcx, Call(bcx, ptx_ntid_z, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ntid_w" => {
+            let ptx_ntid_w = ccx.intrinsics.get(~"llvm.ptx.read.ntid.w");
+            Store(bcx, Call(bcx, ptx_ntid_w, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ctaid_x" => {
+            let ptx_ctaid_x = ccx.intrinsics.get(~"llvm.ptx.read.ctaid.x");
+            Store(bcx, Call(bcx, ptx_ctaid_x, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ctaid_y" => {
+            let ptx_ctaid_y = ccx.intrinsics.get(~"llvm.ptx.read.ctaid.y");
+            Store(bcx, Call(bcx, ptx_ctaid_y, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ctaid_z" => {
+            let ptx_ctaid_z = ccx.intrinsics.get(~"llvm.ptx.read.ctaid.z");
+            Store(bcx, Call(bcx, ptx_ctaid_z, ~[]), fcx.llretptr);
+        }
+        ~"ptx_ctaid_w" => {
+            let ptx_ctaid_w = ccx.intrinsics.get(~"llvm.ptx.read.ctaid.w");
+            Store(bcx, Call(bcx, ptx_ctaid_w, ~[]), fcx.llretptr);
+        }
         _ => {
             // Could we make this an enum rather than a string? does it get
             // checked earlier?

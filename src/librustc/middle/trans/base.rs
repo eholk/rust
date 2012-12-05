@@ -2391,6 +2391,48 @@ fn declare_intrinsics(llmod: ModuleRef) -> HashMap<~str, ValueRef> {
     return intrinsics;
 }
 
+fn declare_nvptx_intrinsics(llmod: ModuleRef,
+                            intrinsics: HashMap<~str, ValueRef>) {
+    let T_trap_args: ~[TypeRef] = ~[];
+    
+    let read_tid_x = decl_cdecl_fn(llmod, ~"llvm.ptx.read.tid.x",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_tid_y = decl_cdecl_fn(llmod, ~"llvm.ptx.read.tid.y",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_tid_z = decl_cdecl_fn(llmod, ~"llvm.ptx.read.tid.z",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_tid_w = decl_cdecl_fn(llmod, ~"llvm.ptx.read.tid.w",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ntid_x = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ntid.x",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ntid_y = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ntid.y",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ntid_z = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ntid.z",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ntid_w = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ntid.w",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ctaid_x = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ctaid.x",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ctaid_y = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ctaid.y",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ctaid_z = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ctaid.z",
+                                   T_fn(T_trap_args, T_i32()));
+    let read_ctaid_w = decl_cdecl_fn(llmod, ~"llvm.ptx.read.ctaid.w",
+                                   T_fn(T_trap_args, T_i32()));
+    intrinsics.insert(~"llvm.ptx.read.tid.x", read_tid_x);
+    intrinsics.insert(~"llvm.ptx.read.tid.y", read_tid_y);
+    intrinsics.insert(~"llvm.ptx.read.tid.z", read_tid_z);
+    intrinsics.insert(~"llvm.ptx.read.tid.w", read_tid_w);
+    intrinsics.insert(~"llvm.ptx.read.ntid.x", read_ntid_x);
+    intrinsics.insert(~"llvm.ptx.read.ntid.y", read_ntid_y);
+    intrinsics.insert(~"llvm.ptx.read.ntid.z", read_ntid_z);
+    intrinsics.insert(~"llvm.ptx.read.ntid.w", read_ntid_w);
+    intrinsics.insert(~"llvm.ptx.read.ctaid.x", read_ctaid_x);
+    intrinsics.insert(~"llvm.ptx.read.ctaid.y", read_ctaid_y);
+    intrinsics.insert(~"llvm.ptx.read.ctaid.z", read_ctaid_z);
+    intrinsics.insert(~"llvm.ptx.read.ctaid.w", read_ctaid_w);
+}
+
 fn declare_dbg_intrinsics(llmod: ModuleRef,
                           intrinsics: HashMap<~str, ValueRef>) {
     let declare =
@@ -2685,6 +2727,8 @@ fn trans_crate(sess: session::Session,
     if sess.opts.extra_debuginfo {
         declare_dbg_intrinsics(llmod, intrinsics);
     }
+    declare_nvptx_intrinsics(llmod, intrinsics);
+
     let int_type = T_int(targ_cfg);
     let float_type = T_float(targ_cfg);
     let task_type = T_task(targ_cfg);
