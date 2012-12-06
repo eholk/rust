@@ -2142,7 +2142,7 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
                   else if attr::attrs_contains_name(i.attrs, ~"device") {
                       lib::llvm::SetFunctionCallConv(llfn, PTXDevice);
                   }
-                  
+
                   llfn
               }
               _ => fail ~"get_item_val: weird result in table"
@@ -2394,7 +2394,7 @@ fn declare_intrinsics(llmod: ModuleRef) -> HashMap<~str, ValueRef> {
 fn declare_nvptx_intrinsics(llmod: ModuleRef,
                             intrinsics: HashMap<~str, ValueRef>) {
     let T_trap_args: ~[TypeRef] = ~[];
-    
+
     let read_tid_x = decl_cdecl_fn(llmod, ~"llvm.ptx.read.tid.x",
                                    T_fn(T_trap_args, T_i32()));
     let read_tid_y = decl_cdecl_fn(llmod, ~"llvm.ptx.read.tid.y",
