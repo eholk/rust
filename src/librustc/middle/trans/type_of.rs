@@ -10,6 +10,7 @@ export type_of_dtor;
 export type_of_explicit_arg;
 export type_of_explicit_args;
 export type_of_fn_from_ty;
+export type_of_kernel_fn_from_ty;
 export type_of_fn;
 export type_of_glue_fn;
 export type_of_non_gc_box;
@@ -38,6 +39,28 @@ fn type_of_fn(cx: @crate_ctxt, inputs: ~[ty::arg],
               output: ty::t) -> TypeRef {
     let mut atys: ~[TypeRef] = ~[];
 
+    // Arg 0: Output pointer.
+    atys.push(T_root(type_of(cx, output), default_addrspace));
+
+    // Arg 1: Environment
+    atys.push(T_opaque_box_ptr(cx));
+
+    // ... then explicit args.
+    atys.push_all(type_of_explicit_args(cx, inputs));
+    return T_fn(atys, llvm::LLVMVoidType());
+}
+
+// Given a function type and a count of ty params, construct an llvm type
+fn type_of_fn_from_ty(cx: @crate_ctxt, fty: ty::t) -> TypeRef {
+    type_of_fn(cx, ty::ty_fn_args(fty), ty::ty_fn_ret(fty))
+}
+
+fn type_of_kernel_fn_from_ty(cx: @crate_ctxt, fty: ty::t) -> TypeRef {
+    let inputs = ty::ty_fn_args(fty);
+    let output = ty::ty_fn_ret(fty);
+
+    let mut atys: ~[TypeRef] = ~[];
+
     let addrspace = if (cx.sess.opts.debugging_opts & session::ptx) != 0 {
         common::nvptx_global_addrspace
     } else {
@@ -53,11 +76,6 @@ fn type_of_fn(cx: @crate_ctxt, inputs: ~[ty::arg],
     // ... then explicit args.
     atys.push_all(type_of_explicit_args(cx, inputs));
     return T_fn(atys, llvm::LLVMVoidType());
-}
-
-// Given a function type and a count of ty params, construct an llvm type
-fn type_of_fn_from_ty(cx: @crate_ctxt, fty: ty::t) -> TypeRef {
-    type_of_fn(cx, ty::ty_fn_args(fty), ty::ty_fn_ret(fty))
 }
 
 fn type_of_non_gc_box(cx: @crate_ctxt, t: ty::t) -> TypeRef {

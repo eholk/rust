@@ -2113,41 +2113,47 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
             }
         }
 
-        // Failing that, look for an item.
-        let mut exprt = false;
-        let val = match ccx.tcx.items.get(id) {
-          ast_map::node_item(i, pth) => {
-            let my_path = vec::append(*pth, ~[path_name(i.ident)]);
-            match i.node {
-              ast::item_const(_, _) => {
-                let typ = ty::node_id_to_type(ccx.tcx, i.id);
-                let s = mangle_exported_name(ccx, my_path, typ);
-                let g = str::as_c_str(s, |buf| {
-                    llvm::LLVMAddGlobal(ccx.llmod, type_of(ccx, typ), buf)
-                });
-                ccx.item_symbols.insert(i.id, s);
-                g
-              }
-              ast::item_fn(_, purity, _, _) => {
-                  let llfn = if purity != ast::extern_fn {
-                      register_fn(ccx, i.span, my_path, i.id)
-                  } else {
-                      foreign::register_foreign_fn(ccx, i.span, my_path, i.id)
-                  };
-                  set_inline_hint_if_appr(i.attrs, llfn);
+          // Failing that, look for an item.
+          let mut exprt = false;
+          let val = match ccx.tcx.items.get(id) {
+              ast_map::node_item(i, pth) => {
+                  let my_path = vec::append(*pth, ~[path_name(i.ident)]);
+                  match i.node {
+                      ast::item_const(_, _) => {
+                          let typ = ty::node_id_to_type(ccx.tcx, i.id);
+                          let s = mangle_exported_name(ccx, my_path, typ);
+                          let g = str::as_c_str(s, |buf| {
+                              llvm::LLVMAddGlobal(ccx.llmod, type_of(ccx, typ), buf)
+                          });
+                          ccx.item_symbols.insert(i.id, s);
+                          g
+                      }
+                      ast::item_fn(_, purity, _, _) =>
+                      if attr::attrs_contains_name(i.attrs, ~"kernel") {
+                          let t = ty::node_id_to_type(ccx.tcx, i.id);
+                          let llfty = type_of_kernel_fn_from_ty(ccx, t);
+                          let llfn = register_fn_fuller(ccx, i.span, my_path, i.id, t,
+                                                        PTXKernel, llfty);
 
-                  if attr::attrs_contains_name(i.attrs, ~"kernel") {
-                      lib::llvm::SetFunctionCallConv(llfn, PTXKernel);
-                  }
-                  else if attr::attrs_contains_name(i.attrs, ~"device") {
-                      lib::llvm::SetFunctionCallConv(llfn, PTXDevice);
-                  }
+                          set_inline_hint_if_appr(i.attrs, llfn);
+                          llfn
+                      } else {
+                          let llfn = if purity != ast::extern_fn {
+                              register_fn(ccx, i.span, my_path, i.id)
+                          } else {
+                              foreign::register_foreign_fn(ccx, i.span, my_path, i.id)
+                          };
+                          set_inline_hint_if_appr(i.attrs, llfn);
 
-                  llfn
+                          if attr::attrs_contains_name(i.attrs, ~"device") {
+                              lib::llvm::SetFunctionCallConv(llfn, PTXDevice);
+                          }
+
+                          llfn
+                      },
+                      _ => fail ~"get_item_val: weird result in table"
+                  }
               }
-              _ => fail ~"get_item_val: weird result in table"
-            }
-          }
           ast_map::node_trait_method(trait_method, _, pth) => {
             debug!("get_item_val(): processing a node_trait_method");
             match *trait_method {
