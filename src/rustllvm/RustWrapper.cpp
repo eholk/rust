@@ -413,7 +413,14 @@ LLVMRustWriteOutputFile(LLVMPassManagerRef PMR,
 
   std::string FeaturesStr;
   std::string Trip(triple);
-  std::string CPUStr("generic");
+  //std::string CPUStr("generic");
+  std::string CPUStr;
+  if(Trip == "nvptx" || Trip == "nvptx64") {
+      CPUStr = "sm_13";
+  }
+  else {
+      CPUStr = "generic";
+  }
   TargetMachine *Target =
     TheTarget->createTargetMachine(Trip, CPUStr, FeaturesStr,
 				   Options, Reloc::PIC_,
