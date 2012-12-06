@@ -2123,7 +2123,9 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
                           let typ = ty::node_id_to_type(ccx.tcx, i.id);
                           let s = mangle_exported_name(ccx, my_path, typ);
                           let g = str::as_c_str(s, |buf| {
-                              llvm::LLVMAddGlobal(ccx.llmod, type_of(ccx, typ), buf)
+                              llvm::LLVMAddGlobal(ccx.llmod,
+                                                  type_of(ccx, typ),
+                                                  buf)
                           });
                           ccx.item_symbols.insert(i.id, s);
                           g
@@ -2132,7 +2134,8 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
                       if attr::attrs_contains_name(i.attrs, ~"kernel") {
                           let t = ty::node_id_to_type(ccx.tcx, i.id);
                           let llfty = type_of_kernel_fn_from_ty(ccx, t);
-                          let llfn = register_fn_fuller(ccx, i.span, my_path, i.id, t,
+                          let llfn = register_fn_fuller(ccx, i.span, my_path,
+                                                        i.id, t,
                                                         PTXKernel, llfty);
 
                           set_inline_hint_if_appr(i.attrs, llfn);
@@ -2141,7 +2144,8 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
                           let llfn = if purity != ast::extern_fn {
                               register_fn(ccx, i.span, my_path, i.id)
                           } else {
-                              foreign::register_foreign_fn(ccx, i.span, my_path, i.id)
+                              foreign::register_foreign_fn(ccx, i.span,
+                                                           my_path, i.id)
                           };
                           set_inline_hint_if_appr(i.attrs, llfn);
 
