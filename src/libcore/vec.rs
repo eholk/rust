@@ -1960,6 +1960,9 @@ pub mod raw {
       * may overlap.
       */
     pub unsafe fn memcpy<T>(dst: &[mut T], src: &[const T], count: uint) {
+        assert dst.len() >= count;
+        assert src.len() >= count;
+
         do as_mut_buf(dst) |p_dst, _len_dst| {
             do as_const_buf(src) |p_src, _len_src| {
                 ptr::memcpy(p_dst, p_src, count)
@@ -1974,6 +1977,9 @@ pub mod raw {
       * may overlap.
       */
     pub unsafe fn memmove<T>(dst: &[mut T], src: &[const T], count: uint) {
+        assert dst.len() >= count;
+        assert src.len() >= count;
+
         do as_mut_buf(dst) |p_dst, _len_dst| {
             do as_const_buf(src) |p_src, _len_src| {
                 ptr::memmove(p_dst, p_src, count)
@@ -2035,9 +2041,7 @@ pub mod bytes {
       * may not overlap.
       */
     pub fn memcpy(dst: &[mut u8], src: &[const u8], count: uint) {
-        assert dst.len() >= count;
-        assert src.len() >= count;
-
+        // Bound checks are done at vec::raw::memcpy.
         unsafe { vec::raw::memcpy(dst, src, count) }
     }
 
@@ -2048,9 +2052,7 @@ pub mod bytes {
       * may overlap.
       */
     pub fn memmove(dst: &[mut u8], src: &[const u8], count: uint) {
-        assert dst.len() >= count;
-        assert src.len() >= count;
-
+        // Bound checks are done at vec::raw::memmove.
         unsafe { vec::raw::memmove(dst, src, count) }
     }
 }
@@ -3730,6 +3732,15 @@ mod tests {
             fail
         }
     }
+
+    #[test]
+    #[should_fail]
+    fn test_memcpy_oob() unsafe {
+        let a = [mut 1, 2, 3, 4];
+        let b = [1, 2, 3, 4, 5];
+        raw::memcpy(a, b, 5);
+    }
+
 }
 
 // Local Variables:

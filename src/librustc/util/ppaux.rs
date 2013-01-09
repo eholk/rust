@@ -13,7 +13,8 @@ use middle::ty;
 use middle::ty::{arg, canon_mode};
 use middle::ty::{bound_copy, bound_const, bound_durable, bound_owned,
         bound_trait};
-use middle::ty::{bound_region, br_anon, br_named, br_self, br_cap_avoid};
+use middle::ty::{bound_region, br_anon, br_named, br_self, br_cap_avoid,
+                 br_fresh};
 use middle::ty::{ctxt, field, method};
 use middle::ty::{mt, t, param_bound};
 use middle::ty::{re_bound, re_free, re_scope, re_infer, re_static, Region};
@@ -94,6 +95,7 @@ fn explain_region_and_span(cx: ctxt, region: ty::Region)
         let prefix = match br {
           br_anon(idx) => fmt!("the anonymous lifetime #%u defined on",
                                idx + 1),
+          br_fresh(_) => fmt!("an anonymous lifetime defined on"),
           _ => fmt!("the lifetime %s as defined on",
                     bound_region_to_str(cx, br))
         };
@@ -140,6 +142,7 @@ fn bound_region_to_str_adorned(cx: ctxt, prefix: &str,
       br_named(id)         => fmt!("%s%s%s", prefix, cx.sess.str_of(id), sep),
       br_self              => fmt!("%sself%s", prefix, sep),
       br_anon(_)           => prefix.to_str(),
+      br_fresh(_)          => prefix.to_str(),
       br_cap_avoid(_, br)  => bound_region_to_str_adorned(cx, prefix,
                                                           *br, sep)
     }
@@ -158,7 +161,7 @@ fn re_scope_id_to_str(cx: ctxt, node_id: ast::node_id) -> ~str {
                  cx.sess.codemap.span_to_str(expr.span))
           }
           ast::expr_match(*) => {
-            fmt!("<alt at %s>",
+            fmt!("<match at %s>",
                  cx.sess.codemap.span_to_str(expr.span))
           }
           ast::expr_assign_op(*) |
@@ -259,7 +262,7 @@ fn expr_repr(cx: ctxt, expr: @ast::expr) -> ~str {
          pprust::expr_to_str(expr, cx.sess.intr()))
 }
 
-fn tys_to_str(cx: ctxt, ts: ~[t]) -> ~str {
+fn tys_to_str(cx: ctxt, ts: &[t]) -> ~str {
     let tstrs = ts.map(|t| ty_to_str(cx, *t));
     fmt!("[%s]", str::connect(tstrs, ", "))
 }
@@ -291,9 +294,8 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
                  purity: ast::purity,
                  onceness: ast::Onceness,
                  ident: Option<ast::ident>,
-                 inputs: ~[arg],
-                 output: t,
-                 cf: ast::ret_style) -> ~str {
+                 inputs: &[arg],
+                 output: t) -> ~str {
         let mut s;
 
         s = match purity {
@@ -331,9 +333,10 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
         s += ~")";
         if ty::get(output).sty != ty_nil {
             s += ~" -> ";
-            match cf {
-              ast::noreturn => { s += ~"!"; }
-              ast::return_val => { s += ty_to_str(cx, output); }
+            if ty::type_is_bot(output) {
+                s += ~"!";
+            } else {
+                s += ty_to_str(cx, output);
             }
         }
         return s;
@@ -347,8 +350,7 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
             m.fty.meta.onceness,
             Some(m.ident),
             m.fty.sig.inputs,
-            m.fty.sig.output,
-            m.fty.meta.ret_style) + ~";";
+            m.fty.sig.output) + ~";";
     }
     fn field_to_str(cx: ctxt, f: field) -> ~str {
         return cx.sess.str_of(f.ident) + ~": " + mt_to_str(cx, f.mt);
@@ -364,7 +366,7 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
     // pretty print the structural type representation:
     return match /*bad*/copy ty::get(typ).sty {
       ty_nil => ~"()",
-      ty_bot => ~"_|_",
+      ty_bot => ~"!",
       ty_bool => ~"bool",
       ty_int(ast::ty_i) => ~"int",
       ty_int(ast::ty_char) => ~"char",
@@ -396,9 +398,8 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
                   f.meta.purity,
                   f.meta.onceness,
                   None,
-                  /*bad*/copy f.sig.inputs,
-                  f.sig.output,
-                  f.meta.ret_style)
+                  f.sig.inputs,
+                  f.sig.output)
       }
       ty_infer(infer_ty) => infer_ty.to_str(),
       ty_err => ~"[type error]",
@@ -409,15 +410,12 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
       ty_enum(did, ref substs) | ty_struct(did, ref substs) => {
         let path = ty::item_path(cx, did);
         let base = ast_map::path_to_str(path, cx.sess.intr());
-        parameterized(cx, base, (*substs).self_r, /*bad*/copy (*substs).tps)
+        parameterized(cx, base, substs.self_r, substs.tps)
       }
       ty_trait(did, ref substs, vs) => {
         let path = ty::item_path(cx, did);
         let base = ast_map::path_to_str(path, cx.sess.intr());
-        let result = parameterized(cx,
-                                   base,
-                                   substs.self_r,
-                                   /*bad*/copy substs.tps);
+        let result = parameterized(cx, base, substs.self_r, substs.tps);
         vstore_ty_to_str(cx, result, vs)
       }
       ty_evec(mt, vs) => {
@@ -433,9 +431,9 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
 }
 
 fn parameterized(cx: ctxt,
-                 base: ~str,
+                 base: &str,
                  self_r: Option<ty::Region>,
-                 tps: ~[ty::t]) -> ~str {
+                 tps: &[ty::t]) -> ~str {
 
     let r_str = match self_r {
       None => ~"",

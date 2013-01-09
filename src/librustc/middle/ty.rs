@@ -72,7 +72,7 @@ export expr_ty_params_and_ty;
 export expr_is_lval, expr_kind;
 export ExprKind, LvalueExpr, RvalueDatumExpr, RvalueDpsExpr, RvalueStmtExpr;
 export field_ty;
-export fold_ty, fold_sty_to_ty, fold_region, fold_regions;
+export fold_ty, fold_sty_to_ty, fold_region, fold_regions, fold_sig;
 export apply_op_on_t_to_ty_fn;
 export fold_regions_and_ty, walk_regions_and_ty;
 export field;
@@ -116,7 +116,7 @@ export ty_opaque_closure_ptr, mk_opaque_closure_ptr;
 export ty_opaque_box, mk_opaque_box;
 export ty_float, mk_float, mk_mach_float, type_is_fp;
 export ty_fn, FnTy, FnTyBase, FnMeta, FnSig, mk_fn;
-export ty_fn_proto, ty_fn_purity, ty_fn_ret, ty_fn_ret_style, tys_in_fn_ty;
+export ty_fn_proto, ty_fn_purity, ty_fn_ret, tys_in_fn_ty;
 export ty_int, mk_int, mk_mach_int, mk_char;
 export mk_i8, mk_u8, mk_i16, mk_u16, mk_i32, mk_u32, mk_i64, mk_u64;
 export mk_f32, mk_f64;
@@ -145,7 +145,7 @@ export ty_struct;
 export Region, bound_region, encl_region;
 export re_bound, re_free, re_scope, re_static, re_infer;
 export ReVar, ReSkolemized;
-export br_self, br_anon, br_named, br_cap_avoid;
+export br_self, br_anon, br_named, br_cap_avoid, br_fresh;
 export get, type_has_params, type_needs_infer, type_has_regions;
 export type_is_region_ptr;
 export type_id;
@@ -219,7 +219,6 @@ export terr_regions_not_same, terr_regions_no_overlap;
 export terr_regions_insufficiently_polymorphic;
 export terr_regions_overly_polymorphic;
 export terr_proto_mismatch;
-export terr_ret_style_mismatch;
 export terr_fn, terr_trait;
 export purity_to_str;
 export onceness_to_str;
@@ -517,15 +516,13 @@ pure fn type_id(t: t) -> uint { get(t).id }
  * - `onceness` indicates whether the function can be called one time or many
  *   times.
  * - `region` is the region bound on the function's upvars (often &static).
- * - `bounds` is the parameter bounds on the function's upvars.
- * - `ret_style` indicates whether the function returns a value or fails. */
+ * - `bounds` is the parameter bounds on the function's upvars. */
 struct FnMeta {
     purity: ast::purity,
     proto: ast::Proto,
     onceness: ast::Onceness,
     region: Region,
-    bounds: @~[param_bound],
-    ret_style: ret_style
+    bounds: @~[param_bound]
 }
 
 /**
@@ -608,6 +605,9 @@ enum bound_region {
 
     /// Named region parameters for functions (a in &a/T)
     br_named(ast::ident),
+
+    /// Fresh bound identifiers created during GLB computations.
+    br_fresh(uint),
 
     /**
      * Handles capture-avoiding substitution in a rather subtle case.  If you
@@ -695,7 +695,6 @@ struct expected_found<T> {
 // Data structures used in type unification
 enum type_err {
     terr_mismatch,
-    terr_ret_style_mismatch(expected_found<ast::ret_style>),
     terr_purity_mismatch(expected_found<purity>),
     terr_onceness_mismatch(expected_found<Onceness>),
     terr_mutability,
@@ -1315,6 +1314,17 @@ fn fold_sty_to_ty(tcx: ty::ctxt, sty: &sty, foldop: fn(t) -> t) -> t {
     mk_t(tcx, fold_sty(sty, foldop))
 }
 
+fn fold_sig(sig: &FnSig, fldop: fn(t) -> t) -> FnSig {
+    let args = do sig.inputs.map |arg| {
+        { mode: arg.mode, ty: fldop(arg.ty) }
+    };
+
+    FnSig {
+        inputs: move args,
+        output: fldop(sig.output)
+    }
+}
+
 fn fold_sty(sty: &sty, fldop: fn(t) -> t) -> sty {
     fn fold_substs(substs: &substs, fldop: fn(t) -> t) -> substs {
         {self_r: substs.self_r,
@@ -1493,8 +1503,8 @@ fn apply_op_on_t_to_ty_fn(
 fn fold_regions(
     cx: ctxt,
     ty: t,
-    fldr: fn(r: Region, in_fn: bool) -> Region) -> t {
-
+    fldr: fn(r: Region, in_fn: bool) -> Region) -> t
+{
     fn do_fold(cx: ctxt, ty: t, in_fn: bool,
                fldr: fn(Region, bool) -> Region) -> t {
         if !type_has_regions(ty) { return ty; }
@@ -2748,7 +2758,10 @@ impl bound_region : to_bytes::IterBytes {
           to_bytes::iter_bytes_2(&2u8, ident, lsb0, f),
 
           ty::br_cap_avoid(ref id, ref br) =>
-          to_bytes::iter_bytes_3(&3u8, id, br, lsb0, f)
+          to_bytes::iter_bytes_3(&3u8, id, br, lsb0, f),
+
+          ty::br_fresh(ref x) =>
+          to_bytes::iter_bytes_2(&4u8, x, lsb0, f)
         }
     }
 }
@@ -2819,11 +2832,10 @@ impl arg : to_bytes::IterBytes {
 
 impl FnMeta : to_bytes::IterBytes {
     pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
-        to_bytes::iter_bytes_5(&self.purity,
+        to_bytes::iter_bytes_4(&self.purity,
                                &self.proto,
                                &self.region,
                                &self.bounds,
-                               &self.ret_style,
                                lsb0, f);
     }
 }
@@ -2966,13 +2978,6 @@ pure fn ty_fn_ret(fty: t) -> t {
     match get(fty).sty {
       ty_fn(ref f) => f.sig.output,
       _ => fail ~"ty_fn_ret() called on non-fn type"
-    }
-}
-
-fn ty_fn_ret_style(fty: t) -> ast::ret_style {
-    match get(fty).sty {
-      ty_fn(ref f) => f.meta.ret_style,
-      _ => fail ~"ty_fn_ret_style() called on non-fn type"
     }
 }
 
@@ -3435,17 +3440,6 @@ fn type_err_to_str(cx: ctxt, err: &type_err) -> ~str {
 
     match *err {
         terr_mismatch => ~"types differ",
-        terr_ret_style_mismatch(values) => {
-            fn to_str(s: ast::ret_style) -> ~str {
-                match s {
-                    ast::noreturn => ~"non-returning",
-                    ast::return_val => ~"return-by-value"
-                }
-            }
-            fmt!("expected %s function, found %s function",
-                 to_str(values.expected),
-                 to_str(values.expected))
-        }
         terr_purity_mismatch(values) => {
             fmt!("expected %s fn but found %s fn",
                  purity_to_str(values.expected),
@@ -4406,8 +4400,7 @@ impl FnMeta : cmp::Eq {
     pure fn eq(&self, other: &FnMeta) -> bool {
         (*self).purity == (*other).purity &&
         (*self).proto == (*other).proto &&
-        (*self).bounds == (*other).bounds &&
-        (*self).ret_style == (*other).ret_style
+        (*self).bounds == (*other).bounds
     }
     pure fn ne(&self, other: &FnMeta) -> bool { !(*self).eq(other) }
 }
@@ -4514,6 +4507,12 @@ impl bound_region : cmp::Eq {
             br_cap_avoid(e0a, e1a) => {
                 match (*other) {
                     br_cap_avoid(e0b, e1b) => e0a == e0b && e1a == e1b,
+                    _ => false
+                }
+            }
+            br_fresh(e0a) => {
+                match (*other) {
+                    br_fresh(e0b) => e0a == e0b,
                     _ => false
                 }
             }

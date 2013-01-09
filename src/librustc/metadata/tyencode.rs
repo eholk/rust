@@ -188,6 +188,9 @@ fn enc_bound_region(w: io::Writer, cx: @ctxt, br: ty::bound_region) {
         w.write_char('|');
         enc_bound_region(w, cx, *br);
       }
+      ty::br_fresh(id) => {
+        w.write_uint(id);
+      }
     }
 }
 
@@ -388,10 +391,7 @@ fn enc_ty_fn(w: io::Writer, cx: @ctxt, ft: ty::FnTy) {
         enc_arg(w, cx, *arg);
     }
     w.write_char(']');
-    match ft.meta.ret_style {
-      noreturn => w.write_char('!'),
-      _ => enc_ty(w, cx, ft.sig.output)
-    }
+    enc_ty(w, cx, ft.sig.output);
 }
 
 fn enc_bounds(w: io::Writer, cx: @ctxt, bs: @~[ty::param_bound]) {

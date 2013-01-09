@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-/* Make sure a loop{} with a break in it can't be
-   the tailexpr in the body of a diverging function */
-fn forever() -> ! {
-  loop {
-    break;
-  }
-  return 42i; //~ ERROR expected `!` but found `int`
+#[allow(default_methods)]
+trait Canvas {
+    fn add_point(point: &int);
+    fn add_points(shapes: &[int]) {
+        for shapes.each |pt| {
+            self.add_point(pt)
+        }
+    }
+
 }
 
-fn main() {
-  if (1 == 2) { forever(); }
-}
+fn main() {}

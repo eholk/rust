@@ -86,9 +86,9 @@ fn default_configuration(sess: Session, +argv0: ~str, input: input) ->
     };
 
     return ~[ // Target bindings.
-         attr::mk_word_item(os::family()),
-         mk(~"target_os", os::sysname()),
-         mk(~"target_family", os::family()),
+         attr::mk_word_item(str::from_slice(os::FAMILY)),
+         mk(~"target_os", str::from_slice(os::SYSNAME)),
+         mk(~"target_family", str::from_slice(os::FAMILY)),
          mk(~"target_arch", arch),
          mk(~"target_word_size", wordsz),
          mk(~"target_libc", libc),
@@ -275,8 +275,8 @@ fn compile_upto(sess: Session, cfg: ast::crate_cfg,
         time(time_passes, ~"mode computation", ||
              middle::mode::compute_modes(ty_cx, method_map, crate));
 
-        time(time_passes, ~"alt checking", ||
-             middle::check_alt::check_crate(ty_cx, method_map, crate));
+        time(time_passes, ~"match checking", ||
+             middle::check_match::check_crate(ty_cx, method_map, crate));
 
         let last_use_map =
             time(time_passes, ~"liveness checking", ||
