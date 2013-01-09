@@ -1,3 +1,14 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 /*!
  * # Categorization
  *
@@ -36,12 +47,18 @@
  * then an index to jump forward to the relevant item.
  */
 
-use syntax::ast;
-use syntax::ast::{m_imm, m_const, m_mutbl};
-use syntax::codemap::span;
-use syntax::print::pprust;
+use middle::ty;
+use middle::typeck;
 use util::ppaux::{ty_to_str, region_to_str};
 use util::common::indenter;
+
+use core::cmp;
+use core::to_bytes;
+use core::uint;
+use syntax::ast::{m_imm, m_const, m_mutbl};
+use syntax::ast;
+use syntax::codemap::span;
+use syntax::print::pprust;
 
 enum categorization {
     cat_rvalue,                     // result of eval'ing some misc expr
@@ -214,6 +231,7 @@ enum special_kind {
     sk_method,
     sk_static_item,
     sk_self,
+    sk_implicit_self,   // old by-reference `self`
     sk_heap_upvar
 }
 
@@ -305,7 +323,7 @@ fn opt_deref_kind(t: ty::t) -> Option<deref_kind> {
         Some(deref_ptr(uniq_ptr))
       }
 
-      ty::ty_fn(f) if f.meta.proto == ast::ProtoUniq => {
+      ty::ty_fn(ref f) if (*f).meta.proto == ast::ProtoUniq => {
         Some(deref_ptr(uniq_ptr))
       }
 
@@ -315,8 +333,8 @@ fn opt_deref_kind(t: ty::t) -> Option<deref_kind> {
         Some(deref_ptr(region_ptr(r)))
       }
 
-      ty::ty_fn(f) if f.meta.proto == ast::ProtoBorrowed => {
-        Some(deref_ptr(region_ptr(f.meta.region)))
+      ty::ty_fn(ref f) if (*f).meta.proto == ast::ProtoBorrowed => {
+        Some(deref_ptr(region_ptr((*f).meta.region)))
       }
 
       ty::ty_box(*) |
@@ -325,7 +343,7 @@ fn opt_deref_kind(t: ty::t) -> Option<deref_kind> {
         Some(deref_ptr(gc_ptr))
       }
 
-      ty::ty_fn(f) if f.meta.proto == ast::ProtoBox => {
+      ty::ty_fn(ref f) if (*f).meta.proto == ast::ProtoBox => {
         Some(deref_ptr(gc_ptr))
       }
 
@@ -335,6 +353,10 @@ fn opt_deref_kind(t: ty::t) -> Option<deref_kind> {
 
       ty::ty_enum(did, _) => {
         Some(deref_comp(comp_variant(did)))
+      }
+
+      ty::ty_struct(_, _) => {
+        Some(deref_comp(comp_anon_field))
       }
 
       ty::ty_evec(mt, ty::vstore_fixed(_)) => {
@@ -530,7 +552,8 @@ impl &mem_categorization_ctxt {
           ast::expr_swap(*) | ast::expr_assign(*) |
           ast::expr_assign_op(*) | ast::expr_fn(*) | ast::expr_fn_block(*) |
           ast::expr_assert(*) | ast::expr_ret(*) |
-          ast::expr_loop_body(*) | ast::expr_do_body(*) | ast::expr_unary(*) |
+          ast::expr_loop_body(*) | ast::expr_do_body(*) |
+          ast::expr_unary(*) | ast::expr_method_call(*) |
           ast::expr_copy(*) | ast::expr_cast(*) | ast::expr_fail(*) |
           ast::expr_vstore(*) | ast::expr_vec(*) | ast::expr_tup(*) |
           ast::expr_if(*) | ast::expr_log(*) |
@@ -553,9 +576,9 @@ impl &mem_categorization_ctxt {
           ast::def_foreign_mod(_) | ast::def_const(_) |
           ast::def_use(_) | ast::def_variant(*) |
           ast::def_ty(_) | ast::def_prim_ty(_) |
-          ast::def_ty_param(*) | ast::def_class(*) |
+          ast::def_ty_param(*) | ast::def_struct(*) |
           ast::def_typaram_binder(*) | ast::def_region(_) |
-          ast::def_label(_) => {
+          ast::def_label(_) | ast::def_self_ty(*) => {
             @{id:id, span:span,
               cat:cat_special(sk_static_item), lp:None,
               mutbl:m_imm, ty:expr_ty}
@@ -588,9 +611,15 @@ impl &mem_categorization_ctxt {
               mutbl:m, ty:expr_ty}
           }
 
-          ast::def_self(_) => {
+          ast::def_self(_, is_implicit) => {
+            let special_kind = if is_implicit {
+                sk_implicit_self
+            } else {
+                sk_self
+            };
+
             @{id:id, span:span,
-              cat:cat_special(sk_self), lp:None,
+              cat:cat_special(special_kind), lp:None,
               mutbl:m_imm, ty:expr_ty}
           }
 
@@ -625,26 +654,10 @@ impl &mem_categorization_ctxt {
               mutbl:m, ty:expr_ty}
           }
 
-          ast::def_binding(vid, ast::bind_by_value) |
-          ast::def_binding(vid, ast::bind_by_move)  |
-          ast::def_binding(vid, ast::bind_by_ref(_)) => {
+          ast::def_binding(vid, _) => {
             // by-value/by-ref bindings are local variables
             @{id:id, span:span,
               cat:cat_local(vid), lp:Some(@lp_local(vid)),
-              mutbl:m_imm, ty:expr_ty}
-          }
-
-          ast::def_binding(pid, ast::bind_by_implicit_ref) => {
-            // implicit-by-ref bindings are "special" since they are
-            // implicit pointers.
-
-            // Technically, the mutability is not always imm, but we
-            // (choose to be) unsound for the moment since these
-            // implicit refs are going away and it reduces external
-            // dependencies.
-
-            @{id:id, span:span,
-              cat:cat_binding(pid), lp:None,
               mutbl:m_imm, ty:expr_ty}
           }
         }
@@ -901,7 +914,7 @@ impl &mem_categorization_ctxt {
                pat.id, pprust::pat_to_str(pat, tcx.sess.intr()),
                self.cmt_to_repr(cmt));
 
-        match pat.node {
+        match /*bad*/copy pat.node {
           ast::pat_wild => {
             // _
           }
@@ -918,7 +931,7 @@ impl &mem_categorization_ctxt {
                         self.cat_pattern(subcmt, *subpat, op);
                     }
                 }
-                Some(ast::def_class(*)) => {
+                Some(ast::def_struct(*)) => {
                     for subpats.each |subpat| {
                         let cmt_field = self.cat_anon_struct_field(*subpat,
                                                                    cmt);
@@ -972,7 +985,9 @@ impl &mem_categorization_ctxt {
             self.cat_pattern(subcmt, subpat, op);
           }
 
-          ast::pat_lit(_) | ast::pat_range(_, _) => { /*always ok*/ }
+          ast::pat_vec(*) | ast::pat_lit(_) | ast::pat_range(_, _) => {
+              /*always ok*/
+          }
         }
     }
 
@@ -980,6 +995,7 @@ impl &mem_categorization_ctxt {
         match cat {
           cat_special(sk_method) => ~"method",
           cat_special(sk_static_item) => ~"static_item",
+          cat_special(sk_implicit_self) => ~"implicit-self",
           cat_special(sk_self) => ~"self",
           cat_special(sk_heap_upvar) => ~"heap-upvar",
           cat_stack_upvar(_) => ~"stack-upvar",
@@ -1058,7 +1074,8 @@ impl &mem_categorization_ctxt {
         match cmt.cat {
           cat_special(sk_method) => ~"method",
           cat_special(sk_static_item) => ~"static item",
-          cat_special(sk_self) => ~"self reference",
+          cat_special(sk_implicit_self) => ~"self reference",
+          cat_special(sk_self) => ~"self value",
           cat_special(sk_heap_upvar) => {
               ~"captured outer variable in a heap closure"
           }
@@ -1101,7 +1118,7 @@ fn field_mutbl(tcx: ty::ctxt,
                f_name: ast::ident,
                node_id: ast::node_id) -> Option<ast::mutability> {
     // Need to refactor so that records/class fields can be treated uniformly.
-    match ty::get(base_ty).sty {
+    match /*bad*/copy ty::get(base_ty).sty {
       ty::ty_rec(fields) => {
         for fields.each |f| {
             if f.ident == f_name {
@@ -1109,12 +1126,12 @@ fn field_mutbl(tcx: ty::ctxt,
             }
         }
       }
-      ty::ty_class(did, _) => {
-        for ty::lookup_class_fields(tcx, did).each |fld| {
+      ty::ty_struct(did, _) => {
+        for ty::lookup_struct_fields(tcx, did).each |fld| {
             if fld.ident == f_name {
                 let m = match fld.mutability {
-                  ast::class_mutable => ast::m_mutbl,
-                  ast::class_immutable => ast::m_imm
+                  ast::struct_mutable => ast::m_mutbl,
+                  ast::struct_immutable => ast::m_imm
                 };
                 return Some(m);
             }
@@ -1123,11 +1140,11 @@ fn field_mutbl(tcx: ty::ctxt,
       ty::ty_enum(*) => {
         match tcx.def_map.get(node_id) {
           ast::def_variant(_, variant_id) => {
-            for ty::lookup_class_fields(tcx, variant_id).each |fld| {
+            for ty::lookup_struct_fields(tcx, variant_id).each |fld| {
                 if fld.ident == f_name {
                     let m = match fld.mutability {
-                      ast::class_mutable => ast::m_mutbl,
-                      ast::class_immutable => ast::m_imm
+                      ast::struct_mutable => ast::m_mutbl,
+                      ast::struct_immutable => ast::m_imm
                     };
                     return Some(m);
                 }

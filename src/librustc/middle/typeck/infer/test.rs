@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /**
 
 # Standalone Tests for the Inference Module
@@ -5,6 +15,7 @@
 Note: This module is only compiled when doing unit testing.
 
 */
+
 
 use std::getopts;
 use std::map::HashMap;
@@ -17,7 +28,7 @@ use driver::driver::{optgroups, build_session_options, build_session,
 use driver::diagnostic;
 use syntax::{ast, attr, parse};
 use syntax::parse::parse_crate_from_source_str;
-use middle::lang_items::{LanguageItems, language_items};
+use middle::lang_items::LanguageItems;
 use util::ppaux::ty_to_str;
 use syntax::ast_util::dummy_sp;
 use middle::ty::{FnTyBase, FnMeta, FnSig};
@@ -43,7 +54,7 @@ fn setup_env(test_name: &str, source_string: &str) -> Env {
     let freevars = HashMap();
     let region_paramd_items = HashMap();
     let region_map = HashMap();
-    let lang_items = language_items::make();
+    let lang_items = LanguageItems::new();
 
     let parse_sess = parse::new_parse_sess(None);
     let crate = parse_crate_from_source_str(
@@ -112,7 +123,7 @@ impl Env {
                     None
                 }
 
-                ast::item_enum(*) | ast::item_class(*) |
+                ast::item_enum(*) | ast::item_struct(*) |
                 ast::item_trait(*) | ast::item_impl(*) |
                 ast::item_mac(*) => {
                     None

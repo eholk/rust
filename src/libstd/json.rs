@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Rust JSON serialization library
 // Copyright (c) 2011 Google Inc.
 #[forbid(deprecated_mode)];
@@ -5,10 +15,18 @@
 
 //! json serialization
 
-use core::cmp::{Eq, Ord};
-use io::{WriterUtil, ReaderUtil};
-use send_map::linear;
+use serialize;
 use sort::Sort;
+
+use core::char;
+use core::cmp::{Eq, Ord};
+use core::float;
+use core::io::{WriterUtil, ReaderUtil};
+use core::io;
+use core::send_map::linear;
+use core::str;
+use core::to_str;
+use core::vec;
 
 /// Represents a json value
 pub enum Json {
@@ -55,15 +73,15 @@ fn spaces(n: uint) -> ~str {
     return ss;
 }
 
-pub struct Serializer {
+pub struct Encoder {
     priv wr: io::Writer,
 }
 
-pub fn Serializer(wr: io::Writer) -> Serializer {
-    Serializer { wr: wr }
+pub fn Encoder(wr: io::Writer) -> Encoder {
+    Encoder { wr: wr }
 }
 
-pub impl Serializer: serialization::Serializer {
+pub impl Encoder: serialize::Encoder {
     fn emit_nil(&self) { self.wr.write_str("null") }
 
     fn emit_uint(&self, v: uint) { self.emit_float(v as float); }
@@ -158,16 +176,16 @@ pub impl Serializer: serialization::Serializer {
     }
 }
 
-pub struct PrettySerializer {
+pub struct PrettyEncoder {
     priv wr: io::Writer,
     priv mut indent: uint,
 }
 
-pub fn PrettySerializer(wr: io::Writer) -> PrettySerializer {
-    PrettySerializer { wr: wr, indent: 0 }
+pub fn PrettyEncoder(wr: io::Writer) -> PrettyEncoder {
+    PrettyEncoder { wr: wr, indent: 0 }
 }
 
-pub impl PrettySerializer: serialization::Serializer {
+pub impl PrettyEncoder: serialize::Encoder {
     fn emit_nil(&self) { self.wr.write_str("null") }
 
     fn emit_uint(&self, v: uint) { self.emit_float(v as float); }
@@ -273,21 +291,19 @@ pub impl PrettySerializer: serialization::Serializer {
     }
 }
 
-pub impl<
-    S: serialization::Serializer
-> Json: serialization::Serializable<S> {
-    fn serialize(&self, s: &S) {
+pub impl<S: serialize::Encoder> Json: serialize::Encodable<S> {
+    fn encode(&self, s: &S) {
         match *self {
-            Number(v) => v.serialize(s),
-            String(ref v) => v.serialize(s),
-            Boolean(v) => v.serialize(s),
-            List(v) => v.serialize(s),
+            Number(v) => v.encode(s),
+            String(ref v) => v.encode(s),
+            Boolean(v) => v.encode(s),
+            List(ref v) => v.encode(s),
             Object(ref v) => {
                 do s.emit_rec || {
                     let mut idx = 0;
                     for v.each |key, value| {
                         do s.emit_field(*key, idx) {
-                            value.serialize(s);
+                            value.encode(s);
                         }
                         idx += 1;
                     }
@@ -298,23 +314,23 @@ pub impl<
     }
 }
 
-/// Serializes a json value into a io::writer
+/// Encodes a json value into a io::writer
 pub fn to_writer(wr: io::Writer, json: &Json) {
-    json.serialize(&Serializer(wr))
+    json.encode(&Encoder(wr))
 }
 
-/// Serializes a json value into a string
+/// Encodes a json value into a string
 pub pure fn to_str(json: &Json) -> ~str unsafe {
     // ugh, should be safe
     io::with_str_writer(|wr| to_writer(wr, json))
 }
 
-/// Serializes a json value into a io::writer
+/// Encodes a json value into a io::writer
 pub fn to_pretty_writer(wr: io::Writer, json: &Json) {
-    json.serialize(&PrettySerializer(wr))
+    json.encode(&PrettyEncoder(wr))
 }
 
-/// Serializes a json value into a string
+/// Encodes a json value into a string
 pub fn to_pretty_str(json: &Json) -> ~str {
     io::with_str_writer(|wr| to_pretty_writer(wr, json))
 }
@@ -326,7 +342,7 @@ pub struct Parser {
     priv mut col: uint,
 }
 
-/// Deserializes a json value from an io::reader
+/// Decode a json value from an io::reader
 pub fn Parser(rdr: io::Reader) -> Parser {
     Parser {
         rdr: rdr,
@@ -685,28 +701,28 @@ priv impl Parser {
     }
 }
 
-/// Deserializes a json value from an io::reader
+/// Decodes a json value from an io::reader
 pub fn from_reader(rdr: io::Reader) -> Result<Json, Error> {
     Parser(rdr).parse()
 }
 
-/// Deserializes a json value from a string
+/// Decodes a json value from a string
 pub fn from_str(s: &str) -> Result<Json, Error> {
     do io::with_str_reader(s) |rdr| {
         from_reader(rdr)
     }
 }
 
-pub struct Deserializer {
+pub struct Decoder {
     priv json: Json,
     priv mut stack: ~[&Json],
 }
 
-pub fn Deserializer(json: Json) -> Deserializer {
-    Deserializer { json: move json, stack: ~[] }
+pub fn Decoder(json: Json) -> Decoder {
+    Decoder { json: move json, stack: ~[] }
 }
 
-priv impl Deserializer {
+priv impl Decoder {
     fn peek(&self) -> &self/Json {
         if self.stack.len() == 0 { self.stack.push(&self.json); }
         vec::last(self.stack)
@@ -718,7 +734,7 @@ priv impl Deserializer {
     }
 }
 
-pub impl Deserializer: serialization::Deserializer {
+pub impl Decoder: serialize::Decoder {
     fn read_nil(&self) -> () {
         debug!("read_nil");
         match *self.pop() {
@@ -772,8 +788,11 @@ pub impl Deserializer: serialization::Deserializer {
     }
 
     fn read_managed_str(&self) -> @str {
-        // FIXME(#3604): There's no way to convert from a ~str to a @str.
-        fail ~"read_managed_str()";
+        debug!("read_managed_str");
+        match *self.pop() {
+            String(ref s) => s.to_managed(),
+            _ => fail ~"not a string"
+        }
     }
 
     fn read_owned<T>(&self, f: fn() -> T) -> T {
@@ -917,8 +936,8 @@ impl Json : Eq {
                 match *other { Boolean(b1) => b0 == b1, _ => false },
             Null =>
                 match *other { Null => true, _ => false },
-            List(v0) =>
-                match *other { List(v1) => v0 == v1, _ => false },
+            List(ref v0) =>
+                match *other { List(ref v1) => v0 == v1, _ => false },
             Object(ref d0) => {
                 match *other {
                     Object(ref d1) => {
@@ -971,10 +990,10 @@ impl Json : Ord {
                 }
             }
 
-            List(l0) => {
+            List(ref l0) => {
                 match *other {
                     Number(_) | String(_) | Boolean(_) => false,
-                    List(l1) => l0 < l1,
+                    List(ref l1) => (*l0) < (*l1),
                     Object(_) | Null => true
                 }
             }
@@ -1174,6 +1193,9 @@ impl Error: to_str::ToStr {
 
 #[cfg(test)]
 mod tests {
+    use core::result;
+    use core::send_map::linear;
+
     fn mk_object(items: &[(~str, Json)]) -> Json {
         let mut d = ~linear::LinearMap();
 

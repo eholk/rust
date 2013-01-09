@@ -1,23 +1,47 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //!
 //
 // Code relating to taking, dropping, etc as well as type descriptors.
 
+
 use lib::llvm::{ValueRef, TypeRef};
-use base::*;
-use common::*;
-use build::*;
-use type_of::type_of;
+use middle::trans::base::*;
+use middle::trans::callee;
+use middle::trans::closure;
+use middle::trans::common::*;
+use middle::trans::build::*;
+use middle::trans::reflect;
+use middle::trans::tvec;
+use middle::trans::type_of::type_of;
+use middle::trans::uniq;
+
+use core::io;
+use core::str;
 
 fn trans_free(cx: block, v: ValueRef) -> block {
     let _icx = cx.insn_ctxt("trans_free");
-    callee::trans_rtcall(cx, ~"free", ~[PointerCast(cx, v, T_ptr(T_i8()))],
-                         expr::Ignore)
+    callee::trans_rtcall_or_lang_call(
+        cx,
+        cx.tcx().lang_items.free_fn(),
+        ~[PointerCast(cx, v, T_ptr(T_i8()))],
+        expr::Ignore)
 }
 
 fn trans_unique_free(cx: block, v: ValueRef) -> block {
     let _icx = cx.insn_ctxt("trans_unique_free");
-    callee::trans_rtcall(
-        cx, ~"exchange_free", ~[PointerCast(cx, v, T_ptr(T_i8()))],
+    callee::trans_rtcall_or_lang_call(
+        cx,
+        cx.tcx().lang_items.exchange_free_fn(),
+        ~[PointerCast(cx, v, T_ptr(T_i8()))],
         expr::Ignore)
 }
 
@@ -395,15 +419,15 @@ fn make_free_glue(bcx: block, v: ValueRef, t: ty::t) {
       ty::ty_opaque_closure_ptr(ck) => {
         closure::make_opaque_cbox_free_glue(bcx, ck, v)
       }
-      ty::ty_class(did, ref substs) => {
+      ty::ty_struct(did, ref substs) => {
         // Call the dtor if there is one
         match ty::ty_dtor(bcx.tcx(), did) {
             ty::NoDtor => bcx,
             ty::LegacyDtor(ref dt_id) => {
-                trans_class_drop(bcx, v, *dt_id, did, substs, false)
+                trans_struct_drop(bcx, v, *dt_id, did, substs, false)
             }
             ty::TraitDtor(ref dt_id) => {
-                trans_class_drop(bcx, v, *dt_id, did, substs, true)
+                trans_struct_drop(bcx, v, *dt_id, did, substs, true)
             }
         }
       }
@@ -412,7 +436,7 @@ fn make_free_glue(bcx: block, v: ValueRef, t: ty::t) {
     build_return(bcx);
 }
 
-fn trans_class_drop(bcx: block,
+fn trans_struct_drop(bcx: block,
                     v0: ValueRef,
                     dtor_did: ast::def_id,
                     class_did: ast::def_id,
@@ -424,7 +448,7 @@ fn trans_class_drop(bcx: block,
 
         // Find and call the actual destructor
         let dtor_addr = get_res_dtor(bcx.ccx(), dtor_did,
-                                     class_did, substs.tps);
+                                     class_did, /*bad*/copy substs.tps);
 
         // The second argument is the "self" argument for drop
         let params = lib::llvm::fn_ty_param_tys(
@@ -451,7 +475,7 @@ fn trans_class_drop(bcx: block,
 
         // Drop the fields
         let field_tys =
-            ty::class_items_as_mutable_fields(bcx.tcx(), class_did,
+            ty::struct_mutable_fields(bcx.tcx(), class_did,
                                               substs);
         for vec::eachi(field_tys) |i, fld| {
             let llfld_a = GEPi(bcx, v0, struct_field(i));
@@ -480,14 +504,14 @@ fn make_drop_glue(bcx: block, v0: ValueRef, t: ty::t) {
       ty::ty_unboxed_vec(_) => {
         tvec::make_drop_glue_unboxed(bcx, v0, t)
       }
-      ty::ty_class(did, ref substs) => {
+      ty::ty_struct(did, ref substs) => {
         let tcx = bcx.tcx();
         match ty::ty_dtor(tcx, did) {
           ty::TraitDtor(dtor) => {
-            trans_class_drop(bcx, v0, dtor, did, substs, true)
+            trans_struct_drop(bcx, v0, dtor, did, substs, true)
           }
           ty::LegacyDtor(dtor) => {
-            trans_class_drop(bcx, v0, dtor, did, substs, false)
+            trans_struct_drop(bcx, v0, dtor, did, substs, false)
           }
           ty::NoDtor => {
             // No dtor? Just the default case
@@ -633,7 +657,8 @@ fn declare_tydesc(ccx: @crate_ctxt, t: ty::t) -> @tydesc_info {
     } else {
         mangle_internal_name_by_seq(ccx, ~"tydesc")
     };
-    note_unique_llvm_symbol(ccx, name);
+    // XXX: Bad copy.
+    note_unique_llvm_symbol(ccx, copy name);
     log(debug, fmt!("+++ declare_tydesc %s %s", ty_to_str(ccx.tcx, t), name));
     let gvar = str::as_c_str(name, |buf| {
         llvm::LLVMAddGlobal(ccx.llmod, ccx.tydesc_type, buf)
@@ -655,7 +680,7 @@ fn declare_tydesc(ccx: @crate_ctxt, t: ty::t) -> @tydesc_info {
 type glue_helper = fn@(block, ValueRef, ty::t);
 
 fn declare_generic_glue(ccx: @crate_ctxt, t: ty::t, llfnty: TypeRef,
-                        name: ~str) -> ValueRef {
+                        +name: ~str) -> ValueRef {
     let _icx = ccx.insn_ctxt("declare_generic_glue");
     let name = name;
     let mut fn_nm;
@@ -666,7 +691,8 @@ fn declare_generic_glue(ccx: @crate_ctxt, t: ty::t, llfnty: TypeRef,
         fn_nm = mangle_internal_name_by_seq(ccx, (~"glue_" + name));
     }
     debug!("%s is for type %s", fn_nm, ty_to_str(ccx.tcx, t));
-    note_unique_llvm_symbol(ccx, fn_nm);
+    // XXX: Bad copy.
+    note_unique_llvm_symbol(ccx, copy fn_nm);
     let llfn = decl_cdecl_fn(ccx.llmod, fn_nm, llfnty);
     set_glue_inlining(llfn, t);
     return llfn;

@@ -1,4 +1,14 @@
 // -*- c++ -*-
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /**
  * A C++ wrapper around uthash.
  */
@@ -16,6 +26,10 @@ template<typename K, typename V> class hash_map {
         UT_hash_handle hh;
     };
     map_entry * _head;
+private:
+    // private and left undefined to disable copying
+    hash_map(const hash_map& rhs);
+    hash_map& operator=(const hash_map& rhs);
 public:
     hash_map();
     ~hash_map();
@@ -44,7 +58,7 @@ public:
      * true if the value was found and updates the specified *value parameter
      * with the associated value, or false otherwise.
      */
-    bool get(K key, V *value);
+    bool get(K key, V *value) const;
 
     /**
      * Removes a key-value pair from this hash map.
@@ -61,7 +75,7 @@ public:
      * returns:
      * true if the specified key exists in this hash map, or false otherwise.
      */
-    bool contains(K key);
+    bool contains(K key) const;
 
     /**
      * Removes the value associated with the specified key from this hash map.
@@ -76,9 +90,9 @@ public:
     /**
      * Returns the number of key-value pairs in this hash map.
      */
-    size_t count();
+    size_t count() const;
 
-    bool is_empty() {
+    bool is_empty() const {
         return count() == 0;
     }
 
@@ -114,7 +128,7 @@ hash_map<K,V>::put(K key, V value) {
 }
 
 template<typename K, typename V> bool
-hash_map<K,V>::get(K key, V *value) {
+hash_map<K,V>::get(K key, V *value) const {
     map_entry *entry = NULL;
     HASH_FIND(hh, _head, &key, sizeof(K), entry);
     if (entry == NULL) {
@@ -136,7 +150,7 @@ hash_map<K,V>::set(K key, V value) {
 }
 
 template<typename K, typename V> bool
-hash_map<K,V>::contains(K key) {
+hash_map<K,V>::contains(K key) const {
     V value;
     return get(key, &value);
 }
@@ -174,7 +188,7 @@ hash_map<K,V>::remove(K key) {
 }
 
 template<typename K, typename V> size_t
-hash_map<K,V>::count() {
+hash_map<K,V>::count() const {
     return HASH_CNT(hh, _head);
 }
 

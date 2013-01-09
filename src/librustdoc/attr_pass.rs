@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 The attribute parsing pass
 
@@ -6,11 +16,20 @@ corresponding AST nodes. The information gathered here is the basis
 of the natural-language documentation for a crate.
 */
 
+use astsrv;
+use attr_parser;
 use doc::ItemUtils;
+use doc;
 use extract::to_str;
+use fold::Fold;
+use fold;
+
+use core::option;
+use core::vec;
 use syntax::ast;
 use syntax::ast_map;
 use std::map::HashMap;
+use std::par;
 
 pub fn mk_pass() -> Pass {
     {
@@ -23,14 +42,14 @@ fn run(
     srv: astsrv::Srv,
     +doc: doc::Doc
 ) -> doc::Doc {
-    let fold = fold::Fold({
+    let fold = Fold {
         fold_crate: fold_crate,
         fold_item: fold_item,
         fold_enum: fold_enum,
         fold_trait: fold_trait,
         fold_impl: fold_impl,
-        .. *fold::default_any_fold(srv)
-    });
+        .. fold::default_any_fold(srv)
+    };
     (fold.fold_doc)(&fold, doc)
 }
 
@@ -50,7 +69,7 @@ fn fold_crate(
     {
         topmod: doc::ModDoc_({
             item: {
-                name: option::get_default(attrs.name, doc.topmod.name()),
+                name: option::get_or_default(attrs.name, doc.topmod.name()),
                 .. doc.topmod.item
             },
             .. *doc.topmod
@@ -87,7 +106,7 @@ fn fold_item(
     }
 }
 
-fn parse_item_attrs<T:Send>(
+fn parse_item_attrs<T:Owned>(
     srv: astsrv::Srv,
     id: doc::AstId,
     +parse_attrs: fn~(+a: ~[ast::attribute]) -> T) -> T {
@@ -291,6 +310,11 @@ fn should_extract_impl_method_docs() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use doc;
+    use extract;
+
     fn mk_doc(source: ~str) -> doc::Doc {
         do astsrv::from_str(source) |srv| {
             let doc = extract::from_srv(srv, ~"");

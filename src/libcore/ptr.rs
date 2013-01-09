@@ -1,10 +1,26 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Unsafe pointer utility functions
 
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
+use cast;
 use cmp::{Eq, Ord};
+use libc;
 use libc::{c_void, size_t};
+use ptr;
+use str;
+use sys;
+use vec;
 
 #[nolink]
 #[abi = "cdecl"]
@@ -160,13 +176,13 @@ pub pure fn to_mut_unsafe_ptr<T>(thing: &mut T) -> *mut T {
   (I couldn't think of a cutesy name for this one.)
 */
 #[inline(always)]
-pub fn to_uint<T>(thing: &T) -> uint unsafe {
+pub pure fn to_uint<T>(thing: &T) -> uint unsafe {
     cast::reinterpret_cast(&thing)
 }
 
 /// Determine if two borrowed pointers point to the same thing.
 #[inline(always)]
-pub fn ref_eq<T>(thing: &a/T, other: &b/T) -> bool {
+pub pure fn ref_eq<T>(thing: &a/T, other: &b/T) -> bool {
     to_uint(thing) == to_uint(other)
 }
 

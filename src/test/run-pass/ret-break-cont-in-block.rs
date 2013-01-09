@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // xfail-fast
 #[legacy_modes];
 
@@ -11,9 +21,9 @@ fn iter<T>(v: ~[T], it: fn(T) -> bool) {
     }
 }
 
-fn find_pos<T:Eq>(n: T, h: ~[T]) -> Option<uint> {
+fn find_pos<T:Eq Copy>(n: T, h: ~[T]) -> Option<uint> {
     let mut i = 0u;
-    for iter(h) |e| {
+    for iter(copy h) |e| {
         if e == n { return Some(i); }
         i += 1u;
     }
@@ -22,8 +32,8 @@ fn find_pos<T:Eq>(n: T, h: ~[T]) -> Option<uint> {
 
 fn bail_deep(x: ~[~[bool]]) {
     let mut seen = false;
-    for iter(x) |x| {
-        for iter(x) |x| {
+    for iter(copy x) |x| {
+        for iter(copy x) |x| {
             assert !seen;
             if x { seen = true; return; }
         }

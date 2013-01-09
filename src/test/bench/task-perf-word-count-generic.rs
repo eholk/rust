@@ -1,9 +1,19 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
    A parallel word-frequency counting program.
 
    This is meant primarily to demonstrate Rust's MapReduce framework.
 
-   It takes a list of files on the command line and outputs a list of
+   It takes a list of files on the oldcommand line and outputs a list of
    words along with how many times each word is used.
 
 */
@@ -12,22 +22,20 @@
 
 extern mod std;
 
-use option = option;
-use option::Some;
-use option::None;
+use core::option;
 use std::map;
 use std::map::HashMap;
-use hash::Hash;
-use io::{ReaderUtil, WriterUtil};
+use core::hash::Hash;
+use core::io::{ReaderUtil, WriterUtil};
 
 use std::time;
 
-use comm::Chan;
-use comm::Port;
-use comm::recv;
-use comm::send;
-use cmp::Eq;
-use to_bytes::IterBytes;
+use core::oldcomm::Chan;
+use core::oldcomm::Port;
+use core::oldcomm::recv;
+use core::oldcomm::send;
+use core::cmp::Eq;
+use core::to_bytes::IterBytes;
 
 macro_rules! move_out (
     { $x:expr } => { unsafe { let y = move *ptr::addr_of(&($x)); move y } }
@@ -107,42 +115,37 @@ fn box<T>(+x: T) -> box<T> {
 }
 
 mod map_reduce {
-    #[legacy_exports];
-    export putter;
-    export getter;
-    export mapper;
-    export reducer;
-    export map_reduce;
+    use std::map;
 
-    type putter<K: Send, V: Send> = fn(&K, V);
+    pub type putter<K: Owned, V: Owned> = fn(&K, V);
 
-    type mapper<K1: Send, K2: Send, V: Send> = fn~(K1, putter<K2, V>);
+    pub type mapper<K1: Owned, K2: Owned, V: Owned> = fn~(K1, putter<K2, V>);
 
-    type getter<V: Send> = fn() -> Option<V>;
+    pub type getter<V: Owned> = fn() -> Option<V>;
 
-    type reducer<K: Copy Send, V: Copy Send> = fn~(&K, getter<V>);
+    pub type reducer<K: Copy Owned, V: Copy Owned> = fn~(&K, getter<V>);
 
-    enum ctrl_proto<K: Copy Send, V: Copy Send> {
+    enum ctrl_proto<K: Copy Owned, V: Copy Owned> {
         find_reducer(K, Chan<Chan<reduce_proto<V>>>),
         mapper_done
     }
 
 
     proto! ctrl_proto (
-        open: send<K: Copy Send, V: Copy Send> {
+        open: send<K: Copy Owned, V: Copy Owned> {
             find_reducer(K) -> reducer_response<K, V>,
             mapper_done -> !
         }
 
-        reducer_response: recv<K: Copy Send, V: Copy Send> {
+        reducer_response: recv<K: Copy Owned, V: Copy Owned> {
             reducer(Chan<reduce_proto<V>>) -> open<K, V>
         }
     )
 
-    enum reduce_proto<V: Copy Send> { emit_val(V), done, addref, release }
+    enum reduce_proto<V: Copy Owned> { emit_val(V), done, addref, release }
 
-    fn start_mappers<K1: Copy Send, K2: Hash IterBytes Eq Const Copy Send,
-                     V: Copy Send>(
+    fn start_mappers<K1: Copy Owned, K2: Hash IterBytes Eq Const Copy Owned,
+                     V: Copy Owned>(
         map: &mapper<K1, K2, V>,
         ctrls: &mut ~[ctrl_proto::server::open<K2, V>],
         inputs: &~[K1])
@@ -154,13 +157,13 @@ mod map_reduce {
             let ctrl = box(move ctrl);
             let i = copy *i;
             let m = copy *map;
-            tasks.push(spawn_joinable(|move ctrl, move i| map_task(m, &ctrl, i)));
+            tasks.push(spawn_joinable(|move ctrl, move i| map_task(copy m, &ctrl, i)));
             ctrls.push(move ctrl_server);
         }
         move tasks
     }
 
-    fn map_task<K1: Copy Send, K2: Hash IterBytes Eq Const Copy Send, V: Copy Send>(
+    fn map_task<K1: Copy Owned, K2: Hash IterBytes Eq Const Copy Owned, V: Copy Owned>(
         map: mapper<K1, K2, V>,
         ctrl: &box<ctrl_proto::client::open<K2, V>>,
         input: K1)
@@ -192,7 +195,7 @@ mod map_reduce {
             send(c.get(), emit_val(val));
         }
 
-        fn finish<K: Copy Send, V: Copy Send>(_k: K, v: Chan<reduce_proto<V>>)
+        fn finish<K: Copy Owned, V: Copy Owned>(_k: K, v: Chan<reduce_proto<V>>)
         {
             send(v, release);
         }
@@ -200,7 +203,7 @@ mod map_reduce {
         ctrl_proto::client::mapper_done(ctrl.unwrap());
     }
 
-    fn reduce_task<K: Copy Send, V: Copy Send>(
+    fn reduce_task<K: Copy Owned, V: Copy Owned>(
         reduce: ~reducer<K, V>, 
         key: K,
         out: Chan<Chan<reduce_proto<V>>>)
@@ -212,7 +215,7 @@ mod map_reduce {
         let mut ref_count = 0;
         let mut is_done = false;
 
-        fn get<V: Copy Send>(p: Port<reduce_proto<V>>,
+        fn get<V: Copy Owned>(p: Port<reduce_proto<V>>,
                              ref_count: &mut int, is_done: &mut bool)
            -> Option<V> {
             while !*is_done || *ref_count > 0 {
@@ -235,7 +238,7 @@ mod map_reduce {
         (*reduce)(&key, || get(p, &mut ref_count, &mut is_done) );
     }
 
-    fn map_reduce<K1: Copy Send, K2: Hash IterBytes Eq Const Copy Send, V: Copy Send>(
+    pub fn map_reduce<K1: Copy Owned, K2: Hash IterBytes Eq Const Copy Owned, V: Copy Owned>(
         map: mapper<K1, K2, V>,
         reduce: reducer<K2, V>,
         inputs: ~[K1])
@@ -270,8 +273,10 @@ mod map_reduce {
                     // log(error, "creating new reducer for " + k);
                     let p = Port();
                     let ch = Chan(&p);
-                    let r = reduce, kk = k;
-                    tasks.push(spawn_joinable(|move r| reduce_task(~r, kk, ch) ));
+                    let r = copy reduce, kk = k;
+                    tasks.push(spawn_joinable(|move r|
+                        reduce_task(~copy r, kk, ch)
+                    ));
                     c = recv(p);
                     reducers.insert(k, c);
                   }

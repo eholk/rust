@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 # Borrow check
 
@@ -216,34 +226,41 @@ Borrowck results in two maps.
 
 #[legacy_exports];
 
-use syntax::ast;
-use syntax::ast::{mutability, m_mutbl, m_imm, m_const};
-use syntax::visit;
-use syntax::ast_util;
-use syntax::ast_map;
-use syntax::codemap::span;
-use util::ppaux::{ty_to_str, region_to_str, explain_region,
-                  expr_repr, note_and_explain_region};
-use std::map::{HashMap, Set};
-use std::list;
-use std::list::{List, Cons, Nil};
-use result::{Result, Ok, Err};
-use syntax::print::pprust;
+use middle::liveness;
+use middle::mem_categorization::*;
+use middle::region;
+use middle::ty::to_str;
+use middle::ty;
 use util::common::indenter;
-use ty::to_str;
-use dvec::DVec;
-use mem_categorization::*;
+use util::ppaux::{expr_repr, note_and_explain_region};
+use util::ppaux::{ty_to_str, region_to_str, explain_region};
+
+use core::cmp;
+use core::dvec::DVec;
+use core::io;
+use core::result::{Result, Ok, Err};
+use std::list::{List, Cons, Nil};
+use std::list;
+use std::map::{HashMap, Set};
+use syntax::ast::{mutability, m_mutbl, m_imm, m_const};
+use syntax::ast;
+use syntax::ast_map;
+use syntax::ast_util;
+use syntax::codemap::span;
+use syntax::print::pprust;
+use syntax::visit;
 
 #[legacy_exports]
-mod check_loans;
+pub mod check_loans;
 #[legacy_exports]
-mod gather_loans;
+pub mod gather_loans;
 #[legacy_exports]
-mod loan;
+pub mod loan;
 #[legacy_exports]
-mod preserve;
+pub mod preserve;
 
 export check_crate, root_map, mutbl_map;
+export check_loans, gather_loans, loan, preserve;
 
 fn check_crate(tcx: ty::ctxt,
                method_map: typeck::method_map,
@@ -321,7 +338,7 @@ type root_map_key = {id: ast::node_id, derefs: uint};
 
 // set of ids of local vars / formal arguments that are modified / moved.
 // this is used in trans for optimization purposes.
-type mutbl_map = std::map::HashMap<ast::node_id, ()>;
+type mutbl_map = HashMap<ast::node_id, ()>;
 
 // Errors that can occur"]
 enum bckerr_code {
@@ -424,14 +441,6 @@ impl root_map_key : cmp::Eq {
     }
 }
 
-#[cfg(stage0)]
-impl root_map_key : to_bytes::IterBytes {
-    pure fn iter_bytes(+lsb0: bool, f: to_bytes::Cb) {
-        to_bytes::iter_bytes_2(&self.id, &self.derefs, lsb0, f);
-    }
-}
-#[cfg(stage1)]
-#[cfg(stage2)]
 impl root_map_key : to_bytes::IterBytes {
     pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
         to_bytes::iter_bytes_2(&self.id, &self.derefs, lsb0, f);
@@ -498,7 +507,7 @@ impl borrowck_ctxt {
     fn report_if_err(bres: bckres<()>) {
         match bres {
           Ok(()) => (),
-          Err(e) => self.report(e)
+          Err(ref e) => self.report((*e))
         }
     }
 
@@ -510,11 +519,11 @@ impl borrowck_ctxt {
         self.note_and_explain_bckerr(err);
     }
 
-    fn span_err(s: span, m: ~str) {
+    fn span_err(s: span, +m: ~str) {
         self.tcx.sess.span_err(s, m);
     }
 
-    fn span_note(s: span, m: ~str) {
+    fn span_note(s: span, +m: ~str) {
         self.tcx.sess.span_note(s, m);
     }
 

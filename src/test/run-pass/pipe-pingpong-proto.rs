@@ -1,5 +1,18 @@
+// xfail-fast
+
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // An example to make sure the protocol parsing syntax extension works.
 
+use core::option;
 
 proto! pingpong (
     ping:send {
@@ -12,11 +25,10 @@ proto! pingpong (
 )
 
 mod test {
-    #[legacy_exports];
-    use pipes::recv;
+    use core::pipes::recv;
     use pingpong::{ping, pong};
 
-    fn client(-chan: pingpong::client::ping) {
+    pub fn client(-chan: ::pingpong::client::ping) {
         use pingpong::client;
 
         let chan = client::ping(move chan);
@@ -25,7 +37,7 @@ mod test {
         log(error, ~"Received pong");
     }
     
-    fn server(-chan: pingpong::server::ping) {
+    pub fn server(-chan: ::pingpong::server::ping) {
         use pingpong::server;
 
         let ping(chan) = recv(move chan);

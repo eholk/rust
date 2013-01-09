@@ -1,15 +1,31 @@
-use syntax::ast;
-use lib::llvm::{ValueRef, TypeRef};
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use back::abi;
-use syntax::codemap::span;
-use shape::llsize_of;
-use build::*;
-use common::*;
-use util::ppaux::ty_to_str;
-use expr::{Dest, SaveIn, Ignore};
-use datum::*;
-use syntax::print::pprust::{expr_to_str};
+use lib::llvm::{ValueRef, TypeRef};
+use middle::trans::build::*;
+use middle::trans::common::*;
+use middle::trans::datum::*;
+use middle::trans::expr::{Dest, Ignore, SaveIn};
+use middle::trans::expr;
+use middle::trans::glue;
+use middle::trans::shape::llsize_of;
+use middle::trans::type_of;
+use middle::ty;
 use util::common::indenter;
+use util::ppaux::ty_to_str;
+
+use syntax::ast;
+use syntax::codemap::span;
+use syntax::print::pprust::{expr_to_str};
 
 // Boxed vector types are in some sense currently a "shorthand" for a box
 // containing an unboxed vector. This expands a boxed vector type into such an
@@ -242,7 +258,7 @@ fn trans_lit_str(bcx: block,
         SaveIn(lldest) => {
             let bytes = lit_str.len() + 1; // count null-terminator too
             let llbytes = C_uint(bcx.ccx(), bytes);
-            let llcstr = C_cstr(bcx.ccx(), *lit_str);
+            let llcstr = C_cstr(bcx.ccx(), /*bad*/copy *lit_str);
             let llcstr = llvm::LLVMConstPointerCast(llcstr, T_ptr(T_i8()));
             Store(bcx, llcstr, GEPi(bcx, lldest, [0u, abi::slice_elt_base]));
             Store(bcx, llbytes, GEPi(bcx, lldest, [0u, abi::slice_elt_len]));
@@ -299,7 +315,7 @@ fn write_content(bcx: block,
            bcx.expr_to_str(vstore_expr));
     let _indenter = indenter();
 
-    match content_expr.node {
+    match /*bad*/copy content_expr.node {
         ast::expr_lit(@{node: ast::lit_str(s), span: _}) => {
             match dest {
                 Ignore => {
@@ -308,7 +324,7 @@ fn write_content(bcx: block,
                 SaveIn(lldest) => {
                     let bytes = s.len() + 1; // copy null-terminator too
                     let llbytes = C_uint(bcx.ccx(), bytes);
-                    let llcstr = C_cstr(bcx.ccx(), *s);
+                    let llcstr = C_cstr(bcx.ccx(), /*bad*/copy *s);
                     base::call_memcpy(bcx, lldest, llcstr, llbytes);
                     return bcx;
                 }
@@ -405,7 +421,7 @@ fn vec_types(bcx: block, vec_ty: ty::t) -> VecTypes {
 fn elements_required(bcx: block, content_expr: @ast::expr) -> uint {
     //! Figure out the number of elements we need to store this content
 
-    match content_expr.node {
+    match /*bad*/copy content_expr.node {
         ast::expr_lit(@{node: ast::lit_str(s), span: _}) => s.len() + 1,
         ast::expr_vec(es, _) => es.len(),
         ast::expr_repeat(_, count_expr, _) => {

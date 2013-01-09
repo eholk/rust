@@ -1,7 +1,21 @@
-use std::map::{HashMap};
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use ast;
 use ast_util::spanned;
-use parser::Parser;
-use lexer::reader;
+use parse::lexer::reader;
+use parse::parser::Parser;
+use parse::token;
+
+use core::option;
+use std::map::HashMap;
 
 type seq_sep = {
     sep: Option<token::Token>,
@@ -189,9 +203,9 @@ impl Parser {
         while self.token != token::GT
             && self.token != token::BINOP(token::SHR) {
             match sep {
-              Some(t) => {
+              Some(ref t) => {
                 if first { first = false; }
-                else { self.expect(t); }
+                else { self.expect((*t)); }
               }
               _ => ()
             }
@@ -233,9 +247,9 @@ impl Parser {
         let mut v: ~[T] = ~[];
         while self.token != ket {
             match sep.sep {
-              Some(t) => {
+              Some(ref t) => {
                 if first { first = false; }
-                else { self.expect(t); }
+                else { self.expect((*t)); }
               }
               _ => ()
             }

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // ----------------------------------------------------------------------
 // Checking loans
 //
@@ -7,7 +17,18 @@
 // 3. assignments do not affect things loaned out as immutable
 // 4. moves to dnot affect things loaned out in any way
 
-use dvec::DVec;
+
+use middle::ty::{CopyValue, MoveValue, ReadValue};
+use middle::ty;
+
+use core::cmp;
+use core::dvec::DVec;
+use core::uint;
+use core::vec;
+use syntax::ast;
+use syntax::ast_util;
+use syntax::print::pprust;
+use syntax::visit;
 
 export check_loans;
 
@@ -41,9 +62,9 @@ impl purity_cause : cmp::Eq {
                     _ => false
                 }
             }
-            pc_cmt(e0a) => {
+            pc_cmt(ref e0a) => {
                 match (*other) {
-                    pc_cmt(e0b) => e0a == e0b,
+                    pc_cmt(ref e0b) => (*e0a) == (*e0b),
                     _ => false
                 }
             }
@@ -121,7 +142,7 @@ impl check_loan_ctxt {
         loop {
             match pure_map.find(scope_id) {
               None => (),
-              Some(e) => return Some(pc_cmt(e))
+              Some(ref e) => return Some(pc_cmt((*e)))
             }
 
             match region_map.find(scope_id) {
@@ -214,14 +235,14 @@ impl check_loan_ctxt {
 
         let callee_ty = ty::node_id_to_type(tcx, callee_id);
         match ty::get(callee_ty).sty {
-          ty::ty_fn(fn_ty) => {
-            match fn_ty.meta.purity {
+          ty::ty_fn(ref fn_ty) => {
+            match (*fn_ty).meta.purity {
               ast::pure_fn => return, // case (c) above
               ast::impure_fn | ast::unsafe_fn | ast::extern_fn => {
                 self.report_purity_error(
                     pc, callee_span,
                     fmt!("access to %s function",
-                         pprust::purity_to_str(fn_ty.meta.purity)));
+                         pprust::purity_to_str((*fn_ty).meta.purity)));
               }
             }
           }
@@ -316,18 +337,6 @@ impl check_loan_ctxt {
         }
     }
 
-    fn is_self_field(cmt: cmt) -> bool {
-        match cmt.cat {
-          cat_comp(cmt_base, comp_field(*)) => {
-            match cmt_base.cat {
-              cat_special(sk_self) => true,
-              _ => false
-            }
-          }
-          _ => false
-        }
-    }
-
     fn check_assignment(at: assignment_type, ex: @ast::expr) {
         // We don't use cat_expr() here because we don't want to treat
         // auto-ref'd parameters in overloaded operators as rvalues.
@@ -359,7 +368,7 @@ impl check_loan_ctxt {
         // is not visible from the outside
         match self.purity(ex.id) {
           None => (),
-          Some(pc @ pc_cmt(_)) => {
+          Some(pc_cmt(_)) => {
             // Subtle: Issue #3162.  If we are enforcing purity
             // because there is a reference to aliasable, mutable data
             // that we require to be immutable, we can't allow writes
@@ -367,7 +376,9 @@ impl check_loan_ctxt {
             // because that aliasable data might have been located on
             // the current stack frame, we don't know.
             self.report_purity_error(
-                pc, ex.span, at.ing_form(self.bccx.cmt_to_str(cmt)));
+                self.purity(ex.id).get(),
+                ex.span,
+                at.ing_form(self.bccx.cmt_to_str(cmt)));
           }
           Some(pc_pure_fn) => {
             if cmt.lp.is_none() {
@@ -436,13 +447,13 @@ impl check_loan_ctxt {
                 sp,
                 fmt!("%s prohibited in pure context", msg));
           }
-          pc_cmt(e) => {
-            if self.reported.insert(e.cmt.id, ()) {
+          pc_cmt(ref e) => {
+            if self.reported.insert((*e).cmt.id, ()) {
                 self.tcx().sess.span_err(
-                    e.cmt.span,
+                    (*e).cmt.span,
                     fmt!("illegal borrow unless pure: %s",
-                         self.bccx.bckerr_to_str(e)));
-                self.bccx.note_and_explain_bckerr(e);
+                         self.bccx.bckerr_to_str((*e))));
+                self.bccx.note_and_explain_bckerr((*e));
                 self.tcx().sess.span_note(
                     sp,
                     fmt!("impure due to %s", msg));
@@ -468,6 +479,9 @@ impl check_loan_ctxt {
           // did.  This seems consistent with permitting moves out of
           // rvalues, I guess.
           cat_special(sk_static_item) => {}
+
+          // We allow moving out of explicit self only.
+          cat_special(sk_self) => {}
 
           cat_deref(_, _, unsafe_ptr) => {}
 
@@ -528,12 +542,12 @@ impl check_loan_ctxt {
                   args: ~[@ast::expr]) {
         match self.purity(expr.id) {
           None => {}
-          Some(pc) => {
+          Some(ref pc) => {
             self.check_pure_callee_or_arg(
-                pc, callee, callee_id, callee_span);
+                (*pc), callee, callee_id, callee_span);
             for args.each |arg| {
                 self.check_pure_callee_or_arg(
-                    pc, Some(*arg), arg.id, arg.span);
+                    (*pc), Some(*arg), arg.id, arg.span);
             }
           }
         }
@@ -612,7 +626,13 @@ fn check_loans_in_expr(expr: @ast::expr,
 
     self.check_for_conflicting_loans(expr.id);
 
-    match expr.node {
+    // If this is a move, check it.
+    match self.tcx().value_modes.find(expr.id) {
+        Some(MoveValue) => self.check_move_out(expr),
+        Some(ReadValue) | Some(CopyValue) | None => {}
+    }
+
+    match /*bad*/copy expr.node {
       ast::expr_path(*) if self.bccx.last_use_map.contains_key(expr.id) => {
         self.check_last_use(expr);
       }
@@ -645,6 +665,9 @@ fn check_loans_in_expr(expr: @ast::expr,
       }
       ast::expr_call(f, args, _) => {
         self.check_call(expr, Some(f), f.id, f.span, args);
+      }
+      ast::expr_method_call(_, _, _, args, _) => {
+        self.check_call(expr, None, expr.callee_id, expr.span, args);
       }
       ast::expr_index(_, rval) |
       ast::expr_binary(_, _, rval)

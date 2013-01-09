@@ -1,3 +1,14 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 /*!
  * A classic liveness analysis based on dataflow over the AST.  Computes,
  * for each local variable in a function, whether that variable is live
@@ -92,15 +103,29 @@
  *   to return explicitly.
  */
 
-use dvec::DVec;
+use middle::capture::{cap_move, cap_drop, cap_copy, cap_ref};
+use middle::capture;
+use middle::pat_util;
+use middle::ty::MoveValue;
+use middle::ty;
+use middle::typeck;
+
+use core::cmp;
+use core::dvec::DVec;
+use core::io::WriterUtil;
+use core::io;
+use core::ptr;
+use core::to_str;
+use core::uint;
+use core::vec;
 use std::map::HashMap;
-use syntax::{visit, ast_util};
-use syntax::print::pprust::{expr_to_str, block_to_str};
-use visit::vt;
-use syntax::codemap::span;
 use syntax::ast::*;
-use io::WriterUtil;
-use capture::{cap_move, cap_drop, cap_copy, cap_ref};
+use syntax::codemap::span;
+use syntax::parse::token::special_idents;
+use syntax::print::pprust::{expr_to_str, block_to_str};
+use syntax::visit::{fk_anon, fk_dtor, fk_fn_block, fk_item_fn, fk_method};
+use syntax::visit::{vt};
+use syntax::{visit, ast_util};
 
 export check_crate;
 export last_use_map;
@@ -253,7 +278,6 @@ struct LocalInfo {
 enum VarKind {
     Arg(node_id, ident, rmode),
     Local(LocalInfo),
-    Self,
     ImplicitRet
 }
 
@@ -261,7 +285,8 @@ fn relevant_def(def: def) -> Option<node_id> {
     match def {
       def_binding(nid, _) |
       def_arg(nid, _) |
-      def_local(nid, _) => Some(nid),
+      def_local(nid, _) |
+      def_self(nid, _) => Some(nid),
 
       _ => None
     }
@@ -326,8 +351,7 @@ impl IrMaps {
             Arg(node_id, _, _) => {
                 self.variable_map.insert(node_id, v);
             }
-            Self | ImplicitRet => {
-            }
+            ImplicitRet => {}
         }
 
         debug!("%s is %?", v.to_str(), vk);
@@ -349,7 +373,6 @@ impl IrMaps {
         match copy self.var_kinds[*var] {
             Local(LocalInfo {ident: nm, _}) |
             Arg(_, nm, _) => self.tcx.sess.str_of(nm),
-            Self => ~"self",
             ImplicitRet => ~"<implicit-ret>"
         }
     }
@@ -379,9 +402,7 @@ impl IrMaps {
           Arg(id, _, by_copy) |
           Local(LocalInfo {id: id, kind: FromLetNoInitializer, _}) |
           Local(LocalInfo {id: id, kind: FromLetWithInitializer, _}) |
-          Local(LocalInfo {id: id, kind: FromMatch(bind_by_value), _}) |
-          Local(LocalInfo {id: id, kind: FromMatch(bind_by_ref(_)), _}) |
-          Local(LocalInfo {id: id, kind: FromMatch(bind_by_move), _}) => {
+          Local(LocalInfo {id: id, kind: FromMatch(_), _}) => {
             let v = match self.last_use_map.find(expr_id) {
               Some(v) => v,
               None => {
@@ -394,8 +415,7 @@ impl IrMaps {
             (*v).push(id);
           }
           Arg(_, _, by_ref) |
-          Arg(_, _, by_val) | Self | ImplicitRet |
-          Local(LocalInfo {kind: FromMatch(bind_by_implicit_ref), _}) => {
+          Arg(_, _, by_val) | ImplicitRet => {
             debug!("--but it is not owned");
           }
         }
@@ -405,7 +425,7 @@ impl IrMaps {
 fn visit_fn(fk: visit::fn_kind, decl: fn_decl, body: blk,
             sp: span, id: node_id, &&self: @IrMaps, v: vt<@IrMaps>) {
     debug!("visit_fn: id=%d", id);
-    let _i = util::common::indenter();
+    let _i = ::util::common::indenter();
 
     // swap in a new set of IR maps for this function body:
     let fn_maps = @IrMaps(self.tcx, self.method_map,
@@ -422,6 +442,31 @@ fn visit_fn(fk: visit::fn_kind, decl: fn_decl, body: blk,
             (*fn_maps).add_variable(Arg(arg_id, ident, mode));
         }
     };
+
+    // Add `self`, whether explicit or implicit.
+    match fk {
+        fk_method(_, _, method) => {
+            match method.self_ty.node {
+                sty_by_ref => {
+                    fn_maps.add_variable(Arg(method.self_id,
+                                             special_idents::self_,
+                                             by_ref));
+                }
+                sty_value | sty_region(_) | sty_box(_) | sty_uniq(_) => {
+                    fn_maps.add_variable(Arg(method.self_id,
+                                             special_idents::self_,
+                                             by_copy));
+                }
+                sty_static => {}
+            }
+        }
+        fk_dtor(_, _, self_id, _) => {
+            fn_maps.add_variable(Arg(self_id,
+                                     special_idents::self_,
+                                     by_copy));
+        }
+        fk_item_fn(*) | fk_anon(*) | fk_fn_block(*) => {}
+    }
 
     // gather up the various local variables, significant expressions,
     // and so forth:
@@ -515,8 +560,8 @@ fn visit_expr(expr: @expr, &&self: @IrMaps, vt: vt<@IrMaps>) {
         // in better error messages than just pointing at the closure
         // construction site.
         let proto = ty::ty_fn_proto(ty::expr_ty(self.tcx, expr));
-        let cvs = capture::compute_capture_vars(self.tcx, expr.id,
-                                                proto, cap_clause);
+        let cvs = capture::compute_capture_vars(self.tcx, expr.id, proto,
+                                                cap_clause);
         let mut call_caps = ~[];
         for cvs.each |cv| {
             match relevant_def(cv.def) {
@@ -550,8 +595,8 @@ fn visit_expr(expr: @expr, &&self: @IrMaps, vt: vt<@IrMaps>) {
 
       // otherwise, live nodes are not required:
       expr_index(*) | expr_field(*) | expr_vstore(*) |
-      expr_vec(*) | expr_rec(*) | expr_call(*) | expr_tup(*) |
-      expr_log(*) | expr_binary(*) |
+      expr_vec(*) | expr_rec(*) | expr_call(*) | expr_method_call(*) |
+      expr_tup(*) | expr_log(*) | expr_binary(*) |
       expr_assert(*) | expr_addr_of(*) | expr_copy(*) |
       expr_loop_body(*) | expr_do_body(*) | expr_cast(*) |
       expr_unary(*) | expr_fail(*) |
@@ -988,7 +1033,7 @@ impl Liveness {
     }
 
     fn propagate_through_decl(decl: @decl, succ: LiveNode) -> LiveNode {
-        match decl.node {
+        match /*bad*/copy decl.node {
           decl_local(locals) => {
             do locals.foldr(succ) |local, succ| {
                 self.propagate_through_local(*local, succ)
@@ -1037,7 +1082,7 @@ impl Liveness {
         debug!("propagate_through_expr: %s",
              expr_to_str(expr, self.tcx.sess.intr()));
 
-        match expr.node {
+        match /*bad*/copy expr.node {
           // Interesting cases with control flow or which gen/kill
 
           expr_path(_) => {
@@ -1048,7 +1093,7 @@ impl Liveness {
               self.propagate_through_expr(e, succ)
           }
 
-          expr_fn(_, _, blk, _) | expr_fn_block(_, blk, _) => {
+          expr_fn(_, _, ref blk, _) | expr_fn_block(_, ref blk, _) => {
               debug!("%s is an expr_fn or expr_fn_block",
                    expr_to_str(expr, self.tcx.sess.intr()));
 
@@ -1056,7 +1101,7 @@ impl Liveness {
               The next-node for a break is the successor of the entire
               loop. The next-node for a continue is the top of this loop.
               */
-              self.with_loop_nodes(blk.node.id, succ,
+              self.with_loop_nodes((*blk).node.id, succ,
                   self.live_node(expr.id, expr.span), || {
 
                  // the construction of a closure itself is not important,
@@ -1071,7 +1116,7 @@ impl Liveness {
               })
           }
 
-          expr_if(cond, then, els) => {
+          expr_if(cond, ref then, els) => {
             //
             //     (cond)
             //       |
@@ -1086,24 +1131,24 @@ impl Liveness {
             //   (  succ  )
             //
             let else_ln = self.propagate_through_opt_expr(els, succ);
-            let then_ln = self.propagate_through_block(then, succ);
+            let then_ln = self.propagate_through_block((*then), succ);
             let ln = self.live_node(expr.id, expr.span);
             self.init_from_succ(ln, else_ln);
             self.merge_from_succ(ln, then_ln, false);
             self.propagate_through_expr(cond, ln)
           }
 
-          expr_while(cond, blk) => {
-            self.propagate_through_loop(expr, Some(cond), blk, succ)
+          expr_while(cond, ref blk) => {
+            self.propagate_through_loop(expr, Some(cond), (*blk), succ)
           }
 
           // Note that labels have been resolved, so we don't need to look
           // at the label ident
-          expr_loop(blk, _) => {
-            self.propagate_through_loop(expr, None, blk, succ)
+          expr_loop(ref blk, _) => {
+            self.propagate_through_loop(expr, None, (*blk), succ)
           }
 
-          expr_match(e, arms) => {
+          expr_match(e, ref arms) => {
             //
             //      (e)
             //       |
@@ -1121,7 +1166,7 @@ impl Liveness {
             let ln = self.live_node(expr.id, expr.span);
             self.init_empty(ln, succ);
             let mut first_merge = true;
-            for arms.each |arm| {
+            for (*arms).each |arm| {
                 let body_succ =
                     self.propagate_through_block(arm.body, succ);
                 let guard_succ =
@@ -1213,16 +1258,16 @@ impl Liveness {
             self.propagate_through_expr(element, succ)
           }
 
-          expr_rec(fields, with_expr) => {
+          expr_rec(ref fields, with_expr) => {
             let succ = self.propagate_through_opt_expr(with_expr, succ);
-            do fields.foldr(succ) |field, succ| {
+            do (*fields).foldr(succ) |field, succ| {
                 self.propagate_through_expr(field.node.expr, succ)
             }
           }
 
-          expr_struct(_, fields, with_expr) => {
+          expr_struct(_, ref fields, with_expr) => {
             let succ = self.propagate_through_opt_expr(with_expr, succ);
-            do fields.foldr(succ) |field, succ| {
+            do (*fields).foldr(succ) |field, succ| {
                 self.propagate_through_expr(field.node.expr, succ)
             }
           }
@@ -1235,6 +1280,17 @@ impl Liveness {
                        else {succ};
             let succ = self.propagate_through_exprs(args, succ);
             self.propagate_through_expr(f, succ)
+          }
+
+          expr_method_call(rcvr, _, _, args, _) => {
+            // calling a method with bot return type means that the method
+            // will fail, and hence the successors can be ignored
+            let t_ret = ty::ty_fn_ret(ty::node_id_to_type(self.tcx,
+                                                          expr.callee_id));
+            let succ = if ty::type_is_bot(t_ret) {self.s.exit_ln}
+                       else {succ};
+            let succ = self.propagate_through_exprs(args, succ);
+            self.propagate_through_expr(rcvr, succ)
           }
 
           expr_tup(exprs) => {
@@ -1273,8 +1329,8 @@ impl Liveness {
             succ
           }
 
-          expr_block(blk) => {
-            self.propagate_through_block(blk, succ)
+          expr_block(ref blk) => {
+            self.propagate_through_block((*blk), succ)
           }
 
           expr_mac(*) => {
@@ -1486,12 +1542,48 @@ fn check_arm(arm: arm, &&self: @Liveness, vt: vt<@Liveness>) {
     visit::visit_arm(arm, self, vt);
 }
 
+fn check_call(args: &[@expr],
+              targs: &[ty::arg],
+              &&self: @Liveness) {
+    for vec::each2(args, targs) |arg_expr, arg_ty| {
+        match ty::resolved_mode(self.tcx, arg_ty.mode) {
+            by_val | by_copy | by_ref => {}
+            by_move => {
+                if ty::expr_is_lval(self.tcx, self.ir.method_map, *arg_expr) {
+                    // Probably a bad error message (what's an rvalue?)
+                    // but I can't think of anything better
+                    self.tcx.sess.span_err(arg_expr.span,
+                      fmt!("move mode argument must be an rvalue: try (move \
+                            %s) instead",
+                           expr_to_str(*arg_expr, self.tcx.sess.intr())));
+                }
+            }
+        }
+    }
+}
+
 fn check_expr(expr: @expr, &&self: @Liveness, vt: vt<@Liveness>) {
-    match expr.node {
+    match /*bad*/copy expr.node {
       expr_path(_) => {
         for self.variable_from_def_map(expr.id, expr.span).each |var| {
             let ln = self.live_node(expr.id, expr.span);
             self.consider_last_use(expr, ln, *var);
+
+            match self.tcx.value_modes.find(expr.id) {
+                Some(MoveValue) => {
+                    debug!("(checking expr) is a move: `%s`",
+                           expr_to_str(expr, self.tcx.sess.intr()));
+                    self.check_move_from_var(expr.span, ln, *var);
+                }
+                Some(v) => {
+                    debug!("(checking expr) not a move (%?): `%s`",
+                           v,
+                           expr_to_str(expr, self.tcx.sess.intr()));
+                }
+                None => {
+                    fail ~"no mode for lval";
+                }
+            }
         }
 
         visit::visit_expr(expr, self, vt);
@@ -1531,23 +1623,14 @@ fn check_expr(expr: @expr, &&self: @Liveness, vt: vt<@Liveness>) {
 
       expr_call(f, args, _) => {
         let targs = ty::ty_fn_args(ty::expr_ty(self.tcx, f));
-        for vec::each2(args, targs) |arg_expr, arg_ty| {
-            match ty::resolved_mode(self.tcx, arg_ty.mode) {
-                by_val | by_copy | by_ref => {}
-                by_move => {
-                    if ty::expr_is_lval(self.tcx, self.ir.method_map,
-                                        *arg_expr) {
-                        // Probably a bad error message (what's an rvalue?)
-                        // but I can't think of anything better
-                        self.tcx.sess.span_err(arg_expr.span,
-                          fmt!("Move mode argument must be an rvalue: try \
-                          (move %s) instead", expr_to_str(*arg_expr,
-                                                self.tcx.sess.intr())));
-                    }
-                }
-            }
-        }
+        check_call(args, targs, self);
+        visit::visit_expr(expr, self, vt);
+      }
 
+      expr_method_call(_, _, _, args, _) => {
+        let targs = ty::ty_fn_args(ty::node_id_to_type(self.tcx,
+                                                       expr.callee_id));
+        check_call(args, targs, self);
         visit::visit_expr(expr, self, vt);
       }
 
@@ -1741,13 +1824,6 @@ impl @Liveness {
                     move_span,
                     fmt!("illegal move from argument `%s`, which is not \
                           copy or move mode", self.tcx.sess.str_of(name)));
-                return;
-              }
-              Self => {
-                self.tcx.sess.span_err(
-                    move_span,
-                    ~"illegal move from self (cannot move out of a field of \
-                       self)");
                 return;
               }
               Local(*) | ImplicitRet => {

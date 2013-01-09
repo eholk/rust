@@ -1,14 +1,24 @@
-use std::map::HashMap;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use middle::ty;
 use middle::ty::{arg, canon_mode};
-use middle::ty::{bound_copy, bound_const, bound_owned, bound_send,
+use middle::ty::{bound_copy, bound_const, bound_durable, bound_owned,
         bound_trait};
 use middle::ty::{bound_region, br_anon, br_named, br_self, br_cap_avoid};
 use middle::ty::{ctxt, field, method};
 use middle::ty::{mt, t, param_bound};
 use middle::ty::{re_bound, re_free, re_scope, re_infer, re_static, Region};
 use middle::ty::{ReSkolemized, ReVar};
-use middle::ty::{ty_bool, ty_bot, ty_box, ty_class, ty_enum};
+use middle::ty::{ty_bool, ty_bot, ty_box, ty_struct, ty_enum};
 use middle::ty::{ty_err, ty_estr, ty_evec, ty_float, ty_fn, ty_trait, ty_int};
 use middle::ty::{ty_nil, ty_opaque_box, ty_opaque_closure_ptr, ty_param};
 use middle::ty::{ty_ptr, ty_rec, ty_rptr, ty_self, ty_tup};
@@ -24,19 +34,23 @@ use syntax::print::pprust::{path_to_str, proto_to_str,
 use syntax::{ast, ast_util};
 use syntax::ast_map;
 
+use core::str;
+use core::vec;
+use std::map::HashMap;
+
 fn note_and_explain_region(cx: ctxt,
                            prefix: ~str,
                            region: ty::Region,
                            suffix: ~str) {
     match explain_region_and_span(cx, region) {
-      (str, Some(span)) => {
+      (ref str, Some(span)) => {
         cx.sess.span_note(
             span,
-            fmt!("%s%s%s", prefix, str, suffix));
+            fmt!("%s%s%s", prefix, (*str), suffix));
       }
-      (str, None) => {
+      (ref str, None) => {
         cx.sess.note(
-            fmt!("%s%s%s", prefix, str, suffix));
+            fmt!("%s%s%s", prefix, (*str), suffix));
       }
     }
 }
@@ -55,14 +69,17 @@ fn explain_region_and_span(cx: ctxt, region: ty::Region)
     return match region {
       re_scope(node_id) => {
         match cx.items.find(node_id) {
-          Some(ast_map::node_block(blk)) => {
-            explain_span(cx, ~"block", blk.span)
+          Some(ast_map::node_block(ref blk)) => {
+            explain_span(cx, "block", (*blk).span)
           }
           Some(ast_map::node_expr(expr)) => {
             match expr.node {
-              ast::expr_call(*) => explain_span(cx, ~"call", expr.span),
-              ast::expr_match(*) => explain_span(cx, ~"match", expr.span),
-              _ => explain_span(cx, ~"expression", expr.span)
+              ast::expr_call(*) => explain_span(cx, "call", expr.span),
+              ast::expr_method_call(*) => {
+                explain_span(cx, "method call", expr.span)
+              },
+              ast::expr_match(*) => explain_span(cx, "match", expr.span),
+              _ => explain_span(cx, "expression", expr.span)
             }
           }
           Some(_) | None => {
@@ -82,8 +99,8 @@ fn explain_region_and_span(cx: ctxt, region: ty::Region)
         };
 
         match cx.items.find(id) {
-          Some(ast_map::node_block(blk)) => {
-            let (msg, opt_span) = explain_span(cx, ~"block", blk.span);
+          Some(ast_map::node_block(ref blk)) => {
+            let (msg, opt_span) = explain_span(cx, "block", (*blk).span);
             (fmt!("%s %s", prefix, msg), opt_span)
           }
           Some(_) | None => {
@@ -102,7 +119,7 @@ fn explain_region_and_span(cx: ctxt, region: ty::Region)
       }
     };
 
-    fn explain_span(cx: ctxt, heading: ~str, span: span)
+    fn explain_span(cx: ctxt, heading: &str, span: span)
         -> (~str, Option<span>)
     {
         let lo = cx.sess.codemap.lookup_char_pos_adj(span.lo);
@@ -112,17 +129,17 @@ fn explain_region_and_span(cx: ctxt, region: ty::Region)
 }
 
 fn bound_region_to_str(cx: ctxt, br: bound_region) -> ~str {
-    bound_region_to_str_adorned(cx, ~"&", br, ~"")
+    bound_region_to_str_adorned(cx, "&", br, "")
 }
 
-fn bound_region_to_str_adorned(cx: ctxt, prefix: ~str,
-                               br: bound_region, sep: ~str) -> ~str {
+fn bound_region_to_str_adorned(cx: ctxt, prefix: &str,
+                               br: bound_region, sep: &str) -> ~str {
     if cx.sess.verbose() { return fmt!("%s%?%s", prefix, br, sep); }
 
     match br {
       br_named(id)         => fmt!("%s%s%s", prefix, cx.sess.str_of(id), sep),
       br_self              => fmt!("%sself%s", prefix, sep),
-      br_anon(_)           => prefix,
+      br_anon(_)           => prefix.to_str(),
       br_cap_avoid(_, br)  => bound_region_to_str_adorned(cx, prefix,
                                                           *br, sep)
     }
@@ -130,9 +147,9 @@ fn bound_region_to_str_adorned(cx: ctxt, prefix: ~str,
 
 fn re_scope_id_to_str(cx: ctxt, node_id: ast::node_id) -> ~str {
     match cx.items.find(node_id) {
-      Some(ast_map::node_block(blk)) => {
+      Some(ast_map::node_block(ref blk)) => {
         fmt!("<block at %s>",
-             cx.sess.codemap.span_to_str(blk.span))
+             cx.sess.codemap.span_to_str((*blk).span))
       }
       Some(ast_map::node_expr(expr)) => {
         match expr.node {
@@ -172,11 +189,11 @@ fn re_scope_id_to_str(cx: ctxt, node_id: ast::node_id) -> ~str {
 // you should use `explain_region()` or, better yet,
 // `note_and_explain_region()`
 fn region_to_str(cx: ctxt, region: Region) -> ~str {
-    region_to_str_adorned(cx, ~"&", region, ~"")
+    region_to_str_adorned(cx, "&", region, "")
 }
 
-fn region_to_str_adorned(cx: ctxt, prefix: ~str,
-                         region: Region, sep: ~str) -> ~str {
+fn region_to_str_adorned(cx: ctxt, prefix: &str,
+                         region: Region, sep: &str) -> ~str {
     if cx.sess.verbose() {
         return fmt!("%s%?%s", prefix, region, sep);
     }
@@ -186,24 +203,24 @@ fn region_to_str_adorned(cx: ctxt, prefix: ~str,
     // to fit that into a short string.  Hence the recommendation to use
     // `explain_region()` or `note_and_explain_region()`.
     match region {
-        re_scope(_) => prefix,
+        re_scope(_) => prefix.to_str(),
         re_bound(br) => bound_region_to_str_adorned(cx, prefix, br, sep),
         re_free(_, br) => bound_region_to_str_adorned(cx, prefix, br, sep),
         re_infer(ReSkolemized(_, br)) => {
             bound_region_to_str_adorned(cx, prefix, br, sep)
         }
-        re_infer(ReVar(_)) => prefix,
+        re_infer(ReVar(_)) => prefix.to_str(),
         re_static => fmt!("%sstatic%s", prefix, sep)
     }
 }
 
 fn mt_to_str(cx: ctxt, m: mt) -> ~str {
     let mstr = match m.mutbl {
-      ast::m_mutbl => ~"mut ",
-      ast::m_imm => ~"",
-      ast::m_const => ~"const "
+      ast::m_mutbl => "mut ",
+      ast::m_imm => "",
+      ast::m_const => "const "
     };
-    return mstr + ty_to_str(cx, m.ty);
+    return fmt!("%s%s", mstr, ty_to_str(cx, m.ty));
 }
 
 fn vstore_to_str(cx: ctxt, vs: ty::vstore) -> ~str {
@@ -227,12 +244,12 @@ fn vstore_ty_to_str(cx: ctxt, ty: ~str, vs: ty::vstore) -> ~str {
     }
 }
 
-fn proto_ty_to_str(_cx: ctxt, proto: ast::Proto) -> ~str {
+fn proto_ty_to_str(_cx: ctxt, proto: ast::Proto) -> &static/str {
     match proto {
-        ast::ProtoBare => ~"",
-        ast::ProtoBox => ~"@",
-        ast::ProtoBorrowed => ~"&",
-        ast::ProtoUniq => ~"~",
+        ast::ProtoBare => "",
+        ast::ProtoBox => "@",
+        ast::ProtoBorrowed => "&",
+        ast::ProtoUniq => "~",
     }
 }
 
@@ -248,13 +265,7 @@ fn tys_to_str(cx: ctxt, ts: ~[t]) -> ~str {
 }
 
 fn bound_to_str(cx: ctxt, b: param_bound) -> ~str {
-    match b {
-      bound_copy     => ~"copy",
-      bound_owned    => ~"owned",
-      bound_send     => ~"send",
-      bound_const    => ~"const",
-      bound_trait(t) => ty_to_str(cx, t)
-    }
+    ty::param_bound_to_str(cx, &b)
 }
 
 fn ty_to_str(cx: ctxt, typ: t) -> ~str {
@@ -268,11 +279,11 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
                 m == ty::default_arg_mode_for_ty(cx, ty) {
                 ~""
             } else {
-                mode_to_str(ast::expl(m)) + ":"
+                mode_to_str(ast::expl(m)) + ~":"
             }
           }
         };
-        modestr + ty_to_str(cx, ty)
+        fmt!("%s%s", modestr, ty_to_str(cx, ty))
     }
     fn fn_to_str(cx: ctxt,
                  proto: ast::Proto,
@@ -344,14 +355,14 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
     }
 
     // if there is an id, print that instead of the structural type:
-    for ty::type_def_id(typ).each |def_id| {
+    /*for ty::type_def_id(typ).each |def_id| {
         // note that this typedef cannot have type parameters
         return ast_map::path_to_str(ty::item_path(cx, *def_id),
                                     cx.sess.intr());
-    }
+    }*/
 
     // pretty print the structural type representation:
-    return match ty::get(typ).sty {
+    return match /*bad*/copy ty::get(typ).sty {
       ty_nil => ~"()",
       ty_bot => ~"_|_",
       ty_bool => ~"bool",
@@ -385,7 +396,7 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
                   f.meta.purity,
                   f.meta.onceness,
                   None,
-                  f.sig.inputs,
+                  /*bad*/copy f.sig.inputs,
                   f.sig.output,
                   f.meta.ret_style)
       }
@@ -395,15 +406,18 @@ fn ty_to_str(cx: ctxt, typ: t) -> ~str {
         ~"'" + str::from_bytes(~[('a' as u8) + (id as u8)])
       }
       ty_self => ~"self",
-      ty_enum(did, substs) | ty_class(did, substs) => {
+      ty_enum(did, ref substs) | ty_struct(did, ref substs) => {
         let path = ty::item_path(cx, did);
         let base = ast_map::path_to_str(path, cx.sess.intr());
-        parameterized(cx, base, substs.self_r, substs.tps)
+        parameterized(cx, base, (*substs).self_r, /*bad*/copy (*substs).tps)
       }
-      ty_trait(did, substs, vs) => {
+      ty_trait(did, ref substs, vs) => {
         let path = ty::item_path(cx, did);
         let base = ast_map::path_to_str(path, cx.sess.intr());
-        let result = parameterized(cx, base, substs.self_r, substs.tps);
+        let result = parameterized(cx,
+                                   base,
+                                   substs.self_r,
+                                   /*bad*/copy substs.tps);
         vstore_ty_to_str(cx, result, vs)
       }
       ty_evec(mt, vs) => {
@@ -432,7 +446,7 @@ fn parameterized(cx: ctxt,
 
     if vec::len(tps) > 0u {
         let strs = vec::map(tps, |t| ty_to_str(cx, *t));
-        fmt!("%s%s<%s>", base, r_str, str::connect(strs, ~","))
+        fmt!("%s%s<%s>", base, r_str, str::connect(strs, ","))
     } else {
         fmt!("%s%s", base, r_str)
     }

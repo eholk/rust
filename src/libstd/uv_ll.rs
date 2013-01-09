@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * Low-level bindings to the libuv library.
  *
@@ -22,9 +32,12 @@
 
 #[allow(non_camel_case_types)]; // C types
 
-use libc::size_t;
-use comm = core::comm;
-use ptr::to_unsafe_ptr;
+use core::libc::size_t;
+use core::libc;
+use core::ptr::to_unsafe_ptr;
+use core::ptr;
+use core::str;
+use core::vec;
 
 // libuv struct mappings
 pub type uv_ip4_addr = {
@@ -306,6 +319,8 @@ pub type uv_getaddrinfo_t = {
 };
 
 pub mod uv_ll_struct_stubgen {
+    use core::ptr;
+
     pub fn gen_stub_uv_tcp_t() -> uv_tcp_t {
         return gen_stub_os();
         #[cfg(target_os = "linux")]
@@ -1025,6 +1040,13 @@ pub unsafe fn addrinfo_as_sockaddr_in6(input: *addrinfo) -> *sockaddr_in6 {
 
 #[cfg(test)]
 pub mod test {
+    use core::libc;
+    use core::oldcomm;
+    use core::ptr;
+    use core::str;
+    use core::sys;
+    use core::task;
+    use core::vec;
 
     enum tcp_read_data {
         tcp_read_eof,
@@ -1035,7 +1057,7 @@ pub mod test {
     type request_wrapper = {
         write_req: *uv_write_t,
         req_buf: *~[uv_buf_t],
-        read_chan: *comm::Chan<~str>
+        read_chan: *oldcomm::Chan<~str>
     };
 
     extern fn after_close_cb(handle: *libc::c_void) {
@@ -1073,7 +1095,7 @@ pub mod test {
             let bytes = vec::from_buf(buf_base, buf_len as uint);
             let read_chan = *((*client_data).read_chan);
             let msg_from_server = str::from_bytes(bytes);
-            core::comm::send(read_chan, msg_from_server);
+            oldcomm::send(read_chan, msg_from_server);
             close(stream as *libc::c_void, after_close_cb)
         }
         else if (nread == -1) {
@@ -1133,7 +1155,7 @@ pub mod test {
     }
 
     fn impl_uv_tcp_request(ip: &str, port: int, req_str: &str,
-                          client_chan: *comm::Chan<~str>) unsafe {
+                          client_chan: *oldcomm::Chan<~str>) unsafe {
         let test_loop = loop_new();
         let tcp_handle = tcp_t();
         let tcp_handle_ptr = ptr::addr_of(&tcp_handle);
@@ -1258,7 +1280,7 @@ pub mod test {
                 log(debug, ~"SERVER: sending response to client");
                 read_stop(client_stream_ptr);
                 let server_chan = *((*client_data).server_chan);
-                core::comm::send(server_chan, request_str);
+                oldcomm::send(server_chan, request_str);
                 let write_result = write(
                     write_req,
                     client_stream_ptr as *libc::c_void,
@@ -1350,12 +1372,12 @@ pub mod test {
         server: *uv_tcp_t,
         server_kill_msg: ~str,
         server_resp_buf: *~[uv_buf_t],
-        server_chan: *comm::Chan<~str>,
+        server_chan: *oldcomm::Chan<~str>,
         server_write_req: *uv_write_t
     };
 
     type async_handle_data = {
-        continue_chan: *comm::Chan<bool>
+        continue_chan: *oldcomm::Chan<bool>
     };
 
     extern fn async_close_cb(handle: *libc::c_void) {
@@ -1373,7 +1395,7 @@ pub mod test {
             async_handle as *libc::c_void) as *async_handle_data;
         let continue_chan = *((*data).continue_chan);
         let should_continue = status == 0i32;
-        core::comm::send(continue_chan, should_continue);
+        oldcomm::send(continue_chan, should_continue);
         close(async_handle as *libc::c_void, async_close_cb);
     }
 
@@ -1381,8 +1403,8 @@ pub mod test {
                           server_port: int,
                           +kill_server_msg: ~str,
                           +server_resp_msg: ~str,
-                          server_chan: *comm::Chan<~str>,
-                          continue_chan: *comm::Chan<bool>) unsafe {
+                          server_chan: *oldcomm::Chan<~str>,
+                          continue_chan: *oldcomm::Chan<bool>) unsafe {
         let test_loop = loop_new();
         let tcp_server = tcp_t();
         let tcp_server_ptr = ptr::addr_of(&tcp_server);
@@ -1487,13 +1509,13 @@ pub mod test {
         let port = 8886;
         let kill_server_msg = ~"does a dog have buddha nature?";
         let server_resp_msg = ~"mu!";
-        let client_port = core::comm::Port::<~str>();
-        let client_chan = core::comm::Chan::<~str>(&client_port);
-        let server_port = core::comm::Port::<~str>();
-        let server_chan = core::comm::Chan::<~str>(&server_port);
+        let client_port = oldcomm::Port::<~str>();
+        let client_chan = oldcomm::Chan::<~str>(&client_port);
+        let server_port = oldcomm::Port::<~str>();
+        let server_chan = oldcomm::Chan::<~str>(&server_port);
 
-        let continue_port = core::comm::Port::<bool>();
-        let continue_chan = core::comm::Chan::<bool>(&continue_port);
+        let continue_port = oldcomm::Port::<bool>();
+        let continue_chan = oldcomm::Chan::<bool>(&continue_port);
         let continue_chan_ptr = ptr::addr_of(&continue_chan);
 
         do task::spawn_sched(task::ManualThreads(1)) {
@@ -1506,7 +1528,7 @@ pub mod test {
 
         // block until the server up is.. possibly a race?
         log(debug, ~"before receiving on server continue_port");
-        core::comm::recv(continue_port);
+        oldcomm::recv(continue_port);
         log(debug, ~"received on continue port, set up tcp client");
 
         do task::spawn_sched(task::ManualThreads(1u)) {
@@ -1515,8 +1537,8 @@ pub mod test {
                                ptr::addr_of(&client_chan));
         };
 
-        let msg_from_client = core::comm::recv(server_port);
-        let msg_from_server = core::comm::recv(client_port);
+        let msg_from_client = oldcomm::recv(server_port);
+        let msg_from_server = oldcomm::recv(client_port);
 
         assert str::contains(msg_from_client, kill_server_msg);
         assert str::contains(msg_from_server, server_resp_msg);
@@ -1547,7 +1569,8 @@ pub mod test {
     // struct size tests
     #[test]
     fn test_uv_ll_struct_size_uv_tcp_t() {
-        let foreign_handle_size = rustrt::rust_uv_helper_uv_tcp_t_size();
+        let foreign_handle_size =
+            ::uv_ll::rustrt::rust_uv_helper_uv_tcp_t_size();
         let rust_handle_size = sys::size_of::<uv_tcp_t>();
         let output = fmt!("uv_tcp_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1557,7 +1580,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_uv_connect_t() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_uv_connect_t_size();
+            ::uv_ll::rustrt::rust_uv_helper_uv_connect_t_size();
         let rust_handle_size = sys::size_of::<uv_connect_t>();
         let output = fmt!("uv_connect_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1567,7 +1590,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_uv_buf_t() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_uv_buf_t_size();
+            ::uv_ll::rustrt::rust_uv_helper_uv_buf_t_size();
         let rust_handle_size = sys::size_of::<uv_buf_t>();
         let output = fmt!("uv_buf_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1577,7 +1600,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_uv_write_t() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_uv_write_t_size();
+            ::uv_ll::rustrt::rust_uv_helper_uv_write_t_size();
         let rust_handle_size = sys::size_of::<uv_write_t>();
         let output = fmt!("uv_write_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1588,7 +1611,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_sockaddr_in() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_sockaddr_in_size();
+            ::uv_ll::rustrt::rust_uv_helper_sockaddr_in_size();
         let rust_handle_size = sys::size_of::<sockaddr_in>();
         let output = fmt!("sockaddr_in -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1598,7 +1621,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_sockaddr_in6() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_sockaddr_in6_size();
+            ::uv_ll::rustrt::rust_uv_helper_sockaddr_in6_size();
         let rust_handle_size = sys::size_of::<sockaddr_in6>();
         let output = fmt!("sockaddr_in6 -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1613,7 +1636,7 @@ pub mod test {
     #[ignore(reason = "questionable size calculations")]
     fn test_uv_ll_struct_size_addr_in() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_addr_in_size();
+            ::uv_ll::rustrt::rust_uv_helper_addr_in_size();
         let rust_handle_size = sys::size_of::<addr_in>();
         let output = fmt!("addr_in -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1625,7 +1648,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_uv_async_t() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_uv_async_t_size();
+            ::uv_ll::rustrt::rust_uv_helper_uv_async_t_size();
         let rust_handle_size = sys::size_of::<uv_async_t>();
         let output = fmt!("uv_async_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1636,7 +1659,7 @@ pub mod test {
     #[test]
     fn test_uv_ll_struct_size_uv_timer_t() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_uv_timer_t_size();
+            ::uv_ll::rustrt::rust_uv_helper_uv_timer_t_size();
         let rust_handle_size = sys::size_of::<uv_timer_t>();
         let output = fmt!("uv_timer_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1648,7 +1671,7 @@ pub mod test {
     #[ignore(cfg(target_os = "win32"))]
     fn test_uv_ll_struct_size_uv_getaddrinfo_t() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_uv_getaddrinfo_t_size();
+            ::uv_ll::rustrt::rust_uv_helper_uv_getaddrinfo_t_size();
         let rust_handle_size = sys::size_of::<uv_getaddrinfo_t>();
         let output = fmt!("uv_getaddrinfo_t -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);
@@ -1660,7 +1683,7 @@ pub mod test {
     #[ignore(cfg(target_os = "win32"))]
     fn test_uv_ll_struct_size_addrinfo() {
         let foreign_handle_size =
-            rustrt::rust_uv_helper_addrinfo_size();
+            ::uv_ll::rustrt::rust_uv_helper_addrinfo_size();
         let rust_handle_size = sys::size_of::<addrinfo>();
         let output = fmt!("addrinfo -- foreign: %u rust: %u",
                           foreign_handle_size as uint, rust_handle_size);

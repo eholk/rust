@@ -1,3 +1,13 @@
+# Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution and at
+# http://rust-lang.org/COPYRIGHT.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
+
 ######################################################################
 # Testing variables
 ######################################################################
@@ -235,6 +245,9 @@ check-stage$(1)-T-$(2)-H-$(3):     				\
     check-stage$(1)-T-$(2)-H-$(3)-rustdoc       \
     check-stage$(1)-T-$(2)-H-$(3)-rusti       \
     check-stage$(1)-T-$(2)-H-$(3)-cargo       \
+    check-stage$(1)-T-$(2)-H-$(3)-doc       \
+
+check-stage$(1)-T-$(2)-H-$(3)-doc: \
     check-stage$(1)-T-$(2)-H-$(3)-doc-tutorial  \
     check-stage$(1)-T-$(2)-H-$(3)-doc-tutorial-ffi  \
     check-stage$(1)-T-$(2)-H-$(3)-doc-tutorial-macros  \
@@ -688,7 +701,7 @@ tmp/$(FT).rc tmp/$(FT_DRIVER).rs: \
 		$(RPASS_TESTS) \
 		$(S)src/etc/combine-tests.py
 	@$(call E, check: building combined stage2 test runner)
-	$(Q)$(S)src/etc/combine-tests.py
+	$(Q)$(CFG_PYTHON) $(S)src/etc/combine-tests.py
 
 define DEF_CHECK_FAST_FOR_T_H
 # $(1) unused
@@ -789,6 +802,9 @@ check-stage$(1)-H-$(2)-rusti:					\
 check-stage$(1)-H-$(2)-cargo:					\
 	$$(foreach target,$$(CFG_TARGET_TRIPLES),	\
 	 check-stage$(1)-T-$$(target)-H-$(2)-cargo)
+check-stage$(1)-H-$(2)-doc:				\
+	$$(foreach target,$$(CFG_TARGET_TRIPLES),	\
+	 check-stage$(1)-T-$$(target)-H-$(2)-doc)
 check-stage$(1)-H-$(2)-doc-tutorial:				\
 	$$(foreach target,$$(CFG_TARGET_TRIPLES),	\
 	 check-stage$(1)-T-$$(target)-H-$(2)-doc-tutorial)
@@ -915,6 +931,7 @@ check-stage$(1)-pretty-pretty: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-pretty-pret
 check-stage$(1)-rustdoc: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-rustdoc
 check-stage$(1)-rusti: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-rusti
 check-stage$(1)-cargo: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-cargo
+check-stage$(1)-doc: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-doc
 check-stage$(1)-doc-tutorial: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-doc-tutorial
 check-stage$(1)-doc-tutorial-ffi: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-doc-tutorial-ffi
 check-stage$(1)-doc-tutorial-macros: check-stage$(1)-H-$$(CFG_HOST_TRIPLE)-doc-tutorial-macros

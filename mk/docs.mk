@@ -1,3 +1,13 @@
+# Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution and at
+# http://rust-lang.org/COPYRIGHT.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
+
 ######################################################################
 # Doc variables and rules
 ######################################################################
@@ -20,8 +30,12 @@ doc/rust.css: rust.css
 	@$(call E, cp: $@)
 	$(Q)cp -a $< $@ 2> /dev/null
 
+doc/manual.css: manual.css
+	@$(call E, cp: $@)
+	$(Q)cp -a $< $@ 2> /dev/null
+
 DOCS += doc/rust.html
-doc/rust.html: rust.md doc/version_info.html doc/rust.css
+doc/rust.html: rust.md doc/version_info.html doc/rust.css doc/manual.css
 	@$(call E, pandoc: $@)
 	$(Q)$(CFG_NODE) $(S)doc/prep.js --highlight $< | \
 	"$(CFG_PANDOC)" \
@@ -30,6 +44,7 @@ doc/rust.html: rust.md doc/version_info.html doc/rust.css
          --number-sections \
          --from=markdown --to=html \
          --css=rust.css \
+         --css=manual.css \
 	 --include-before-body=doc/version_info.html \
          --output=$@
   endif
@@ -137,7 +152,7 @@ else
 
 doc/rust.g: rust.md $(S)src/etc/extract_grammar.py
 	@$(call E, extract_grammar: $@)
-	$(Q)$(S)src/etc/extract_grammar.py $< >$@
+	$(Q)$(CFG_PYTHON) $(S)src/etc/extract_grammar.py $< >$@
 
 verify-grammar: doc/rust.g
 	@$(call E, LLnextgen: $<)

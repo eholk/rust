@@ -1,6 +1,19 @@
-// #[warn(deprecated_mode)];
-// #[warn(deprecated_pattern)];
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
+// #[warn(deprecated_mode)];
+
+use middle::ty;
+use util::ppaux;
+
+use syntax::ast;
 use syntax::print::pprust::{expr_to_str};
 
 // Helper functions related to manipulating region types.
@@ -16,7 +29,7 @@ fn replace_bound_regions_in_fn_ty(
     // Take self_info apart; the self_ty part is the only one we want
     // to update here.
     let (self_ty, rebuild_self_info) = match self_info {
-      Some(s) => (Some(s.self_ty), |t| Some({self_ty: t,.. s})),
+      Some(copy s) => (Some(s.self_ty), |t| Some({self_ty: t,.. s})),
       None => (None, |_t| None)
     };
 
@@ -37,16 +50,16 @@ fn replace_bound_regions_in_fn_ty(
 
     debug!("replace_bound_regions_in_fn_ty(self_info.self_ty=%?, fn_ty=%s, \
                 all_tys=%?)",
-           self_ty.map(|t| ty_to_str(tcx, *t)),
-           ty_to_str(tcx, ty::mk_fn(tcx, *fn_ty)),
-           all_tys.map(|t| ty_to_str(tcx, *t)));
+           self_ty.map(|t| ppaux::ty_to_str(tcx, *t)),
+           ppaux::ty_to_str(tcx, ty::mk_fn(tcx, *fn_ty)),
+           all_tys.map(|t| ppaux::ty_to_str(tcx, *t)));
     let _i = indenter();
 
     let isr = do create_bound_region_mapping(tcx, isr, all_tys) |br| {
         debug!("br=%?", br);
         mapf(br)
     };
-    let ty_fn = ty::ty_fn(*fn_ty);
+    let ty_fn = ty::ty_fn(/*bad*/copy *fn_ty);
     let t_fn = ty::fold_sty_to_ty(tcx, &ty_fn, |t| {
         replace_bound_regions(tcx, isr, t)
     });
@@ -54,8 +67,8 @@ fn replace_bound_regions_in_fn_ty(
 
     debug!("result of replace_bound_regions_in_fn_ty: self_info.self_ty=%?, \
                 fn_ty=%s",
-           t_self.map(|t| ty_to_str(tcx, *t)),
-           ty_to_str(tcx, t_fn));
+           t_self.map(|t| ppaux::ty_to_str(tcx, *t)),
+           ppaux::ty_to_str(tcx, t_fn));
 
 
     // Glue updated self_ty back together with its original def_id.
@@ -66,7 +79,7 @@ fn replace_bound_regions_in_fn_ty(
 
     return {isr: isr,
          self_info: new_self_info,
-         fn_ty: match ty::get(t_fn).sty { ty::ty_fn(o) => o,
+         fn_ty: match ty::get(t_fn).sty { ty::ty_fn(ref o) => /*bad*/copy *o,
           _ => tcx.sess.bug(~"replace_bound_regions_in_fn_ty: impossible")}};
 
 

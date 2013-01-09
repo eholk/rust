@@ -1,11 +1,29 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Pulls type information out of the AST and attaches it to the document
 
+use astsrv;
 use doc::ItemUtils;
+use doc;
+use extract::to_str;
+use extract;
+use fold::Fold;
+use fold;
+
+use core::vec;
+use std::map::HashMap;
+use std::par;
 use syntax::ast;
 use syntax::print::pprust;
 use syntax::ast_map;
-use std::map::HashMap;
-use extract::to_str;
 
 pub fn mk_pass() -> Pass {
     {
@@ -18,7 +36,7 @@ fn run(
     srv: astsrv::Srv,
     +doc: doc::Doc
 ) -> doc::Doc {
-    let fold = fold::Fold({
+    let fold = Fold {
         fold_fn: fold_fn,
         fold_const: fold_const,
         fold_enum: fold_enum,
@@ -26,8 +44,8 @@ fn run(
         fold_impl: fold_impl,
         fold_type: fold_type,
         fold_struct: fold_struct,
-        .. *fold::default_any_fold(srv)
-    });
+        .. fold::default_any_fold(srv)
+    };
     (fold.fold_doc)(&fold, doc)
 }
 
@@ -349,12 +367,12 @@ fn fold_struct(
 /// what I actually want
 fn strip_struct_extra_stuff(item: @ast::item) -> @ast::item {
     let node = match item.node {
-        ast::item_class(def, tys) => {
+        ast::item_struct(def, tys) => {
             let def = @{
                 dtor: None, // Remove the drop { } block
                 .. *def
             };
-            ast::item_class(def, tys)
+            ast::item_struct(def, tys)
         }
         _ => fail ~"not a struct"
     };
@@ -389,6 +407,11 @@ fn should_not_serialize_struct_attrs() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use doc;
+    use extract;
+
     fn mk_doc(source: ~str) -> doc::Doc {
         do astsrv::from_str(source) |srv| {
             let doc = extract::from_srv(srv, ~"");

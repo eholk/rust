@@ -1,37 +1,43 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*
-  Minimized version of core::comm for testing. 
+  Minimized version of core::oldcomm for testing. 
 
   Could probably be more minimal.
  */
-#[legacy_exports];
 
-use libc::size_t;
-
-export port;
-export recv;
+use core::libc::size_t;
 
 
 /**
- * A communication endpoint that can receive messages
+ * A oldcommunication endpoint that can receive messages
  *
  * Each port has a unique per-task identity and may not be replicated or
  * transmitted. If a port value is copied, both copies refer to the same
  * port.  Ports may be associated with multiple `chan`s.
  */
-enum port<T: Send> {
+pub enum port<T: Owned> {
     port_t(@port_ptr<T>)
 }
 
 /// Constructs a port
-fn port<T: Send>() -> port<T> {
+pub fn port<T: Owned>() -> port<T> {
     port_t(@port_ptr(rustrt::new_port(sys::size_of::<T>() as size_t)))
 }
 
-struct port_ptr<T:Send> {
+struct port_ptr<T:Owned> {
    po: *rust_port,
 }
 
-impl<T:Send> port_ptr<T> : Drop {
+impl<T:Owned> port_ptr<T> : Drop {
     fn finalize(&self) {
         unsafe {
             debug!("in the port_ptr destructor");
@@ -53,7 +59,7 @@ impl<T:Send> port_ptr<T> : Drop {
     }
 }
 
-fn port_ptr<T: Send>(po: *rust_port) -> port_ptr<T> {
+fn port_ptr<T: Owned>(po: *rust_port) -> port_ptr<T> {
     debug!("in the port_ptr constructor");
     port_ptr {
         po: po
@@ -64,11 +70,11 @@ fn port_ptr<T: Send>(po: *rust_port) -> port_ptr<T> {
  * Receive from a port.  If no data is available on the port then the
  * task will block until data becomes available.
  */
-fn recv<T: Send>(p: port<T>) -> T { recv_((**p).po) }
+pub fn recv<T: Owned>(p: port<T>) -> T { recv_((**p).po) }
 
 
 /// Receive on a raw port pointer
-fn recv_<T: Send>(p: *rust_port) -> T {
+pub fn recv_<T: Owned>(p: *rust_port) -> T {
     let yield = 0;
     let yieldp = ptr::addr_of(&yield);
     let mut res;

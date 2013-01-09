@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //!
 //
 // Handles translation of callees as well as other call-related
@@ -6,16 +16,24 @@
 // and methods are represented as just a fn ptr and not a full
 // closure.
 
+
 use lib::llvm::ValueRef;
-use syntax::ast;
-use datum::Datum;
-use common::{block, node_id_type_params};
-use build::*;
-use base::{get_item_val, trans_external_path};
-use syntax::visit;
-use syntax::print::pprust::{expr_to_str, stmt_to_str, path_to_str};
-use datum::*;
+use middle::trans::base::{get_item_val, trans_external_path};
+use middle::trans::build::*;
+use middle::trans::callee;
+use middle::trans::closure;
+use middle::trans::common::{block, node_id_type_params};
+use middle::trans::datum::*;
+use middle::trans::datum::Datum;
+use middle::trans::inline;
+use middle::trans::meth;
+use middle::trans::monomorphize;
+use middle::typeck;
 use util::common::indenter;
+
+use syntax::ast;
+use syntax::print::pprust::{expr_to_str, stmt_to_str, path_to_str};
+use syntax::visit;
 
 // Represents a (possibly monomorphized) top-level fn item or method
 // item.  Note that this is just the fn-ptr and is not a Rust closure
@@ -52,9 +70,9 @@ fn trans(bcx: block, expr: @ast::expr) -> Callee {
         }
         ast::expr_field(base, _, _) => {
             match bcx.ccx().maps.method_map.find(expr.id) {
-                Some(origin) => { // An impl method
+                Some(ref origin) => { // An impl method
                     return meth::trans_method_callee(bcx, expr.id,
-                                                     base, origin);
+                                                     base, (*origin));
                 }
                 None => {} // not a method, just a field
             }
@@ -90,7 +108,7 @@ fn trans(bcx: block, expr: @ast::expr) -> Callee {
                                                 vid).args.len() > 0u;
                 fn_callee(bcx, trans_fn_ref(bcx, vid, ref_expr.id))
             }
-            ast::def_class(def_id) => {
+            ast::def_struct(def_id) => {
                 fn_callee(bcx, trans_fn_ref(bcx, def_id, ref_expr.id))
             }
             ast::def_arg(*) |
@@ -103,7 +121,8 @@ fn trans(bcx: block, expr: @ast::expr) -> Callee {
             ast::def_mod(*) | ast::def_foreign_mod(*) |
             ast::def_const(*) | ast::def_ty(*) | ast::def_prim_ty(*) |
             ast::def_use(*) | ast::def_typaram_binder(*) |
-            ast::def_region(*) | ast::def_label(*) | ast::def_ty_param(*) => {
+            ast::def_region(*) | ast::def_label(*) | ast::def_ty_param(*) |
+            ast::def_self_ty(*) => {
                 bcx.tcx().sess.span_bug(
                     ref_expr.span,
                     fmt!("Cannot translate def %? \
@@ -141,7 +160,7 @@ fn trans_fn_ref(bcx: block,
 fn trans_fn_ref_with_vtables_to_callee(bcx: block,
                                        def_id: ast::def_id,
                                        ref_id: ast::node_id,
-                                       type_params: ~[ty::t],
+                                       +type_params: ~[ty::t],
                                        vtables: Option<typeck::vtable_res>)
     -> Callee
 {
@@ -154,7 +173,7 @@ fn trans_fn_ref_with_vtables(
     bcx: block,            //
     def_id: ast::def_id,   // def id of fn
     ref_id: ast::node_id,  // node id of use of fn; may be zero if N/A
-    type_params: ~[ty::t], // values for fn's ty params
+    +type_params: ~[ty::t], // values for fn's ty params
     vtables: Option<typeck::vtable_res>)
     -> FnData
 {
@@ -213,8 +232,6 @@ fn trans_fn_ref_with_vtables(
     let must_monomorphise;
     if type_params.len() > 0 || opt_impl_did.is_some() {
         must_monomorphise = true;
-    } else if ccx.tcx.automatically_derived_methods.contains_key(def_id) {
-        must_monomorphise = false;
     } else if def_id.crate == ast::local_crate {
         let map_node = session::expect(
             ccx.sess,
@@ -265,13 +282,6 @@ fn trans_fn_ref_with_vtables(
         }
     };
 
-    //NDM I think this is dead. Commenting out to be sure!
-    //NDM
-    //NDM if tys.len() > 0u {
-    //NDM     val = PointerCast(bcx, val, T_ptr(type_of_fn_from_ty(
-    //NDM         ccx, node_id_type(bcx, id))));
-    //NDM }
-
     return FnData {llfn: val};
 }
 
@@ -292,11 +302,36 @@ fn trans_call(in_cx: block,
         |cx| trans(cx, f), args, dest, DontAutorefArg)
 }
 
-fn trans_rtcall(bcx: block, name: ~str, args: ~[ValueRef], dest: expr::Dest)
-    -> block
-{
-    let did = bcx.ccx().rtcalls[name];
-    return trans_rtcall_or_lang_call(bcx, did, args, dest);
+fn trans_method_call(in_cx: block,
+                     call_ex: @ast::expr,
+                     rcvr: @ast::expr,
+                     args: CallArgs,
+                     dest: expr::Dest)
+                  -> block {
+    let _icx = in_cx.insn_ctxt("trans_method_call");
+    trans_call_inner(
+        in_cx,
+        call_ex.info(),
+        node_id_type(in_cx, call_ex.callee_id),
+        expr_ty(in_cx, call_ex),
+        |cx| {
+            match cx.ccx().maps.method_map.find(call_ex.id) {
+                Some(ref origin) => {
+                    meth::trans_method_callee(cx,
+                                              call_ex.callee_id,
+                                              rcvr,
+                                              (*origin))
+                }
+                None => {
+                    cx.tcx().sess.span_bug(call_ex.span,
+                                           ~"method call expr wasn't in \
+                                             method map")
+                }
+            }
+        },
+        args,
+        dest,
+        DontAutorefArg)
 }
 
 fn trans_rtcall_or_lang_call(bcx: block, did: ast::def_id, args: ~[ValueRef],
@@ -381,13 +416,13 @@ fn trans_call_inner(
     autoref_arg: AutorefArg) -> block
 {
     do base::with_scope(in_cx, call_info, ~"call") |cx| {
-        let ret_in_loop = match args {
+        let ret_in_loop = match /*bad*/copy args {
           ArgExprs(args) => {
             args.len() > 0u && match vec::last(args).node {
               ast::expr_loop_body(@{
-                node: ast::expr_fn_block(_, body, _),
+                node: ast::expr_fn_block(_, ref body, _),
                 _
-              }) =>  body_contains_ret(body),
+              }) =>  body_contains_ret((*body)),
               _ => false
             }
           }
@@ -425,10 +460,10 @@ fn trans_call_inner(
             }
         };
 
-        let args_res = trans_args(bcx, llenv, args, fn_expr_ty,
+        let args_res = trans_args(bcx, llenv, /*bad*/copy args, fn_expr_ty,
                                   dest, ret_flag, autoref_arg);
         bcx = args_res.bcx;
-        let mut llargs = args_res.args;
+        let mut llargs = /*bad*/copy args_res.args;
 
         let llretslot = args_res.retslot;
 
@@ -485,8 +520,12 @@ enum CallArgs {
     ArgVals(~[ValueRef])
 }
 
-fn trans_args(cx: block, llenv: ValueRef, args: CallArgs, fn_ty: ty::t,
-              dest: expr::Dest, ret_flag: Option<ValueRef>,
+fn trans_args(cx: block,
+              llenv: ValueRef,
+              +args: CallArgs,
+              fn_ty: ty::t,
+              dest: expr::Dest,
+              ret_flag: Option<ValueRef>,
               +autoref_arg: AutorefArg)
     -> {bcx: block, args: ~[ValueRef], retslot: ValueRef}
 {
@@ -580,15 +619,19 @@ fn trans_arg_expr(bcx: block,
         Some(_) => {
             match arg_expr.node {
                 ast::expr_loop_body(
-                    blk @ @{node:ast::expr_fn_block(decl, body, cap), _}) =>
+                    // XXX: Bad copy.
+                    blk@@{
+                        node: ast::expr_fn_block(copy decl, ref body, cap),
+                        _
+                    }) =>
                 {
                     let scratch_ty = expr_ty(bcx, blk);
                     let scratch = alloc_ty(bcx, scratch_ty);
                     let arg_ty = expr_ty(bcx, arg_expr);
                     let proto = ty::ty_fn_proto(arg_ty);
                     let bcx = closure::trans_expr_fn(
-                        bcx, proto, decl, body, blk.id,
-                        cap, Some(ret_flag), expr::SaveIn(scratch));
+                        bcx, proto, decl, /*bad*/copy *body, blk.id, cap,
+                        Some(ret_flag), expr::SaveIn(scratch));
                     DatumBlock {bcx: bcx,
                                 datum: Datum {val: scratch,
                                               ty: scratch_ty,

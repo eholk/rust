@@ -1,8 +1,23 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
 //! Operations and constants for `f64`
+
+use cmath;
+use cmp;
+use libc;
+use num;
 
 pub use cmath::c_double_utils::*;
 pub use cmath::c_double_targ_consts::*;
@@ -172,15 +187,23 @@ impl f64 : cmp::Ord {
 }
 
 impl f64: num::Num {
-    pure fn add(other: &f64)    -> f64 { return self + *other; }
-    pure fn sub(other: &f64)    -> f64 { return self - *other; }
-    pure fn mul(other: &f64)    -> f64 { return self * *other; }
-    pure fn div(other: &f64)    -> f64 { return self / *other; }
-    pure fn modulo(other: &f64) -> f64 { return self % *other; }
-    pure fn neg()                -> f64 { return -self;        }
+    pure fn add(&self, other: &f64)    -> f64 { return *self + *other; }
+    pure fn sub(&self, other: &f64)    -> f64 { return *self - *other; }
+    pure fn mul(&self, other: &f64)    -> f64 { return *self * *other; }
+    pure fn div(&self, other: &f64)    -> f64 { return *self / *other; }
+    pure fn modulo(&self, other: &f64) -> f64 { return *self % *other; }
+    pure fn neg(&self)                -> f64 { return -*self;        }
 
-    pure fn to_int()         -> int { return self as int; }
+    pure fn to_int(&self)         -> int { return *self as int; }
     static pure fn from_int(n: int) -> f64 { return n as f64;    }
+}
+
+impl f64: num::Zero {
+    static pure fn zero() -> f64 { 0.0 }
+}
+
+impl f64: num::One {
+    static pure fn one() -> f64 { 1.0 }
 }
 
 //

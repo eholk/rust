@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*
 
 typeck.rs, an introduction
@@ -40,30 +50,34 @@ independently:
 
 #[legacy_exports];
 
-use result::Result;
-use syntax::{ast, ast_util, ast_map};
-use ast::spanned;
-use ast::{required, provided};
-use syntax::ast_map::node_id_to_str;
-use syntax::ast_util::{local_def, respan, split_trait_methods};
-use syntax::visit;
 use metadata::csearch;
-use util::common::{block_query, loop_query};
-use syntax::codemap::span;
-use pat_util::{pat_id_map, PatIdMap};
-use middle::ty;
+use middle::pat_util::{pat_id_map, PatIdMap};
+use middle::resolve;
 use middle::ty::{arg, field, node_type_table, mk_nil, ty_param_bounds_and_ty};
 use middle::ty::{ty_param_substs_and_ty, vstore_uniq};
-use std::smallintmap;
-use std::map;
-use std::map::HashMap;
-use syntax::print::pprust::*;
-use util::ppaux::{ty_to_str, tys_to_str, region_to_str,
-                  bound_region_to_str, vstore_to_str, expr_repr};
-use util::common::{indent, indenter};
+use middle::ty;
+use util::common::{block_query, indent, indenter, loop_query};
+use util::ppaux::{bound_region_to_str, vstore_to_str, expr_repr};
+use util::ppaux::{ty_to_str, tys_to_str, region_to_str};
+use util::ppaux;
+
+use core::dvec::DVec;
+use core::result::Result;
+use core::result;
+use core::vec;
+use std::list::{List, Nil, Cons};
 use std::list;
-use list::{List, Nil, Cons};
-use dvec::DVec;
+use std::map::HashMap;
+use std::map;
+use std::smallintmap;
+use syntax::ast::{provided, required, spanned};
+use syntax::ast_map::node_id_to_str;
+use syntax::ast_util::{has_legacy_export_attr};
+use syntax::ast_util::{local_def, respan, split_trait_methods};
+use syntax::codemap::span;
+use syntax::print::pprust::*;
+use syntax::visit;
+use syntax::{ast, ast_util, ast_map};
 
 export check;
 export check_crate;
@@ -77,25 +91,32 @@ export vtable_origin;
 export method_static, method_param, method_trait, method_self;
 export vtable_static, vtable_param, vtable_trait;
 export provided_methods_map;
+export coherence;
+export check;
+export rscope;
+export astconv;
+export infer;
+export collect;
+export coherence;
+export deriving;
 
 #[legacy_exports]
 #[path = "check/mod.rs"]
 pub mod check;
 #[legacy_exports]
-mod rscope;
+pub mod rscope;
 #[legacy_exports]
-mod astconv;
+pub mod astconv;
 #[path = "infer/mod.rs"]
-mod infer;
+pub mod infer;
 #[legacy_exports]
-mod collect;
+pub mod collect;
 #[legacy_exports]
-mod coherence;
-mod deriving;
+pub mod coherence;
 
-#[auto_serialize]
-#[auto_deserialize]
-enum method_origin {
+#[auto_encode]
+#[auto_decode]
+pub enum method_origin {
     // fully statically resolved method
     method_static(ast::def_id),
 
@@ -111,8 +132,8 @@ enum method_origin {
 
 // details for a method invoked with a receiver whose type is a type parameter
 // with a bounded trait.
-#[auto_serialize]
-#[auto_deserialize]
+#[auto_encode]
+#[auto_decode]
 type method_param = {
     // the trait containing the method to be invoked
     trait_id: ast::def_id,
@@ -128,10 +149,13 @@ type method_param = {
     bound_num: uint
 };
 
-type method_map_entry = {
+pub type method_map_entry = {
     // the type and mode of the self parameter, which is not reflected
     // in the fn type (FIXME #3446)
     self_arg: ty::arg,
+
+    // the type of explicit self on the method
+    explicit_self: ast::self_ty_,
 
     // method details being invoked
     origin: method_origin
@@ -139,12 +163,12 @@ type method_map_entry = {
 
 // maps from an expression id that corresponds to a method call to the details
 // of the method to be invoked
-type method_map = HashMap<ast::node_id, method_map_entry>;
+pub type method_map = HashMap<ast::node_id, method_map_entry>;
 
 // Resolutions for bounds of all parameters, left to right, for a given path.
-type vtable_res = @~[vtable_origin];
+pub type vtable_res = @~[vtable_origin];
 
-enum vtable_origin {
+pub enum vtable_origin {
     /*
       Statically known vtable. def_id gives the class or impl item
       from whence comes the vtable, and tys are the type substs.
@@ -184,7 +208,7 @@ impl vtable_origin {
             vtable_trait(def_id, ref tys) => {
                 fmt!("vtable_trait(%?:%s, %?)",
                      def_id, ty::item_path_str(tcx, def_id),
-                     tys.map(|t| ty_to_str(tcx, *t)))
+                     tys.map(|t| ppaux::ty_to_str(tcx, *t)))
             }
         }
     }
@@ -192,21 +216,22 @@ impl vtable_origin {
 
 type vtable_map = HashMap<ast::node_id, vtable_res>;
 
-type crate_ctxt_ = {// A mapping from method call sites to traits that have
-                    // that method.
-                    trait_map: resolve::TraitMap,
-                    method_map: method_map,
-                    vtable_map: vtable_map,
-                    coherence_info: @coherence::CoherenceInfo,
-                    tcx: ty::ctxt};
+struct crate_ctxt__ {
+    // A mapping from method call sites to traits that have that method.
+    trait_map: resolve::TraitMap,
+    method_map: method_map,
+    vtable_map: vtable_map,
+    coherence_info: @coherence::CoherenceInfo,
+    tcx: ty::ctxt
+}
 
 enum crate_ctxt {
-    crate_ctxt_(crate_ctxt_)
+    crate_ctxt_(crate_ctxt__)
 }
 
 // Functions that write types into the node type table
 fn write_ty_to_tcx(tcx: ty::ctxt, node_id: ast::node_id, ty: ty::t) {
-    debug!("write_ty_to_tcx(%d, %s)", node_id, ty_to_str(tcx, ty));
+    debug!("write_ty_to_tcx(%d, %s)", node_id, ppaux::ty_to_str(tcx, ty));
     smallintmap::insert(*tcx.node_types, node_id as uint, ty);
 }
 fn write_substs_to_tcx(tcx: ty::ctxt,
@@ -214,7 +239,7 @@ fn write_substs_to_tcx(tcx: ty::ctxt,
                        +substs: ~[ty::t]) {
     if substs.len() > 0u {
         debug!("write_substs_to_tcx(%d, %?)", node_id,
-               substs.map(|t| ty_to_str(tcx, *t)));
+               substs.map(|t| ppaux::ty_to_str(tcx, *t)));
         tcx.node_type_substs.insert(node_id, substs);
     }
 }
@@ -318,11 +343,12 @@ fn check_main_fn_ty(ccx: @crate_ctxt,
     let tcx = ccx.tcx;
     let main_t = ty::node_id_to_type(tcx, main_id);
     match ty::get(main_t).sty {
-        ty::ty_fn(fn_ty) => {
+        ty::ty_fn(ref fn_ty) => {
             match tcx.items.find(main_id) {
                 Some(ast_map::node_item(it,_)) => {
                     match it.node {
-                        ast::item_fn(_,_,ps,_) if vec::is_not_empty(ps) => {
+                        ast::item_fn(_, _, ref ps, _)
+                        if vec::is_not_empty(*ps) => {
                             tcx.sess.span_err(
                                 main_span,
                                 ~"main function is not allowed \
@@ -334,21 +360,21 @@ fn check_main_fn_ty(ccx: @crate_ctxt,
                 }
                 _ => ()
             }
-            let mut ok = ty::type_is_nil(fn_ty.sig.output);
-            let num_args = vec::len(fn_ty.sig.inputs);
+            let mut ok = ty::type_is_nil((*fn_ty).sig.output);
+            let num_args = vec::len((*fn_ty).sig.inputs);
             ok &= num_args == 0u;
             if !ok {
                 tcx.sess.span_err(
                     main_span,
                     fmt!("Wrong type in main function: found `%s`, \
                           expected `fn() -> ()`",
-                         ty_to_str(tcx, main_t)));
+                         ppaux::ty_to_str(tcx, main_t)));
             }
         }
         _ => {
             tcx.sess.span_bug(main_span,
                               ~"main has a non-function type: found `" +
-                              ty_to_str(tcx, main_t) + ~"`");
+                              ppaux::ty_to_str(tcx, main_t) + ~"`");
         }
     }
 }
@@ -366,16 +392,17 @@ fn check_for_main_fn(ccx: @crate_ctxt) {
 fn check_crate(tcx: ty::ctxt,
                trait_map: resolve::TraitMap,
                crate: @ast::crate)
-            -> (method_map, vtable_map) {
+    -> (method_map, vtable_map) {
 
-    let ccx = @crate_ctxt_({trait_map: trait_map,
-                            method_map: std::map::HashMap(),
-                            vtable_map: std::map::HashMap(),
-                            coherence_info: @coherence::CoherenceInfo(),
-                            tcx: tcx});
+    let ccx = @crate_ctxt_(crate_ctxt__ {
+        trait_map: trait_map,
+        method_map: map::HashMap(),
+        vtable_map: map::HashMap(),
+        coherence_info: @coherence::CoherenceInfo(),
+        tcx: tcx
+    });
     collect::collect_item_types(ccx, crate);
     coherence::check_coherence(ccx, crate);
-    deriving::check_deriving(ccx, crate);
 
     check::check_item_types(ccx, crate);
     check_for_main_fn(ccx);

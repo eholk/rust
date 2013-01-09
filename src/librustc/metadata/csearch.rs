@@ -1,23 +1,37 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 // Searching for information from the cstore
 
-use std::ebml;
-use Reader = std::ebml::Reader;
-use syntax::ast;
-use syntax::ast_util;
-use syntax::ast_map;
+use metadata::common::*;
+use metadata::cstore;
+use metadata::decoder;
+use metadata;
 use middle::ty;
-use option::{Some, None};
-use syntax::diagnostic::span_handler;
-use syntax::diagnostic::expect;
-use ast_util::dummy_sp;
-use common::*;
-use std::map::HashMap;
-use dvec::DVec;
 
-export class_dtor;
+use core::dvec::DVec;
+use core::vec;
+use reader = std::ebml::reader;
+use std::ebml;
+use std::map::HashMap;
+use syntax::ast;
+use syntax::ast_map;
+use syntax::ast_util::dummy_sp;
+use syntax::ast_util;
+use syntax::diagnostic::expect;
+use syntax::diagnostic::span_handler;
+
+export struct_dtor;
 export get_symbol;
-export get_class_fields;
-export get_class_method;
+export get_struct_fields;
 export get_field_type;
 export get_type_param_count;
 export get_region_param;
@@ -30,11 +44,13 @@ export get_method_names_if_trait;
 export get_type_name_if_impl;
 export get_static_methods_if_impl;
 export get_item_attrs;
+export each_lang_item;
 export each_path;
 export get_type;
 export get_impl_traits;
 export get_impl_method;
 export get_item_path;
+export get_lang_items;
 export maybe_get_item_ast, found_ast, found, found_parent, not_found;
 export ProvidedTraitMethodInfo;
 export StaticMethodInfo;
@@ -60,6 +76,14 @@ fn get_type_param_count(cstore: cstore::CStore, def: ast::def_id) -> uint {
     return decoder::get_type_param_count(cdata, def.node);
 }
 
+/// Iterates over all the language items in the given crate.
+fn each_lang_item(cstore: cstore::CStore,
+                  cnum: ast::crate_num,
+                  f: &fn(ast::node_id, uint) -> bool) {
+    let crate_data = cstore::get_crate_data(cstore, cnum);
+    decoder::each_lang_item(crate_data, f)
+}
+
 /// Iterates over all the paths in the given crate.
 fn each_path(cstore: cstore::CStore, cnum: ast::crate_num,
              f: fn(decoder::path_entry) -> bool) {
@@ -77,7 +101,8 @@ fn get_item_path(tcx: ty::ctxt, def: ast::def_id) -> ast_map::path {
 
     // FIXME #1920: This path is not always correct if the crate is not linked
     // into the root namespace.
-    vec::append(~[ast_map::path_mod(tcx.sess.ident_of(cdata.name))], path)
+    vec::append(~[ast_map::path_mod(tcx.sess.ident_of(
+        /*bad*/copy cdata.name))], path)
 }
 
 enum found_ast {
@@ -99,7 +124,7 @@ fn maybe_get_item_ast(tcx: ty::ctxt, def: ast::def_id,
 }
 
 fn get_enum_variants(tcx: ty::ctxt, def: ast::def_id)
-    -> ~[ty::variant_info] {
+    -> ~[ty::VariantInfo] {
     let cstore = tcx.cstore;
     let cdata = cstore::get_crate_data(cstore, def.crate);
     return decoder::get_enum_variants(cstore.intr, cdata, def.node, tcx)
@@ -160,10 +185,10 @@ fn get_item_attrs(cstore: cstore::CStore,
     decoder::get_item_attrs(cdata, def_id.node, f)
 }
 
-fn get_class_fields(tcx: ty::ctxt, def: ast::def_id) -> ~[ty::field_ty] {
+fn get_struct_fields(tcx: ty::ctxt, def: ast::def_id) -> ~[ty::field_ty] {
     let cstore = tcx.cstore;
     let cdata = cstore::get_crate_data(cstore, def.crate);
-    decoder::get_class_fields(cstore.intr, cdata, def.node)
+    decoder::get_struct_fields(cstore.intr, cdata, def.node)
 }
 
 fn get_type(tcx: ty::ctxt, def: ast::def_id) -> ty::ty_param_bounds_and_ty {
@@ -182,7 +207,7 @@ fn get_field_type(tcx: ty::ctxt, class_id: ast::def_id,
                   def: ast::def_id) -> ty::ty_param_bounds_and_ty {
     let cstore = tcx.cstore;
     let cdata = cstore::get_crate_data(cstore, class_id.crate);
-    let all_items = Reader::get_doc(Reader::Doc(cdata.data), tag_items);
+    let all_items = reader::get_doc(reader::Doc(cdata.data), tag_items);
     debug!("Looking up %?", class_id);
     let class_doc = expect(tcx.diag,
                            decoder::maybe_find_item(class_id.node, all_items),
@@ -216,22 +241,11 @@ fn get_impl_method(cstore: cstore::CStore,
     decoder::get_impl_method(cstore.intr, cdata, def.node, mname)
 }
 
-/* Because classes use the trait format rather than the impl format
-   for their methods (so that get_trait_methods can be reused to get
-   class methods), classes require a slightly different version of
-   get_impl_method. Sigh. */
-fn get_class_method(cstore: cstore::CStore,
-                    def: ast::def_id, mname: ast::ident)
-    -> ast::def_id {
-    let cdata = cstore::get_crate_data(cstore, def.crate);
-    decoder::get_class_method(cstore.intr, cdata, def.node, mname)
-}
-
 /* If def names a class with a dtor, return it. Otherwise, return none. */
-fn class_dtor(cstore: cstore::CStore, def: ast::def_id)
+fn struct_dtor(cstore: cstore::CStore, def: ast::def_id)
     -> Option<ast::def_id> {
     let cdata = cstore::get_crate_data(cstore, def.crate);
-    decoder::class_dtor(cdata, def.node)
+    decoder::struct_dtor(cdata, def.node)
 }
 // Local Variables:
 // mode: rust

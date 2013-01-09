@@ -1,9 +1,21 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Sorting methods
 #[forbid(deprecated_mode)];
 
-use vec::{len, push};
 use core::cmp::{Eq, Ord};
-use dvec::DVec;
+use core::dvec::DVec;
+use core::util;
+use core::vec::{len, push};
+use core::vec;
 
 type Le<T> = pure fn(v1: &T, v2: &T) -> bool;
 
@@ -702,6 +714,9 @@ fn copy_vec<T: Copy>(dest: &[mut T], s1: uint,
 #[cfg(test)]
 mod test_qsort3 {
     #[legacy_exports];
+
+    use core::vec;
+
     fn check_sort(v1: &[mut int], v2: &[mut int]) {
         let len = vec::len::<int>(v1);
         quick_sort3::<int>(v1);
@@ -742,6 +757,10 @@ mod test_qsort3 {
 #[cfg(test)]
 mod test_qsort {
     #[legacy_exports];
+
+    use core::int;
+    use core::vec;
+
     fn check_sort(v1: &[mut int], v2: &[mut int]) {
         let len = vec::len::<int>(v1);
         pure fn leual(a: &int, b: &int) -> bool { *a <= *b }
@@ -802,6 +821,8 @@ mod test_qsort {
 #[cfg(test)]
 mod tests {
     #[legacy_exports];
+
+    use core::vec;
 
     fn check_sort(v1: &[int], v2: &[int]) {
         let len = vec::len::<int>(v1);
@@ -866,6 +887,9 @@ mod tests {
 
 #[cfg(test)]
 mod test_tim_sort {
+    use core::rand;
+    use core::vec;
+
     struct CVal {
         val: float,
     }
@@ -956,6 +980,10 @@ mod test_tim_sort {
 
 #[cfg(test)]
 mod big_tests {
+    use core::rand;
+    use core::task;
+    use core::uint;
+    use core::vec;
 
     #[test]
     fn test_unique() {

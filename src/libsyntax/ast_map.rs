@@ -1,10 +1,31 @@
-use std::map;
-use std::map::HashMap;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use ast::*;
-use print::pprust;
+use ast;
 use ast_util::{path_to_ident, stmt_id};
+use ast_util;
+use attr;
+use codemap;
 use diagnostic::span_handler;
 use parse::token::ident_interner;
+use print::pprust;
+use visit;
+
+use core::cmp;
+use core::either;
+use core::str;
+use core::vec;
+use std::map::HashMap;
+use std::map;
+use std;
 
 enum path_elt {
     path_mod(ident),
@@ -71,8 +92,8 @@ enum ast_node {
     // order they are introduced.
     node_arg(arg, uint),
     node_local(uint),
-    // Destructor for a class
-    node_dtor(~[ty_param], @class_dtor, def_id, @path),
+    // Destructor for a struct
+    node_dtor(~[ty_param], @struct_dtor, def_id, @path),
     node_block(blk),
     node_struct_ctor(@struct_def, @item, @path),
 }
@@ -153,8 +174,8 @@ fn map_fn(fk: visit::fn_kind, decl: fn_decl, body: blk,
         cx.local_id += 1u;
     }
     match fk {
-      visit::fk_dtor(tps, attrs, self_id, parent_id) => {
-          let dt = @{node: {id: id, attrs: attrs, self_id: self_id,
+      visit::fk_dtor(tps, ref attrs, self_id, parent_id) => {
+          let dt = @{node: {id: id, attrs: (*attrs), self_id: self_id,
                      body: /* FIXME (#2543) */ copy body}, span: sp};
           cx.map.insert(id, node_dtor(/* FIXME (#2543) */ copy tps, dt,
                                       parent_id,
@@ -209,8 +230,8 @@ fn map_item(i: @item, cx: ctx, v: vt) {
             map_method(impl_did, extend(cx, i.ident), *m, cx);
         }
       }
-      item_enum(enum_definition, _) => {
-        for enum_definition.variants.each |v| {
+      item_enum(ref enum_definition, _) => {
+        for (*enum_definition).variants.each |v| {
             cx.map.insert(v.node.id, node_variant(
                 /* FIXME (#2543) */ copy *v, i,
                 extend(cx, i.ident)));
@@ -218,7 +239,7 @@ fn map_item(i: @item, cx: ctx, v: vt) {
       }
       item_foreign_mod(nm) => {
         let abi = match attr::foreign_abi(i.attrs) {
-          either::Left(msg) => cx.diag.span_fatal(i.span, msg),
+          either::Left(ref msg) => cx.diag.span_fatal(i.span, (*msg)),
           either::Right(abi) => abi
         };
         for nm.items.each |nitem| {
@@ -235,20 +256,15 @@ fn map_item(i: @item, cx: ctx, v: vt) {
                                             }));
         }
       }
-      item_class(struct_def, _) => {
-        map_struct_def(struct_def, node_item(i, item_path), i.ident, i.id, cx,
+      item_struct(struct_def, _) => {
+        map_struct_def(struct_def, node_item(i, item_path), i.ident, cx,
                        v);
       }
-      item_trait(_, traits, methods) => {
-        // Map trait refs to their parent classes. This is
-        // so we can find the self_ty
+      item_trait(_, traits, ref methods) => {
         for traits.each |p| {
             cx.map.insert(p.ref_id, node_item(i, item_path));
-            // This is so we can look up the right things when
-            // encoding/decoding
-            cx.map.insert(p.impl_id, node_item(i, item_path));
         }
-        for methods.each |tm| {
+        for (*methods).each |tm| {
             let id = ast_util::trait_method_to_ty_method(*tm).id;
             let d_id = ast_util::local_def(i.id);
             cx.map.insert(id, node_trait_method(@*tm, d_id, item_path));
@@ -267,21 +283,8 @@ fn map_item(i: @item, cx: ctx, v: vt) {
 }
 
 fn map_struct_def(struct_def: @ast::struct_def, parent_node: ast_node,
-                  ident: ast::ident, id: ast::node_id, cx: ctx, _v: vt) {
-    // Map trait refs to their parent classes. This is
-    // so we can find the self_ty
-    for struct_def.traits.each |p| {
-        cx.map.insert(p.ref_id, parent_node);
-        // This is so we can look up the right things when
-        // encoding/decoding
-        cx.map.insert(p.impl_id, parent_node);
-    }
-    let d_id = ast_util::local_def(id);
+                  ident: ast::ident, cx: ctx, _v: vt) {
     let p = extend(cx, ident);
-    // only need to handle methods
-    for vec::each(struct_def.methods) |m| {
-        map_method(d_id, p, *m, cx);
-    }
     // If this is a tuple-like struct, register the constructor.
     match struct_def.ctor_id {
         None => {}
@@ -338,7 +341,7 @@ fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
           item_foreign_mod(*) => ~"foreign mod",
           item_ty(*) => ~"ty",
           item_enum(*) => ~"enum",
-          item_class(*) => ~"class",
+          item_struct(*) => ~"struct",
           item_trait(*) => ~"trait",
           item_impl(*) => ~"impl",
           item_mac(*) => ~"macro"
@@ -358,9 +361,9 @@ fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
         fmt!("method %s in %s (id=%?)",
              *itr.get(m.ident), path_to_str(*path, itr), id)
       }
-      Some(node_variant(variant, _, path)) => {
+      Some(node_variant(ref variant, _, path)) => {
         fmt!("variant %s in %s (id=%?)",
-             *itr.get(variant.node.name), path_to_str(*path, itr), id)
+             *itr.get((*variant).node.name), path_to_str(*path, itr), id)
       }
       Some(node_expr(expr)) => {
         fmt!("expr %s (id=%?)", pprust::expr_to_str(expr, itr), id)
@@ -391,6 +394,16 @@ fn node_id_to_str(map: map, id: node_id, itr: @ident_interner) -> ~str {
       }
     }
 }
+
+fn node_item_query<Result>(items: map, id: node_id,
+                           query: fn(@item) -> Result,
+                           error_msg: ~str) -> Result {
+    match items.find(id) {
+        Some(node_item(it, _)) => query(it),
+        _ => fail(error_msg)
+    }
+}
+
 // Local Variables:
 // mode: rust
 // fill-column: 78;

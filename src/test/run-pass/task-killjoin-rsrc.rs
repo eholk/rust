@@ -1,12 +1,20 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // xfail-win32
 
 // A port of task-killjoin to use a class with a dtor to manage
 // the join.
 
-extern mod std;
-
 struct notify {
-    ch: comm::Chan<bool>, v: @mut bool,
+    ch: oldcomm::Chan<bool>, v: @mut bool,
 }
 
 impl notify : Drop {
@@ -17,19 +25,19 @@ impl notify : Drop {
                task::failing(),
                *(self.v));
         let b = *(self.v);
-        comm::send(self.ch, b);
+        oldcomm::send(self.ch, b);
     }
 }
 
-fn notify(ch: comm::Chan<bool>, v: @mut bool) -> notify {
+fn notify(ch: oldcomm::Chan<bool>, v: @mut bool) -> notify {
     notify {
         ch: ch,
         v: v
     }
 }
 
-fn joinable(+f: fn~()) -> comm::Port<bool> {
-    fn wrapper(+c: comm::Chan<bool>, +f: fn()) {
+fn joinable(+f: fn~()) -> oldcomm::Port<bool> {
+    fn wrapper(+c: oldcomm::Chan<bool>, +f: fn()) {
         let b = @mut false;
         error!("wrapper: task=%? allocated v=%x",
                task::get_task(),
@@ -38,14 +46,14 @@ fn joinable(+f: fn~()) -> comm::Port<bool> {
         f();
         *b = true;
     }
-    let p = comm::Port();
-    let c = comm::Chan(&p);
+    let p = oldcomm::Port();
+    let c = oldcomm::Chan(&p);
     do task::spawn_unlinked { wrapper(c, f) };
     p
 }
 
-fn join(port: comm::Port<bool>) -> bool {
-    comm::recv(port)
+fn join(port: oldcomm::Port<bool>) -> bool {
+    oldcomm::recv(port)
 }
 
 fn supervised() {

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * String manipulation
  *
@@ -10,10 +20,19 @@
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
+use at_vec;
+use cast;
+use char;
 use cmp::{Eq, Ord};
+use libc;
 use libc::size_t;
 use io::WriterUtil;
+use ptr;
+use str;
 use to_str::ToStr;
+use u8;
+use uint;
+use vec;
 
 /*
 Section: Creating a string
@@ -123,7 +142,7 @@ pub fn push_char(s: &mut ~str, ch: char) {
 pub pure fn from_char(ch: char) -> ~str {
     let mut buf = ~"";
     unsafe { push_char(&mut buf, ch); }
-    move buf
+    buf
 }
 
 /// Convert a vector of chars to a string
@@ -135,7 +154,7 @@ pub pure fn from_chars(chs: &[char]) -> ~str {
             push_char(&mut buf, *ch);
         }
     }
-    move buf
+    buf
 }
 
 /// Appends a string slice to the back of a string, without overallocating
@@ -176,11 +195,11 @@ pub fn push_str(lhs: &mut ~str, rhs: &str) {
 /// Concatenate two strings together
 #[inline(always)]
 pub pure fn append(lhs: ~str, rhs: &str) -> ~str {
-    let mut v = move lhs;
+    let mut v = lhs;
     unsafe {
         push_str_no_overallocate(&mut v, rhs);
     }
-    move v
+    v
 }
 
 
@@ -190,7 +209,7 @@ pub pure fn concat(v: &[~str]) -> ~str {
     for vec::each(v) |ss| {
         unsafe { push_str(&mut s, *ss) };
     }
-    move s
+    s
 }
 
 /// Concatenate a vector of strings, placing a given separator between each
@@ -200,14 +219,14 @@ pub pure fn connect(v: &[~str], sep: &str) -> ~str {
         if first { first = false; } else { unsafe { push_str(&mut s, sep); } }
         unsafe { push_str(&mut s, *ss) };
     }
-    move s
+    s
 }
 
 /// Given a string, make a new string with repeated copies of it
-pub fn repeat(ss: &str, nn: uint) -> ~str {
+pub pure fn repeat(ss: &str, nn: uint) -> ~str {
     let mut acc = ~"";
     for nn.times { acc += ss; }
-    move acc
+    acc
 }
 
 /*
@@ -349,7 +368,7 @@ Section: Transforming strings
 pub pure fn to_bytes(s: &str) -> ~[u8] unsafe {
     let mut v: ~[u8] = ::cast::transmute(from_slice(s));
     vec::raw::set_len(&mut v, len(s));
-    move v
+    v
 }
 
 /// Work with the string as a byte slice, not including trailing null.
@@ -369,7 +388,7 @@ pub pure fn chars(s: &str) -> ~[char] {
         unsafe { buf.push(ch); }
         i = next;
     }
-    move buf
+    buf
 }
 
 /**
@@ -445,7 +464,7 @@ pure fn split_char_inner(s: &str, sep: char, count: uint, allow_empty: bool)
         if allow_empty || start < l {
             unsafe { result.push(raw::slice_bytes(s, start, l) ) };
         }
-        move result
+        result
     } else {
         splitn(s, |cur| cur == sep, count)
     }
@@ -488,7 +507,7 @@ pure fn split_inner(s: &str, sepfn: fn(cc: char) -> bool, count: uint,
     if allow_empty || start < l unsafe {
         result.push(unsafe { raw::slice_bytes(s, start, l) });
     }
-    move result
+    result
 }
 
 // See Issue #1932 for why this is a naive search
@@ -542,7 +561,7 @@ pub pure fn split_str(s: &a/str, sep: &b/str) -> ~[~str] {
     do iter_between_matches(s, sep) |from, to| {
         unsafe { result.push(raw::slice_bytes(s, from, to)); }
     }
-    move result
+    result
 }
 
 pub pure fn split_str_nonempty(s: &a/str, sep: &b/str) -> ~[~str] {
@@ -552,7 +571,7 @@ pub pure fn split_str_nonempty(s: &a/str, sep: &b/str) -> ~[~str] {
             unsafe { result.push(raw::slice_bytes(s, from, to)); }
         }
     }
-    move result
+    result
 }
 
 /**
@@ -571,7 +590,7 @@ pub pure fn lines_any(s: &str) -> ~[~str] {
         if l > 0u && s[l - 1u] == '\r' as u8 {
             unsafe { raw::set_len(&mut cp, l - 1u); }
         }
-        move cp
+        cp
     })
 }
 
@@ -599,7 +618,7 @@ pub fn split_within(ss: &str, lim: uint) -> ~[~str] {
         // then start a new row
         if row.len() + word.len() + 1 > lim {
             rows.push(copy row); // save previous row
-            row = move word;    // start a new one
+            row = word;    // start a new one
         } else {
             if row.len() > 0 { row += ~" " } // separate words
             row += word;  // append to this row
@@ -607,9 +626,9 @@ pub fn split_within(ss: &str, lim: uint) -> ~[~str] {
     }
 
     // save the last row
-    if row != ~"" { rows.push(move row); }
+    if row != ~"" { rows.push(row); }
 
-    move rows
+    rows
 }
 
 
@@ -651,7 +670,7 @@ pub pure fn replace(s: &str, from: &str, to: &str) -> ~str {
         }
         unsafe { push_str(&mut result, raw::slice_bytes(s, start, end)); }
     }
-    move result
+    result
 }
 
 /*
@@ -830,7 +849,7 @@ pub pure fn map(ss: &str, ff: fn(char) -> char) -> ~str {
             str::push_char(&mut result, ff(cc));
         }
     }
-    move result
+    result
 }
 
 /// Iterate over the bytes in a string
@@ -1483,7 +1502,7 @@ pub pure fn to_utf16(s: &str) -> ~[u16] {
             u.push_all(~[w1, w2])
         }
     }
-    move u
+    u
 }
 
 pub pure fn utf16_chars(v: &[u16], f: fn(char)) {
@@ -1517,13 +1536,13 @@ pub pure fn from_utf16(v: &[u16]) -> ~str {
         reserve(&mut buf, vec::len(v));
         utf16_chars(v, |ch| push_char(&mut buf, ch));
     }
-    move buf
+    buf
 }
 
 pub pure fn with_capacity(capacity: uint) -> ~str {
     let mut buf = ~"";
     unsafe { reserve(&mut buf, capacity); }
-    move buf
+    buf
 }
 
 /**
@@ -1674,9 +1693,7 @@ pub struct CharRange {
  *
  * This function can be used to iterate over a unicode string in reverse.
  */
-pure fn char_range_at_reverse(ss: &str, start: uint)
-    -> CharRange {
-
+pure fn char_range_at_reverse(ss: &str, start: uint) -> CharRange {
     let mut prev = start;
 
     // while there is a previous byte == 10......
@@ -1911,7 +1928,7 @@ pub pure fn escape_default(s: &str) -> ~str {
             push_str(&mut out, char::escape_default(c));
         }
     }
-    move out
+    out
 }
 
 /// Escape each char in `s` with char::escape_unicode.
@@ -1923,11 +1940,16 @@ pub pure fn escape_unicode(s: &str) -> ~str {
             push_str(&mut out, char::escape_unicode(c));
         }
     }
-    move out
+    out
 }
 
 /// Unsafe operations
 pub mod raw {
+    use cast;
+    use libc;
+    use ptr;
+    use str::raw;
+    use vec;
 
     /// Create a Rust string from a null-terminated *u8 buffer
     pub unsafe fn from_buf(buf: *u8) -> ~str {
@@ -1949,7 +1971,7 @@ pub mod raw {
         v.push(0u8);
 
         assert is_utf8(v);
-        return ::cast::transmute(move v);
+        return ::cast::transmute(v);
     }
 
     /// Create a Rust string from a null-terminated C string
@@ -1977,7 +1999,7 @@ pub mod raw {
                               f: fn(v: &str) -> T) -> T {
         let v = (buf, len + 1);
         assert is_utf8(::cast::reinterpret_cast(&v));
-        f(::cast::transmute(move v))
+        f(::cast::transmute(v))
     }
 
     /**
@@ -2004,7 +2026,7 @@ pub mod raw {
                 }
                 vec::raw::set_len(&mut v, end - begin);
                 v.push(0u8);
-                ::cast::transmute(move v)
+                ::cast::transmute(v)
             }
         }
     }
@@ -2109,8 +2131,8 @@ impl ~str: Trimmable {
 pub mod traits {
     impl ~str : Add<&str,~str> {
         #[inline(always)]
-        pure fn add(rhs: & &self/str) -> ~str {
-            append(copy self, (*rhs))
+        pure fn add(&self, rhs: & &self/str) -> ~str {
+            append(copy *self, (*rhs))
         }
     }
 }
@@ -2285,8 +2307,12 @@ impl &str: StrSlice {
 
 #[cfg(test)]
 mod tests {
-
+    use char;
     use libc::c_char;
+    use libc;
+    use ptr;
+    use str::raw;
+    use vec;
 
     #[test]
     fn test_eq() {
@@ -2657,13 +2683,13 @@ mod tests {
                 let mut i = 0;
                 let mut rs = ~"";
                 while i < 100000 { push_str(&mut rs, ~"aaaaaaaaaa"); i += 1; }
-                move rs
+                rs
             }
             fn half_a_million_letter_a() -> ~str {
                 let mut i = 0;
                 let mut rs = ~"";
                 while i < 100000 { push_str(&mut rs, ~"aaaaa"); i += 1; }
-                move rs
+                rs
             }
             assert half_a_million_letter_a() ==
                 raw::slice_bytes(a_million_letter_a(), 0u, 500000);
@@ -2770,13 +2796,13 @@ mod tests {
                 push_str(&mut rs, ~"华华华华华华华华华华");
                 i += 1;
             }
-            move rs
+            rs
         }
         fn half_a_million_letter_X() -> ~str {
             let mut i = 0;
             let mut rs = ~"";
             while i < 100000 { push_str(&mut rs, ~"华华华华华"); i += 1; }
-            move rs
+            rs
         }
         assert half_a_million_letter_X() ==
             slice(a_million_letter_X(), 0u, 3u * 500000u);

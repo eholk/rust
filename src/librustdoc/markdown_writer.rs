@@ -1,6 +1,29 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use config;
 use doc::ItemUtils;
-use io::ReaderUtil;
+use doc;
+
+use core::io::ReaderUtil;
+use core::io;
+use core::libc;
+use core::oldcomm;
+use core::os;
+use core::pipes;
+use core::result;
+use core::run;
+use core::str;
+use core::task;
 use std::future;
+use syntax;
 
 pub enum WriteInstr {
     Write(~str),
@@ -101,12 +124,12 @@ fn pandoc_writer(
         os::close(pipe_err.out);
         os::close(pipe_in.out);
 
-        let (stdout_ch, stdout_po) = pipes::stream();
+        let (stdout_po, stdout_ch) = pipes::stream();
         do task::spawn_sched(task::SingleThreaded) |move stdout_ch| {
             stdout_ch.send(readclose(pipe_out.in));
         }
 
-        let (stderr_ch, stderr_po) = pipes::stream();
+        let (stderr_po, stderr_ch) = pipes::stream();
         do task::spawn_sched(task::SingleThreaded) |move stderr_ch| {
             stderr_ch.send(readclose(pipe_err.in));
         }
@@ -139,10 +162,10 @@ fn readclose(fd: libc::c_int) -> ~str {
 }
 
 fn generic_writer(+process: fn~(+markdown: ~str)) -> Writer {
-    let (setup_ch, setup_po) = pipes::stream();
+    let (setup_po, setup_ch) = pipes::stream();
     do task::spawn |move process, move setup_ch| {
-        let po: comm::Port<WriteInstr> = comm::Port();
-        let ch = comm::Chan(&po);
+        let po: oldcomm::Port<WriteInstr> = oldcomm::Port();
+        let ch = oldcomm::Chan(&po);
         setup_ch.send(ch);
 
         let mut markdown = ~"";
@@ -158,7 +181,7 @@ fn generic_writer(+process: fn~(+markdown: ~str)) -> Writer {
     let ch = setup_po.recv();
 
     fn~(+instr: WriteInstr) {
-        comm::send(ch, instr);
+        oldcomm::send(ch, instr);
     }
 }
 
@@ -244,10 +267,16 @@ fn should_name_mod_file_names_by_path() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use doc;
+    use extract;
+    use path_pass;
+
     fn mk_doc(+name: ~str, +source: ~str) -> doc::Doc {
         do astsrv::from_str(source) |srv| {
             let doc = extract::from_srv(srv, name);
-            let doc = path_pass::mk_pass().f(srv, doc);
+            let doc = (path_pass::mk_pass().f)(srv, doc);
             doc
         }
     }
@@ -265,16 +294,16 @@ fn write_file(path: &Path, +s: ~str) {
 }
 
 pub fn future_writer_factory(
-) -> (WriterFactory, comm::Port<(doc::Page, ~str)>) {
-    let markdown_po = comm::Port();
-    let markdown_ch = comm::Chan(&markdown_po);
+) -> (WriterFactory, oldcomm::Port<(doc::Page, ~str)>) {
+    let markdown_po = oldcomm::Port();
+    let markdown_ch = oldcomm::Chan(&markdown_po);
     let writer_factory = fn~(+page: doc::Page) -> Writer {
-        let (writer_ch, writer_po) = pipes::stream();
+        let (writer_po, writer_ch) = pipes::stream();
         do task::spawn |move writer_ch| {
             let (writer, future) = future_writer();
             writer_ch.send(move writer);
-            let s = future::get(&future);
-            comm::send(markdown_ch, (page, s));
+            let s = future.get();
+            oldcomm::send(markdown_ch, (page, s));
         }
         writer_po.recv()
     };
@@ -283,7 +312,7 @@ pub fn future_writer_factory(
 }
 
 fn future_writer() -> (Writer, future::Future<~str>) {
-    let (chan, port) = pipes::stream();
+    let (port, chan) = pipes::stream();
     let writer = fn~(move chan, +instr: WriteInstr) {
         chan.send(copy instr);
     };

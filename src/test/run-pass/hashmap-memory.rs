@@ -1,3 +1,15 @@
+// xfail-fast
+
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /**
    A somewhat reduced test case to expose some Valgrind issues.
 
@@ -6,33 +18,29 @@
 
 extern mod std;
 
-use option::Some;
-use option::None;
 use std::map;
 use std::map::HashMap;
-use comm::Chan;
-use comm::Port;
-use comm::send;
-use comm::recv;
+use oldcomm::Chan;
+use oldcomm::Port;
+use oldcomm::send;
+use oldcomm::recv;
 
 fn map(filename: ~str, emit: map_reduce::putter) { emit(filename, ~"1"); }
 
 mod map_reduce {
-    #[legacy_exports];
-    export putter;
-    export mapper;
-    export map_reduce;
+    use std::map;
+    use std::map::HashMap;
 
-    type putter = fn@(~str, ~str);
+    pub type putter = fn@(~str, ~str);
 
-    type mapper = extern fn(~str, putter);
+    pub type mapper = extern fn(~str, putter);
 
     enum ctrl_proto { find_reducer(~[u8], Chan<int>), mapper_done, }
 
     fn start_mappers(ctrl: Chan<ctrl_proto>, inputs: ~[~str]) {
         for inputs.each |i| {
-            let i = *i;
-            task::spawn(|move i| map_task(ctrl, i) );
+            let i = copy *i;
+            task::spawn(|move i| map_task(ctrl, copy i) );
         }
     }
 
@@ -42,7 +50,7 @@ mod map_reduce {
         fn emit(im: map::HashMap<~str, int>, ctrl: Chan<ctrl_proto>, key: ~str,
                 val: ~str) {
             let mut c;
-            match im.find(key) {
+            match im.find(copy key) {
               Some(_c) => { c = _c }
               None => {
                 let p = Port();
@@ -60,7 +68,7 @@ mod map_reduce {
         send(ctrl, mapper_done);
     }
 
-    fn map_reduce(inputs: ~[~str]) {
+    pub fn map_reduce(inputs: ~[~str]) {
         let ctrl = Port();
 
         // This task becomes the master control task. It spawns others
@@ -70,7 +78,7 @@ mod map_reduce {
 
         reducers = map::HashMap();
 
-        start_mappers(Chan(&ctrl), inputs);
+        start_mappers(Chan(&ctrl), copy inputs);
 
         let mut num_mappers = vec::len(inputs) as int;
 

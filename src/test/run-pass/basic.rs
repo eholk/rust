@@ -1,11 +1,16 @@
 // -*- rust -*-
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-extern mod std;
-use comm::send;
-use comm::Chan;
-use comm::recv;
 
-fn a(c: Chan<int>) {
+fn a(c: ::core::oldcomm::Chan<int>) {
     if true {
         debug!("task a");
         debug!("task a");
@@ -13,7 +18,7 @@ fn a(c: Chan<int>) {
         debug!("task a");
         debug!("task a");
     }
-    send(c, 10);
+    ::core::oldcomm::send(c, 10);
 }
 
 fn k(x: int) -> int { return 15; }
@@ -28,19 +33,19 @@ fn g(x: int, y: ~str) -> int {
 fn main() {
     let mut n: int = 2 + 3 * 7;
     let s: ~str = ~"hello there";
-    let p = comm::Port();
-    let ch = comm::Chan(&p);
+    let p = oldcomm::Port();
+    let ch = ::core::oldcomm::Chan(&p);
     task::spawn(|| a(ch) );
     task::spawn(|| b(ch) );
     let mut x: int = 10;
     x = g(n, s);
     log(debug, x);
-    n = recv(p);
-    n = recv(p);
+    n = ::core::oldcomm::recv(p);
+    n = ::core::oldcomm::recv(p);
     debug!("children finished, root finishing");
 }
 
-fn b(c: Chan<int>) {
+fn b(c: ::core::oldcomm::Chan<int>) {
     if true {
         debug!("task b");
         debug!("task b");
@@ -49,5 +54,5 @@ fn b(c: Chan<int>) {
         debug!("task b");
         debug!("task b");
     }
-    send(c, 10);
+    ::core::oldcomm::send(c, 10);
 }

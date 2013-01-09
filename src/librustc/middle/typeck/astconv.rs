@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * Conversion from AST representation of types to the ty.rs
  * representation.  The main routine here is `ast_ty_to_ty()`: each use
@@ -42,12 +52,20 @@
  * an rptr (`&r.T`) use the region `r` that appears in the rptr.
  */
 
-use check::fn_ctxt;
-use rscope::{anon_rscope, binding_rscope, empty_rscope, in_anon_rscope};
-use rscope::{in_binding_rscope, region_scope, type_rscope};
-use ty::{FnTyBase, FnMeta, FnSig};
 
-trait ast_conv {
+use middle::ty::{FnTyBase, FnMeta, FnSig};
+use middle::ty;
+use middle::typeck::check::fn_ctxt;
+use middle::typeck::collect;
+use middle::typeck::rscope::{anon_rscope, binding_rscope, empty_rscope};
+use middle::typeck::rscope::{in_anon_rscope, in_binding_rscope};
+use middle::typeck::rscope::{region_scope, type_rscope};
+
+use core::result;
+use core::vec;
+use syntax::ast;
+
+pub trait ast_conv {
     fn tcx() -> ty::ctxt;
     fn ccx() -> @crate_ctxt;
     fn get_item_ty(id: ast::def_id) -> ty::ty_param_bounds_and_ty;
@@ -62,14 +80,14 @@ fn get_region_reporting_err(tcx: ty::ctxt,
 
     match res {
       result::Ok(r) => r,
-      result::Err(e) => {
-        tcx.sess.span_err(span, e);
+      result::Err(ref e) => {
+        tcx.sess.span_err(span, (/*bad*/copy *e));
         ty::re_static
       }
     }
 }
 
-fn ast_region_to_region<AC: ast_conv, RS: region_scope Copy Owned>(
+fn ast_region_to_region<AC: ast_conv, RS: region_scope Copy Durable>(
     self: AC, rscope: RS, span: span, a_r: @ast::region) -> ty::Region {
 
     let res = match a_r.node {
@@ -82,7 +100,7 @@ fn ast_region_to_region<AC: ast_conv, RS: region_scope Copy Owned>(
     get_region_reporting_err(self.tcx(), span, res)
 }
 
-fn ast_path_to_substs_and_ty<AC: ast_conv, RS: region_scope Copy Owned>(
+fn ast_path_to_substs_and_ty<AC: ast_conv, RS: region_scope Copy Durable>(
     self: AC, rscope: RS, did: ast::def_id,
     path: @ast::path) -> ty_param_substs_and_ty {
 
@@ -128,10 +146,11 @@ fn ast_path_to_substs_and_ty<AC: ast_conv, RS: region_scope Copy Owned>(
     let tps = path.types.map(|a_t| ast_ty_to_ty(self, rscope, *a_t));
 
     let substs = {self_r:self_r, self_ty:None, tps:tps};
-    {substs: substs, ty: ty::subst(tcx, &substs, decl_ty)}
+    let ty = ty::subst(tcx, &substs, decl_ty);
+    {substs: substs, ty: ty}
 }
 
-fn ast_path_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
+pub fn ast_path_to_ty<AC: ast_conv, RS: region_scope Copy Durable>(
     self: AC,
     rscope: RS,
     did: ast::def_id,
@@ -144,7 +163,7 @@ fn ast_path_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
     let {substs: substs, ty: ty} =
         ast_path_to_substs_and_ty(self, rscope, did, path);
     write_ty_to_tcx(tcx, path_id, ty);
-    write_substs_to_tcx(tcx, path_id, substs.tps);
+    write_substs_to_tcx(tcx, path_id, /*bad*/copy substs.tps);
     return {substs: substs, ty: ty};
 }
 
@@ -154,10 +173,10 @@ const NO_TPS: uint = 2;
 // Parses the programmer's textual representation of a type into our
 // internal notion of a type. `getter` is a function that returns the type
 // corresponding to a definition ID:
-fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
+fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Durable>(
     self: AC, rscope: RS, &&ast_ty: @ast::Ty) -> ty::t {
 
-    fn ast_mt_to_mt<AC: ast_conv, RS: region_scope Copy Owned>(
+    fn ast_mt_to_mt<AC: ast_conv, RS: region_scope Copy Durable>(
         self: AC, rscope: RS, mt: ast::mt) -> ty::mt {
 
         return {ty: ast_ty_to_ty(self, rscope, mt.ty), mutbl: mt.mutbl};
@@ -166,7 +185,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
     // Handle @, ~, and & being able to mean estrs and evecs.
     // If a_seq_ty is a str or a vec, make it an estr/evec.
     // Also handle function sigils and first-class trait types.
-    fn mk_pointer<AC: ast_conv, RS: region_scope Copy Owned>(
+    fn mk_pointer<AC: ast_conv, RS: region_scope Copy Durable>(
         self: AC,
         rscope: RS,
         a_seq_ty: ast::mt,
@@ -194,7 +213,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
                             self, rscope,
                             type_def_id, path);
                         match ty::get(result.ty).sty {
-                            ty::ty_trait(trait_def_id, substs, _) => {
+                            ty::ty_trait(trait_def_id, ref substs, _) => {
                                 match vst {
                                     ty::vstore_box | ty::vstore_slice(*) |
                                     ty::vstore_uniq => {}
@@ -208,7 +227,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
                                     }
                                 }
                                 return ty::mk_trait(tcx, trait_def_id,
-                                                    substs, vst);
+                                                    /*bad*/copy *substs, vst);
 
                             }
                             _ => {}
@@ -257,7 +276,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
     }
 
     tcx.ast_ty_to_ty_cache.insert(ast_ty, ty::atttce_unresolved);
-    let typ = match ast_ty.node {
+    let typ = match /*bad*/copy ast_ty.node {
       ast::ty_nil => ty::mk_nil(tcx),
       ast::ty_bot => ty::mk_bot(tcx),
       ast::ty_box(mt) => {
@@ -287,8 +306,8 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
         let flds = vec::map(fields, |t| ast_ty_to_ty(self, rscope, *t));
         ty::mk_tup(tcx, flds)
       }
-      ast::ty_rec(fields) => {
-        let flds = do fields.map |f| {
+      ast::ty_rec(ref fields) => {
+        let flds = do (*fields).map |f| {
             let tm = ast_mt_to_mt(self, rscope, f.node.mt);
             {ident: f.node.ident, mt: tm}
         };
@@ -310,7 +329,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
           Some(d) => d
         };
         match a_def {
-          ast::def_ty(did) | ast::def_class(did) => {
+          ast::def_ty(did) | ast::def_struct(did) => {
             ast_path_to_ty(self, rscope, did, path, id).ty
           }
           ast::def_prim_ty(nty) => {
@@ -343,7 +362,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
             check_path_args(tcx, path, NO_TPS | NO_REGIONS);
             ty::mk_param(tcx, n, id)
           }
-          ast::def_self(_) => {
+          ast::def_self_ty(_) => {
             // n.b.: resolve guarantees that the self type only appears in a
             // trait, which we rely upon in various places when creating
             // substs
@@ -379,7 +398,7 @@ fn ast_ty_to_ty<AC: ast_conv, RS: region_scope Copy Owned>(
     return typ;
 }
 
-fn ty_of_arg<AC: ast_conv, RS: region_scope Copy Owned>(
+fn ty_of_arg<AC: ast_conv, RS: region_scope Copy Durable>(
     self: AC, rscope: RS, a: ast::arg,
     expected_ty: Option<ty::arg>) -> ty::arg {
 
@@ -428,7 +447,7 @@ fn ty_of_arg<AC: ast_conv, RS: region_scope Copy Owned>(
 type expected_tys = Option<{inputs: ~[ty::arg],
                             output: ty::t}>;
 
-fn ty_of_fn_decl<AC: ast_conv, RS: region_scope Copy Owned>(
+fn ty_of_fn_decl<AC: ast_conv, RS: region_scope Copy Durable>(
     self: AC, rscope: RS,
     ast_proto: ast::Proto,
     purity: ast::purity,

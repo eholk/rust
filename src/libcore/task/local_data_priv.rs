@@ -1,10 +1,30 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #[doc(hidden)]; // FIXME #3538
 
-use local_data::LocalDataKey;
+use cast;
+use dvec;
+use libc;
+use option;
+use task::rt;
+use task::local_data::LocalDataKey;
+
+#[cfg(notest)]
 use rt::rust_task;
+#[cfg(test)]
+#[allow(non_camel_case_types)]
+type rust_task = libc::c_void;
 
 pub trait LocalData { }
-impl<T: Owned> @T: LocalData { }
+impl<T: Durable> @T: LocalData { }
 
 impl LocalData: Eq {
     pure fn eq(&self, other: &@LocalData) -> bool unsafe {
@@ -52,7 +72,7 @@ unsafe fn get_task_local_map(task: *rust_task) -> TaskLocalMap {
     }
 }
 
-unsafe fn key_to_key_value<T: Owned>(
+unsafe fn key_to_key_value<T: Durable>(
     key: LocalDataKey<T>) -> *libc::c_void {
 
     // Keys are closures, which are (fnptr,envptr) pairs. Use fnptr.
@@ -62,7 +82,7 @@ unsafe fn key_to_key_value<T: Owned>(
 }
 
 // If returning Some(..), returns with @T with the map's reference. Careful!
-unsafe fn local_data_lookup<T: Owned>(
+unsafe fn local_data_lookup<T: Durable>(
     map: TaskLocalMap, key: LocalDataKey<T>)
     -> Option<(uint, *libc::c_void)> {
 
@@ -80,7 +100,7 @@ unsafe fn local_data_lookup<T: Owned>(
     }
 }
 
-unsafe fn local_get_helper<T: Owned>(
+unsafe fn local_get_helper<T: Durable>(
     task: *rust_task, key: LocalDataKey<T>,
     do_pop: bool) -> Option<@T> {
 
@@ -102,21 +122,21 @@ unsafe fn local_get_helper<T: Owned>(
 }
 
 
-pub unsafe fn local_pop<T: Owned>(
+pub unsafe fn local_pop<T: Durable>(
     task: *rust_task,
     key: LocalDataKey<T>) -> Option<@T> {
 
     local_get_helper(task, key, true)
 }
 
-pub unsafe fn local_get<T: Owned>(
+pub unsafe fn local_get<T: Durable>(
     task: *rust_task,
     key: LocalDataKey<T>) -> Option<@T> {
 
     local_get_helper(task, key, false)
 }
 
-pub unsafe fn local_set<T: Owned>(
+pub unsafe fn local_set<T: Durable>(
     task: *rust_task, key: LocalDataKey<T>, data: @T) {
 
     let map = get_task_local_map(task);
@@ -148,7 +168,7 @@ pub unsafe fn local_set<T: Owned>(
     }
 }
 
-pub unsafe fn local_modify<T: Owned>(
+pub unsafe fn local_modify<T: Durable>(
     task: *rust_task, key: LocalDataKey<T>,
     modify_fn: fn(Option<@T>) -> Option<@T>) {
 

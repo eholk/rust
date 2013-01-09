@@ -1,4 +1,14 @@
 // -*- c++ -*-
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #ifndef INDEXED_LIST_H
 #define INDEXED_LIST_H
 
@@ -7,6 +17,7 @@
 
 class indexed_list_object {
 public:
+    virtual ~indexed_list_object() {}
     int32_t list_index;
 };
 
@@ -29,21 +40,22 @@ public:
 template<typename T> class indexed_list {
     array_list<T*> list;
 public:
-    virtual int32_t append(T *value);
-    virtual bool pop(T **value);
+    int32_t append(T *value);
+    bool pop(T **value);
     /**
      * Same as pop(), except that it returns NULL if the list is empty.
      */
-    virtual T* pop_value();
-    virtual size_t length() {
+    T* pop_value();
+    size_t length() const {
         return list.size();
     }
-    virtual bool is_empty() {
+    bool is_empty() const {
         return list.is_empty();
     }
-    virtual int32_t remove(T* value);
-    virtual T * operator[](int32_t index);
-    virtual ~indexed_list() {}
+    int32_t remove(T* value);
+    T * operator[](int32_t index);
+    const T * operator[](int32_t index) const;
+    ~indexed_list() {}
 };
 
 template<typename T> int32_t
@@ -89,6 +101,13 @@ indexed_list<T>::pop_value() {
 
 template <typename T> T *
 indexed_list<T>::operator[](int32_t index) {
+    T *value = list[index];
+    assert(value->list_index == index);
+    return value;
+}
+
+template <typename T> const T *
+indexed_list<T>::operator[](int32_t index) const {
     T *value = list[index];
     assert(value->list_index == index);
     return value;

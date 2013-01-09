@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
@@ -13,9 +23,12 @@
  * CPRNG like rand::rng.
  */
 
-use io::Writer;
-use io::WriterUtil;
+use io;
+use io::{Writer, WriterUtil};
+use os;
 use to_bytes::IterBytes;
+use uint;
+use vec;
 
 /**
  * Types that can meaningfully be hashed should implement this.
@@ -178,11 +191,11 @@ fn SipState(key0: u64, key1: u64) -> SipState {
 }
 
 
-impl &SipState : io::Writer {
+impl SipState : io::Writer {
 
     // Methods for io::writer
     #[inline(always)]
-    fn write(msg: &[const u8]) {
+    fn write(&self, msg: &[const u8]) {
 
         macro_rules! u8to64_le (
             ($buf:expr, $i:expr) =>
@@ -272,16 +285,16 @@ impl &SipState : io::Writer {
         self.ntail = left;
     }
 
-    fn seek(_x: int, _s: io::SeekStyle) {
+    fn seek(&self, _x: int, _s: io::SeekStyle) {
         fail;
     }
-    fn tell() -> uint {
+    fn tell(&self) -> uint {
         self.length
     }
-    fn flush() -> int {
+    fn flush(&self) -> int {
         0
     }
-    fn get_type() -> io::WriterType {
+    fn get_type(&self) -> io::WriterType {
         io::File
     }
 }

@@ -1,9 +1,27 @@
-use common::*;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::astencode;
+use middle::trans::base::{get_insn_ctxt};
+use middle::trans::base::{impl_owned_self, impl_self, no_self};
+use middle::trans::base::{trans_item, get_item_val, self_arg, trans_fn};
+use middle::trans::common::*;
+use middle::trans::common;
+use middle::trans::inline;
+use middle::trans::monomorphize;
+
+use core::vec;
 use syntax::ast;
-use syntax::ast_util::local_def;
 use syntax::ast_map::{path, path_mod, path_name};
-use base::{trans_item, get_item_val, self_arg, trans_fn, impl_owned_self,
-           impl_self, get_insn_ctxt};
+use syntax::ast_util::local_def;
 
 // `translate` will be true if this function is allowed to translate the
 // item and false otherwise. Currently, this parameter is set to false when
@@ -73,14 +91,19 @@ fn maybe_instantiate_inline(ccx: @crate_ctxt, fn_id: ast::def_id,
                 let path = vec::append(
                     ty::item_path(ccx.tcx, impl_did),
                     ~[path_name(mth.ident)]);
-                let self_ty = ty::node_id_to_type(ccx.tcx, mth.self_id);
-                debug!("calling inline trans_fn with self_ty %s",
-                       ty_to_str(ccx.tcx, self_ty));
-                let self_kind;
-                match mth.self_ty.node {
-                    ast::sty_value => self_kind = impl_owned_self(self_ty),
-                    _ => self_kind = impl_self(self_ty),
-                }
+                let self_kind = match mth.self_ty.node {
+                    ast::sty_static => no_self,
+                    _ => {
+                        let self_ty = ty::node_id_to_type(ccx.tcx,
+                                                          mth.self_id);
+                        debug!("calling inline trans_fn with self_ty %s",
+                               ty_to_str(ccx.tcx, self_ty));
+                        match mth.self_ty.node {
+                            ast::sty_value => impl_owned_self(self_ty),
+                            _ => impl_self(self_ty),
+                        }
+                    }
+                };
                 trans_fn(ccx,
                          path,
                          mth.decl,
@@ -93,9 +116,9 @@ fn maybe_instantiate_inline(ccx: @crate_ctxt, fn_id: ast::def_id,
             }
             local_def(mth.id)
           }
-          csearch::found(ast::ii_dtor(dtor, _, _, _)) => {
-              ccx.external.insert(fn_id, Some(dtor.node.id));
-              local_def(dtor.node.id)
+          csearch::found(ast::ii_dtor(ref dtor, _, _, _)) => {
+              ccx.external.insert(fn_id, Some((*dtor).node.id));
+              local_def((*dtor).node.id)
           }
         }
       }

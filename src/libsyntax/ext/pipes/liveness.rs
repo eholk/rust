@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*
 
 Liveness analysis for protocols. This is useful for a lot of possible
@@ -27,6 +37,7 @@ updating the states using rule (2) until there are no changes.
 
 */
 
+use core::str;
 use std::bitv::{Bitv};
 
 fn analyze(proto: protocol, _cx: ext_ctxt) {

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Managed vectors
 
 // NB: transitionary, de-mode-ing.
@@ -5,13 +15,18 @@
 #[forbid(deprecated_pattern)];
 
 use cast::transmute;
+use iter;
+use libc;
 use ptr::addr_of;
+use sys;
+use uint;
+use vec;
 
 /// Code for dealing with @-vectors. This is pretty incomplete, and
 /// contains a bunch of duplication from the code for ~-vectors.
 
 #[abi = "cdecl"]
-extern mod rustrt {
+pub extern mod rustrt {
     #[legacy_exports];
     fn vec_reserve_shared_actual(++t: *sys::TypeDesc,
                                  ++v: **vec::raw::VecRepr,
@@ -19,7 +34,7 @@ extern mod rustrt {
 }
 
 #[abi = "rust-intrinsic"]
-extern mod rusti {
+pub extern mod rusti {
     #[legacy_exports];
     fn move_val_init<T>(dst: &mut T, -src: T);
 }
@@ -51,7 +66,7 @@ pub pure fn build_sized<A>(size: uint,
                            builder: &fn(push: pure fn(v: A))) -> @[A] {
     let mut vec: @[const A] = @[];
     unsafe { raw::reserve(&mut vec, size); }
-    builder(|+x| unsafe { raw::push(&mut vec, move x) });
+    builder(|+x| unsafe { raw::push(&mut vec, x) });
     return unsafe { transmute(vec) };
 }
 
@@ -85,7 +100,7 @@ pub pure fn build<A>(builder: &fn(push: pure fn(v: A))) -> @[A] {
 #[inline(always)]
 pub pure fn build_sized_opt<A>(size: Option<uint>,
                                builder: &fn(push: pure fn(v: A))) -> @[A] {
-    build_sized(size.get_default(4), builder)
+    build_sized(size.get_or_default(4), builder)
 }
 
 // Appending
@@ -137,8 +152,8 @@ pub pure fn from_elem<T: Copy>(n_elts: uint, t: T) -> @[T] {
 pub mod traits {
     pub impl<T: Copy> @[T] : Add<&[const T],@[T]> {
         #[inline(always)]
-        pure fn add(rhs: & &self/[const T]) -> @[T] {
-            append(self, (*rhs))
+        pure fn add(&self, rhs: & &self/[const T]) -> @[T] {
+            append(*self, (*rhs))
         }
     }
 }
@@ -147,6 +162,13 @@ pub mod traits {
 pub mod traits {}
 
 pub mod raw {
+    use at_vec::{rusti, rustrt};
+    use libc;
+    use ptr;
+    use sys;
+    use uint;
+    use vec;
+
     pub type VecRepr = vec::raw::VecRepr;
     pub type SliceRepr = vec::raw::SliceRepr;
 
@@ -168,10 +190,10 @@ pub mod raw {
         let repr: **VecRepr = ::cast::reinterpret_cast(&v);
         let fill = (**repr).unboxed.fill;
         if (**repr).unboxed.alloc > fill {
-            push_fast(v, move initval);
+            push_fast(v, initval);
         }
         else {
-            push_slow(v, move initval);
+            push_slow(v, initval);
         }
     }
 

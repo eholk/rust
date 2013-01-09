@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // This test attempts to force the dynamic linker to resolve
 // external symbols as close to the red zone as possible.
 
@@ -30,7 +40,7 @@ fn runtest2(f: fn~(), frame_backoff: u32, last_stk: *u8) -> u32 {
         // We switched stacks, go back and try to hit the dynamic linker
         frame_backoff
     } else {
-        let frame_backoff = runtest2(f, frame_backoff, curr_stk);
+        let frame_backoff = runtest2(copy f, frame_backoff, curr_stk);
         if frame_backoff > 1u32 {
             frame_backoff - 1u32
         } else if frame_backoff == 1u32 {

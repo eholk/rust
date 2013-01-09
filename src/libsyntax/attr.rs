@@ -1,12 +1,30 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Functions dealing with attributes and meta_items
 
-use std::map;
-use std::map::HashMap;
-use either::Either;
-use diagnostic::span_handler;
+use ast;
 use ast_util::{spanned, dummy_spanned};
-use parse::comments::{doc_comment_style, strip_doc_comment_decoration};
+use attr;
 use codemap::BytePos;
+use diagnostic::span_handler;
+use parse::comments::{doc_comment_style, strip_doc_comment_decoration};
+
+use core::cmp;
+use core::either::Either;
+use core::either;
+use core::option;
+use core::vec;
+use std::map::HashMap;
+use std::map;
+use std;
 
 // Constructors
 export mk_name_value_item_str;
@@ -114,9 +132,9 @@ fn get_attr_name(attr: ast::attribute) -> ~str {
 
 fn get_meta_item_name(meta: @ast::meta_item) -> ~str {
     match meta.node {
-      ast::meta_word(n) => n,
-      ast::meta_name_value(n, _) => n,
-      ast::meta_list(n, _) => n
+      ast::meta_word(ref n) => (*n),
+      ast::meta_name_value(ref n, _) => (*n),
+      ast::meta_list(ref n, _) => (*n)
     }
 }
 
@@ -148,9 +166,9 @@ fn get_meta_item_list(meta: @ast::meta_item) -> Option<~[@ast::meta_item]> {
  */
 fn get_name_value_str_pair(item: @ast::meta_item) -> Option<(~str, ~str)> {
     match attr::get_meta_item_value_str(item) {
-      Some(value) => {
+      Some(ref value) => {
         let name = attr::get_meta_item_name(item);
-        Some((name, value))
+        Some((name, (*value)))
       }
       None => None
     }
@@ -160,19 +178,19 @@ fn get_name_value_str_pair(item: @ast::meta_item) -> Option<(~str, ~str)> {
 /* Searching */
 
 /// Search a list of attributes and return only those with a specific name
-fn find_attrs_by_name(attrs: ~[ast::attribute], name: ~str) ->
+fn find_attrs_by_name(attrs: ~[ast::attribute], name: &str) ->
    ~[ast::attribute] {
-    let filter = (
-        fn@(a: &ast::attribute) -> Option<ast::attribute> {
-            if get_attr_name(*a) == name {
-                option::Some(*a)
-            } else { option::None }
+    let filter: &fn(a: &ast::attribute) -> Option<ast::attribute> = |a| {
+        if name == get_attr_name(*a) {
+            option::Some(*a)
+        } else {
+            option::None
         }
-    );
+    };
     return vec::filter_map(attrs, filter);
 }
 
-/// Searcha list of meta items and return only those with a specific name
+/// Search a list of meta items and return only those with a specific name
 fn find_meta_items_by_name(metas: ~[@ast::meta_item], name: ~str) ->
    ~[@ast::meta_item] {
     let filter = fn@(m: &@ast::meta_item) -> Option<@ast::meta_item> {
@@ -196,12 +214,14 @@ fn contains(haystack: ~[@ast::meta_item], needle: @ast::meta_item) -> bool {
 
 fn eq(a: @ast::meta_item, b: @ast::meta_item) -> bool {
     return match a.node {
-          ast::meta_word(na) => match b.node {
-            ast::meta_word(nb) => na == nb,
+          ast::meta_word(ref na) => match b.node {
+            ast::meta_word(ref nb) => (*na) == (*nb),
             _ => false
           },
-          ast::meta_name_value(na, va) => match b.node {
-            ast::meta_name_value(nb, vb) => na == nb && va.node == vb.node,
+          ast::meta_name_value(ref na, va) => match b.node {
+            ast::meta_name_value(ref nb, vb) => {
+                (*na) == (*nb) && va.node == vb.node
+            }
             _ => false
           },
           ast::meta_list(*) => {
@@ -246,7 +266,7 @@ fn last_meta_item_value_str_by_name(items: ~[@ast::meta_item], name: ~str)
 
     match last_meta_item_by_name(items, name) {
       Some(item) => match attr::get_meta_item_value_str(item) {
-        Some(value) => Some(value),
+        Some(ref value) => Some((*value)),
         None => None
       },
       None => None
@@ -271,9 +291,9 @@ fn sort_meta_items(+items: ~[@ast::meta_item]) -> ~[@ast::meta_item] {
     pure fn lteq(ma: &@ast::meta_item, mb: &@ast::meta_item) -> bool {
         pure fn key(m: &ast::meta_item) -> ~str {
             match m.node {
-              ast::meta_word(name) => name,
-              ast::meta_name_value(name, _) => name,
-              ast::meta_list(name, _) => name
+              ast::meta_word(ref name) => (*name),
+              ast::meta_name_value(ref name, _) => (*name),
+              ast::meta_list(ref name, _) => (*name)
             }
         }
         key(*ma) <= key(*mb)
@@ -324,8 +344,8 @@ fn foreign_abi(attrs: ~[ast::attribute]) -> Either<~str, ast::foreign_abi> {
       option::Some(~"stdcall") => {
         either::Right(ast::foreign_abi_stdcall)
       }
-      option::Some(t) => {
-        either::Left(~"unsupported abi: " + t)
+      option::Some(ref t) => {
+        either::Left(~"unsupported abi: " + (*t))
       }
     };
 }

@@ -1,7 +1,17 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 The kind traits
 
-Rust types can be classified in vairous useful ways according to
+Rust types can be classified in various useful ways according to
 intrinsic properties of the type. These classifications, often called
 'kinds', are represented as traits.
 
@@ -14,15 +24,13 @@ The 4 kinds are
   scalar types and managed pointers, and exludes owned pointers. It
   also excludes types that implement `Drop`.
 
-* Send - owned types and types containing owned types.  These types
+* Owned - owned types and types containing owned types.  These types
   may be transferred across task boundaries.
 
 * Const - types that are deeply immutable. Const types are used for
   freezable data structures.
 
-* Owned - types that do not contain borrowed pointers. Note that this
-  meaning of 'owned' conflicts with 'owned pointers'. The two notions
-  of ownership are different.
+* Durable - types that do not contain borrowed pointers.
 
 `Copy` types include both implicitly copyable types that the compiler
 will copy automatically and non-implicitly copyable types that require
@@ -36,8 +44,8 @@ pub trait Copy {
     // Empty.
 }
 
-#[lang="send"]
-pub trait Send {
+#[lang="owned"]
+pub trait Owned {
     // Empty.
 }
 
@@ -46,7 +54,7 @@ pub trait Const {
     // Empty.
 }
 
-#[lang="owned"]
-pub trait Owned {
+#[lang="durable"]
+pub trait Durable {
     // Empty.
 }

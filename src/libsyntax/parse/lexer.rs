@@ -1,7 +1,28 @@
-use diagnostic::span_handler;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use ast;
+use ast_util;
 use codemap::{span, CodeMap, CharPos, BytePos};
-use ext::tt::transcribe::{tt_reader,  new_tt_reader, dup_tt_reader,
-                             tt_next_token};
+use codemap;
+use diagnostic::span_handler;
+use ext::tt::transcribe::{tt_next_token};
+use ext::tt::transcribe::{tt_reader,  new_tt_reader, dup_tt_reader};
+use parse::token;
+
+use core::char;
+use core::either;
+use core::str;
+use core::u64;
+
+use std;
 
 export reader, string_reader, new_string_reader, is_whitespace;
 export tt_reader,  new_tt_reader;
@@ -396,9 +417,9 @@ fn scan_number(c: char, rdr: string_reader) -> token::Token {
         num_str += ~"." + dec_part;
     }
     match scan_exponent(rdr) {
-      Some(s) => {
+      Some(ref s) => {
         is_float = true;
-        num_str += s;
+        num_str += (*s);
       }
       None => ()
     }
@@ -504,11 +525,6 @@ fn next_token_inner(rdr: string_reader) -> token::Token {
         if rdr.curr == '.' && nextch(rdr) != '.' {
             bump(rdr);
             return token::DOTDOT;
-        }
-        if rdr.curr == '.' && nextch(rdr) == '.' {
-            bump(rdr);
-            bump(rdr);
-            return token::ELLIPSIS;
         }
         return token::DOT;
       }

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*
   Upcalls
 
@@ -148,8 +158,7 @@ upcall_s_exchange_malloc(s_exchange_malloc_args *args) {
     LOG_UPCALL_ENTRY(task);
 
     size_t total_size = get_box_size(args->size, args->td->align);
-    // FIXME--does this have to be calloc? (Issue #2682)
-    void *p = task->kernel->calloc(total_size, "exchange malloc");
+    void *p = task->kernel->malloc(total_size, "exchange malloc");
 
     rust_opaque_box *header = static_cast<rust_opaque_box*>(p);
     header->ref_count = -1; // This is not ref counted
@@ -224,8 +233,7 @@ upcall_s_malloc(s_malloc_args *args) {
     LOG_UPCALL_ENTRY(task);
     LOG(task, mem, "upcall malloc(0x%" PRIxPTR ")", args->td);
 
-    // FIXME--does this have to be calloc? (Issue #2682)
-    rust_opaque_box *box = task->boxed.calloc(args->td, args->size);
+    rust_opaque_box *box = task->boxed.malloc(args->td, args->size);
     void *body = box_body(box);
 
     debug::maybe_track_origin(task, box);

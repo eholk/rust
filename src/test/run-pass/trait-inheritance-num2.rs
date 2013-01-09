@@ -1,7 +1,19 @@
+// xfail-fast
+
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // A more complex example of numeric extensions
 
 use cmp::{Eq, Ord};
-use num::from_int;
+use num::Num::from_int;
 
 extern mod std;
 use std::cmp::FuzzyEq;
@@ -26,7 +38,7 @@ pub impl f64: TypeExt {}
 pub impl float: TypeExt {}
 
 
-pub trait NumExt: TypeExt, Eq, Ord, Num {}
+pub trait NumExt: TypeExt Eq Ord Num {}
 
 pub impl u8: NumExt {}
 pub impl u16: NumExt {}
@@ -82,7 +94,7 @@ pub impl i64: IntegerExt {}
 pub impl int: IntegerExt {}
 
 
-pub trait FloatExt: NumExt , FuzzyEq {}
+pub trait FloatExt: NumExt FuzzyEq {}
 
 pub impl f32: FloatExt {}
 pub impl f64: FloatExt {}

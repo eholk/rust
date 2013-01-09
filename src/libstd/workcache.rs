@@ -1,13 +1,26 @@
-use core::cmp::Eq;
-use send_map::linear::LinearMap;
-use pipes::{recv, oneshot, PortOne, send_one};
-use either::{Right,Left,Either};
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
 use json;
 use sha1;
-use serialization::{Serializer,Serializable,
-                    Deserializer,Deserializable,
-                    deserialize};
+use serialize::{Encoder, Encodable, Decoder, Decodable};
+
+use core::either::{Either, Left, Right};
+use core::io;
+use core::option;
+use core::pipes::{recv, oneshot, PortOne, send_one};
+use core::result;
+use core::run;
+use core::send_map::linear::LinearMap;
+use core::task;
+use core::to_bytes;
 
 /**
 *
@@ -69,24 +82,12 @@ use serialization::{Serializer,Serializable,
 *
 */
 
+#[deriving_eq]
 struct WorkKey {
     kind: ~str,
     name: ~str
 }
 
-#[cfg(stage0)]
-impl WorkKey: to_bytes::IterBytes {
-    #[inline(always)]
-    pure fn iter_bytes(&self, lsb0: bool, f: to_bytes::Cb) {
-        let mut flag = true;
-        self.kind.iter_bytes(lsb0, |bytes| {flag = f(bytes); flag});
-        if !flag { return; }
-        self.name.iter_bytes(lsb0, f);
-    }
-}
-
-#[cfg(stage1)]
-#[cfg(stage2)]
 impl WorkKey: to_bytes::IterBytes {
     #[inline(always)]
     pure fn iter_bytes(&self, lsb0: bool, f: to_bytes::Cb) {
@@ -103,15 +104,6 @@ impl WorkKey {
     }
 }
 
-impl WorkKey: core::cmp::Eq {
-    pure fn eq(&self, other: &WorkKey) -> bool {
-        self.kind == other.kind && self.name == other.name
-    }
-    pure fn ne(&self, other: &WorkKey) -> bool {
-        self.kind != other.kind || self.name != other.name
-    }
-}
-
 type WorkMap = LinearMap<WorkKey, ~str>;
 
 struct Database {
@@ -121,17 +113,18 @@ struct Database {
 
 impl Database {
     pure fn prepare(_fn_name: &str,
-                    _declared_inputs: &const WorkMap) ->
-        Option<(WorkMap, WorkMap, WorkMap, ~str)> {
+                    _declared_inputs: &const WorkMap,
+                    _declared_outputs: &const WorkMap) ->
+        Option<(WorkMap, WorkMap, ~str)> {
         // XXX: load
         None
     }
     pure fn cache(_fn_name: &str,
-             _declared_inputs: &WorkMap,
-             _declared_outputs: &WorkMap,
-             _discovered_inputs: &WorkMap,
-             _discovered_outputs: &WorkMap,
-             _result: &str) {
+                  _declared_inputs: &WorkMap,
+                  _declared_outputs: &WorkMap,
+                  _discovered_inputs: &WorkMap,
+                  _discovered_outputs: &WorkMap,
+                  _result: &str) {
         // XXX: store
     }
 }
@@ -141,11 +134,19 @@ struct Logger {
     a: ()
 }
 
+impl Logger {
+    pure fn info(i: &str) {
+        unsafe {
+            io::println(~"workcache: " + i.to_owned());
+        }
+    }
+}
+
 struct Context {
     db: @Database,
     logger: @Logger,
     cfg: @json::Object,
-    freshness: LinearMap<~str,~fn(&str,&str)->bool>
+    freshness: LinearMap<~str,@pure fn(&str,&str)->bool>
 }
 
 struct Prep {
@@ -160,18 +161,18 @@ struct Exec {
     discovered_outputs: WorkMap
 }
 
-struct Work<T:Send> {
+struct Work<T:Owned> {
     prep: @mut Prep,
     res: Option<Either<T,PortOne<(Exec,T)>>>
 }
 
-fn digest<T:Serializable<json::Serializer>
-            Deserializable<json::Deserializer>>(t: &T) -> ~str {
+fn digest<T:Encodable<json::Encoder>
+            Decodable<json::Decoder>>(t: &T) -> ~str {
     let sha = sha1::sha1();
     let s = do io::with_str_writer |wr| {
         // XXX: sha1 should be a writer itself, shouldn't
         // go via strings.
-        t.serialize(&json::Serializer(wr));
+        t.encode(&json::Encoder(wr));
     };
     sha.input_str(s);
     sha.result_str()
@@ -191,9 +192,9 @@ impl Context {
         Context {db: db, logger: lg, cfg: cfg, freshness: LinearMap()}
     }
 
-    fn prep<T:Send
-              Serializable<json::Serializer>
-              Deserializable<json::Deserializer>>(
+    fn prep<T:Owned
+              Encodable<json::Encoder>
+              Decodable<json::Decoder>>(
                   @self,
                   fn_name:&str,
                   blk: fn((@mut Prep))->Work<T>) -> Work<T> {
@@ -216,25 +217,57 @@ impl Prep {
                                      val.to_owned());
     }
 
-    fn exec<T:Send
-              Serializable<json::Serializer>
-              Deserializable<json::Deserializer>>(
+    pure fn is_fresh(cat: &str, kind: &str,
+                     name: &str, val: &str) -> bool {
+        let k = kind.to_owned();
+        let f = (self.ctxt.freshness.get(&k))(name, val);
+        if f {
+            self.ctxt.logger.info(fmt!("%s %s:%s is fresh",
+                                       cat, kind, name));
+        } else {
+            self.ctxt.logger.info(fmt!("%s %s:%s is not fresh",
+                                       cat, kind, name))
+        }
+        return f;
+    }
+
+    pure fn all_fresh(cat: &str, map: WorkMap) -> bool {
+        for map.each |k,v| {
+            if ! self.is_fresh(cat, k.kind, k.name, *v) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn exec<T:Owned
+              Encodable<json::Encoder>
+              Decodable<json::Decoder>>(
                   @mut self, blk: ~fn(&Exec) -> T) -> Work<T> {
+
         let cached = self.ctxt.db.prepare(self.fn_name,
-                                          &self.declared_inputs);
+                                          &self.declared_inputs,
+                                          &self.declared_outputs);
 
         match move cached {
             None => (),
-            Some((move _decl_out,
-                  move _disc_in,
-                  move _disc_out,
+            Some((move disc_in,
+                  move disc_out,
                   move res)) => {
-                // XXX: check deps for freshness, only return if fresh.
-                let v : T = do io::with_str_reader(res) |rdr| {
-                    let j = result::unwrap(json::from_reader(rdr));
-                    deserialize(&json::Deserializer(move j))
-                };
-                return Work::new(self, move Left(move v));
+
+                if self.all_fresh("declared input",
+                                  self.declared_inputs) &&
+                    self.all_fresh("declared output",
+                                   self.declared_outputs) &&
+                    self.all_fresh("discovered input", disc_in) &&
+                    self.all_fresh("discovered output", disc_out) {
+
+                    let v : T = do io::with_str_reader(res) |rdr| {
+                        let j = result::unwrap(json::from_reader(rdr));
+                        Decodable::decode(&json::Decoder(move j))
+                    };
+                    return Work::new(self, move Left(move v));
+                }
             }
         }
 
@@ -253,9 +286,9 @@ impl Prep {
     }
 }
 
-impl<T:Send
-       Serializable<json::Serializer>
-       Deserializable<json::Deserializer>>
+impl<T:Owned
+       Encodable<json::Encoder>
+       Decodable<json::Decoder>>
     Work<T> {
     static fn new(p: @mut Prep, e: Either<T,PortOne<(Exec,T)>>) -> Work<T> {
         move Work { prep: p, res: Some(move e) }
@@ -263,9 +296,9 @@ impl<T:Send
 }
 
 // FIXME (#3724): movable self. This should be in impl Work.
-fn unwrap<T:Send
-            Serializable<json::Serializer>
-            Deserializable<json::Deserializer>>(w: Work<T>) -> T {
+fn unwrap<T:Owned
+            Encodable<json::Encoder>
+            Decodable<json::Decoder>>(w: Work<T>) -> T {
 
     let mut ww = move w;
     let mut s = None;
@@ -282,7 +315,7 @@ fn unwrap<T:Send
             };
 
             let s = do io::with_str_writer |wr| {
-                v.serialize(&json::Serializer(wr));
+                v.encode(&json::Encoder(wr));
             };
 
             ww.prep.ctxt.db.cache(ww.prep.fn_name,
@@ -299,6 +332,7 @@ fn unwrap<T:Send
 #[test]
 fn test() {
     use io::WriterUtil;
+
     let db = @Database { a: () };
     let lg = @Logger { a: () };
     let cfg = @LinearMap();
@@ -307,7 +341,7 @@ fn test() {
         let pth = Path("foo.c");
         {
             let file = io::file_writer(&pth, [io::Create]).get();
-            file.write_str("void main() { }");
+            file.write_str("int main() { return 0; }");
         }
 
         prep.declare_input("file", pth.to_str(), digest_file(&pth));

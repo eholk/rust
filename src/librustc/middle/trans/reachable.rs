@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Finds items that are externally reachable, to determine which items
 // need to have their metadata (and possibly their AST) serialized.
 // All items that can be referred to through an exported name are
@@ -5,28 +15,40 @@
 // makes all other generics or inline functions that it references
 // reachable as well.
 
+
+use driver::session::*;
+use middle::resolve;
+use middle::ty;
+use middle::typeck;
+
+use core::vec;
+use std::map::HashMap;
 use syntax::ast::*;
-use syntax::{visit, ast_util, ast_map};
 use syntax::ast_util::def_id_of_def;
 use syntax::attr;
 use syntax::print::pprust::expr_to_str;
-use std::map::HashMap;
-use driver::session::*;
+use syntax::{visit, ast_util, ast_map};
 
 export map, find_reachable;
 
-type map = std::map::HashMap<node_id, ()>;
+type map = HashMap<node_id, ()>;
 
-type ctx = {exp_map2: resolve::ExportMap2,
-            tcx: ty::ctxt,
-            method_map: typeck::method_map,
-            rmap: map};
+struct ctx {
+    exp_map2: resolve::ExportMap2,
+    tcx: ty::ctxt,
+    method_map: typeck::method_map,
+    rmap: map
+}
 
 fn find_reachable(crate_mod: _mod, exp_map2: resolve::ExportMap2,
                   tcx: ty::ctxt, method_map: typeck::method_map) -> map {
-    let rmap = std::map::HashMap();
-    let cx = {exp_map2: exp_map2, tcx: tcx,
-              method_map: method_map, rmap: rmap};
+    let rmap = HashMap();
+    let cx = ctx {
+        exp_map2: exp_map2,
+        tcx: tcx,
+        method_map: method_map,
+        rmap: rmap
+    };
     traverse_public_mod(cx, ast::crate_node_id, crate_mod);
     traverse_all_resources_and_impls(cx, crate_mod);
     rmap
@@ -35,8 +57,8 @@ fn find_reachable(crate_mod: _mod, exp_map2: resolve::ExportMap2,
 fn traverse_exports(cx: ctx, mod_id: node_id) -> bool {
     let mut found_export = false;
     match cx.exp_map2.find(mod_id) {
-      Some(exp2s) => {
-        for exp2s.each |e2| {
+      Some(ref exp2s) => {
+        for (*exp2s).each |e2| {
             found_export = true;
             traverse_def_id(cx, e2.def_id)
         };
@@ -50,7 +72,7 @@ fn traverse_def_id(cx: ctx, did: def_id) {
     if did.crate != local_crate { return; }
     let n = match cx.tcx.items.find(did.node) {
         None => return, // This can happen for self, for example
-        Some(n) => n
+        Some(ref n) => (/*bad*/copy *n)
     };
     match n {
       ast_map::node_item(item, _) => traverse_public_item(cx, item),
@@ -58,7 +80,9 @@ fn traverse_def_id(cx: ctx, did: def_id) {
       ast_map::node_foreign_item(item, _, _) => {
         cx.rmap.insert(item.id, ());
       }
-      ast_map::node_variant(v, _, _) => { cx.rmap.insert(v.node.id, ()); }
+      ast_map::node_variant(ref v, _, _) => {
+        cx.rmap.insert((*v).node.id, ());
+      }
       _ => ()
     }
 }
@@ -75,7 +99,7 @@ fn traverse_public_mod(cx: ctx, mod_id: node_id, m: _mod) {
 fn traverse_public_item(cx: ctx, item: @item) {
     if cx.rmap.contains_key(item.id) { return; }
     cx.rmap.insert(item.id, ());
-    match item.node {
+    match /*bad*/copy item.node {
       item_mod(m) => traverse_public_mod(cx, item.id, m),
       item_foreign_mod(nm) => {
           if !traverse_exports(cx, item.id) {
@@ -84,10 +108,10 @@ fn traverse_public_item(cx: ctx, item: @item) {
               }
           }
       }
-      item_fn(_, _, tps, blk) => {
+      item_fn(_, _, ref tps, ref blk) => {
         if tps.len() > 0u ||
            attr::find_inline_attr(item.attrs) != attr::ia_none {
-            traverse_inline_body(cx, blk);
+            traverse_inline_body(cx, (*blk));
         }
       }
       item_impl(tps, _, _, ms) => {
@@ -99,19 +123,12 @@ fn traverse_public_item(cx: ctx, item: @item) {
             }
         }
       }
-      item_class(struct_def, tps) => {
+      item_struct(struct_def, tps) => {
         do option::iter(&struct_def.dtor) |dtor| {
             cx.rmap.insert(dtor.node.id, ());
             if tps.len() > 0u || attr::find_inline_attr(dtor.node.attrs)
                      != attr::ia_none {
                 traverse_inline_body(cx, dtor.node.body);
-            }
-        }
-        for vec::each(struct_def.methods) |m| {
-            cx.rmap.insert(m.id, ());
-            if tps.len() > 0 ||
-                    attr::find_inline_attr(m.attrs) != attr::ia_none {
-                traverse_inline_body(cx, m.body);
             }
         }
       }
@@ -170,6 +187,18 @@ fn traverse_inline_body(cx: ctx, body: blk) {
               _ => ()
             }
           }
+          expr_method_call(*) => {
+            match cx.method_map.find(e.id) {
+              Some({origin: typeck::method_static(did), _}) => {
+                traverse_def_id(cx, did);
+              }
+              Some(_) => {}
+              None => {
+                cx.tcx.sess.span_bug(e.span, ~"expr_method_call not in \
+                                               method map");
+              }
+            }
+          }
           _ => ()
         }
         visit::visit_expr(e, cx, v);
@@ -193,7 +222,7 @@ fn traverse_all_resources_and_impls(cx: ctx, crate_mod: _mod) {
         visit_item: |i, cx, v| {
             visit::visit_item(i, cx, v);
             match i.node {
-              item_class(struct_def, _) if struct_def.dtor.is_some() => {
+              item_struct(struct_def, _) if struct_def.dtor.is_some() => {
                 traverse_public_item(cx, i);
               }
               item_impl(*) => {

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // xfail-pretty (extra blank line is inserted in vec::mapi call)
 // multi tasking k-nucleotide
 
@@ -49,7 +59,7 @@ fn sort_and_fmt(mm: HashMap<~[u8], uint>, total: uint) -> ~str {
    let mut buffer = ~"";
 
    for pairs_sorted.each |kv| {
-       let (k,v) = *kv;
+       let (k,v) = copy *kv;
        unsafe {
            buffer += (fmt!("%s %0.3f\n", str::to_upper(str::raw::from_bytes(k)), v));
        }
@@ -119,7 +129,7 @@ fn make_sequence_processor(sz: uint, from_parent: pipes::Port<~[u8]>,
         _ => { ~"" }
    };
 
-   //comm::send(to_parent, fmt!("yay{%u}", sz));
+   //oldcomm::send(to_parent, fmt!("yay{%u}", sz));
     to_parent.send(move buffer);
 }
 
@@ -147,11 +157,11 @@ fn main() {
         let sz = *sz;
         let mut stream = None;
         stream <-> streams[ii];
-        let (to_parent_, from_child_) = option::unwrap(move stream);
+        let (from_child_, to_parent_) = option::unwrap(move stream);
 
         from_child.push(move from_child_);
 
-        let (to_child, from_parent) = pipes::stream();
+        let (from_parent, to_child) = pipes::stream();
 
         do task::spawn_with(move from_parent) |move to_parent_, from_parent| {
             make_sequence_processor(sz, from_parent, to_parent_);
@@ -188,7 +198,7 @@ fn main() {
             let line_bytes = str::to_bytes(line);
 
            for sizes.eachi |ii, _sz| {
-               let mut lb = line_bytes;
+               let mut lb = copy line_bytes;
                to_child[ii].send(lb);
             }
          }

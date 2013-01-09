@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 Removes the common level of indention from description strings. For
 instance, if an entire doc comment is indented 8 spaces we want to
@@ -8,6 +18,13 @@ subsequent lines in the same paragraph in order to account for
 instances where the string containing the doc comment is opened in the
 middle of a line, and each of the following lines is indented.
 */
+
+use text_pass;
+
+use core::str;
+use core::uint;
+use core::vec;
+use std::par;
 
 pub fn mk_pass() -> Pass {
     text_pass::mk_pass(~"unindent", unindent)

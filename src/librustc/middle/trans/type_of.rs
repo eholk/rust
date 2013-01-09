@@ -1,9 +1,23 @@
-use common::*;
-use lib::llvm::{TypeRef};
-use syntax::ast;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use lib::llvm::llvm;
-use driver::session::session;
+use lib::llvm::{TypeRef};
+use middle::trans::common::*;
+use middle::trans::common;
+use middle::trans::expr;
+use util::ppaux;
+
 use std::map::HashMap;
+use syntax::ast;
 
 export type_of;
 export type_of_dtor;
@@ -118,7 +132,8 @@ fn type_of(cx: @crate_ctxt, t: ty::t) -> TypeRef {
         return llty;
     }
 
-    let llty = match ty::get(t).sty {
+    // XXX: This is a terrible terrible copy.
+    let llty = match /*bad*/copy ty::get(t).sty {
       ty::ty_nil | ty::ty_bot => T_nil(),
       ty::ty_bool => T_bool(),
       ty::ty_int(t) => T_int_ty(cx, t),
@@ -127,13 +142,16 @@ fn type_of(cx: @crate_ctxt, t: ty::t) -> TypeRef {
       ty::ty_estr(ty::vstore_uniq) => {
         T_unique_ptr(T_unique(cx, T_vec(cx, T_i8())))
       }
-      ty::ty_enum(did, substs) => {
+      ty::ty_enum(did, ref substs) => {
         // Only create the named struct, but don't fill it in. We
         // fill it in *after* placing it into the type cache. This
         // avoids creating more than one copy of the enum when one
         // of the enum's variants refers to the enum itself.
 
-        common::T_named_struct(llvm_type_name(cx, an_enum, did, substs.tps))
+        common::T_named_struct(llvm_type_name(cx,
+                                              an_enum,
+                                              did,
+                                              /*bad*/copy substs.tps))
       }
       ty::ty_estr(ty::vstore_box) => {
         T_box_ptr(T_box(cx, T_vec(cx, T_i8())))
@@ -193,12 +211,15 @@ fn type_of(cx: @crate_ctxt, t: ty::t) -> TypeRef {
         T_struct(tys)
       }
       ty::ty_opaque_closure_ptr(_) => T_opaque_box_ptr(cx),
-      ty::ty_class(did, substs) => {
+      ty::ty_struct(did, ref substs) => {
         // Only create the named struct, but don't fill it in. We fill it
         // in *after* placing it into the type cache. This prevents
-        // infinite recursion with recursive class types.
+        // infinite recursion with recursive struct types.
 
-        common::T_named_struct(llvm_type_name(cx, a_class, did, substs.tps))
+        common::T_named_struct(llvm_type_name(cx,
+                                              a_struct,
+                                              did,
+                                              /*bad*/ copy substs.tps))
       }
       ty::ty_self => cx.tcx.sess.unimpl(~"type_of: ty_self"),
       ty::ty_infer(*) => cx.tcx.sess.bug(~"type_of with ty_infer"),
@@ -208,14 +229,14 @@ fn type_of(cx: @crate_ctxt, t: ty::t) -> TypeRef {
 
     cx.lltypes.insert(t, llty);
 
-    // If this was an enum or class, fill in the type now.
+    // If this was an enum or struct, fill in the type now.
     match ty::get(t).sty {
       ty::ty_enum(did, _) => {
         fill_type_of_enum(cx, did, t, llty);
       }
-      ty::ty_class(did, ref substs) => {
+      ty::ty_struct(did, ref substs) => {
         // Only instance vars are record fields at runtime.
-        let fields = ty::lookup_class_fields(cx.tcx, did);
+        let fields = ty::lookup_struct_fields(cx.tcx, did);
         let mut tys = do vec::map(fields) |f| {
             let t = ty::lookup_field_type(cx.tcx, did, f.id, substs);
             type_of(cx, t)
@@ -241,7 +262,7 @@ fn fill_type_of_enum(cx: @crate_ctxt, did: ast::def_id, t: ty::t,
     debug!("type_of_enum %?: %?", t, ty::get(t));
 
     let lltys = {
-        let degen = (*ty::enum_variants(cx.tcx, did)).len() == 1u;
+        let degen = ty::enum_is_univariant(cx.tcx, did);
         let size = shape::static_size_of_enum(cx, t);
         if !degen {
             ~[T_enum_discrim(cx), T_array(T_i8(), size)]
@@ -258,18 +279,21 @@ fn fill_type_of_enum(cx: @crate_ctxt, did: ast::def_id, t: ty::t,
 }
 
 // Want refinements! (Or case classes, I guess
-enum named_ty { a_class, an_enum }
+enum named_ty { a_struct, an_enum }
 
 fn llvm_type_name(cx: @crate_ctxt,
                   what: named_ty,
                   did: ast::def_id,
                   tps: ~[ty::t]
                   ) -> ~str {
-    let name = match what { a_class => { "~class" } an_enum => { "~enum" } };
+    let name = match what {
+        a_struct => { "~struct" }
+        an_enum => { "~enum" }
+    };
     return fmt!(
         "%s %s[#%d]",
           name,
-        util::ppaux::parameterized(
+        ppaux::parameterized(
             cx.tcx,
             ty::item_path_str(cx.tcx, did),
             None,

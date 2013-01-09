@@ -1,5 +1,21 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #[forbid(deprecated_mode)];
-use serialization;
+
+use serialize;
+
+use core::io;
+use core::ops;
+use core::str;
+use core::vec;
 
 // Simple Extensible Binary Markup Language (ebml) reader and writer on a
 // cursor model. See the specification here:
@@ -28,7 +44,7 @@ struct TaggedDoc {
     doc: Doc,
 }
 
-enum EbmlSerializerTag {
+enum EbmlEncoderTag {
     EsUint, EsU64, EsU32, EsU16, EsU8,
     EsInt, EsI64, EsI32, EsI16, EsI8,
     EsBool,
@@ -43,14 +59,21 @@ enum EbmlSerializerTag {
 }
 // --------------------------------------
 
-pub mod Reader {
+pub mod reader {
+    use serialize;
+
+    use core::int;
+    use core::io;
+    use core::ops;
+    use core::str;
+    use core::vec;
 
     // ebml reading
 
     impl Doc: ops::Index<uint,Doc> {
-        pure fn index(tag: uint) -> Doc {
+        pure fn index(&self, tag: uint) -> Doc {
             unsafe {
-                get_doc(self, tag)
+                get_doc(*self, tag)
             }
         }
     }
@@ -147,7 +170,6 @@ pub mod Reader {
 
     pub fn doc_data(d: Doc) -> ~[u8] { vec::slice::<u8>(*d.data, d.start,
                                                         d.end) }
-
     pub fn with_doc_data<T>(d: Doc, f: fn(x: &[u8]) -> T) -> T {
         f(vec::view(*d.data, d.start, d.end))
     }
@@ -180,16 +202,16 @@ pub mod Reader {
     pub fn doc_as_i64(d: Doc) -> i64 { doc_as_u64(d) as i64 }
 
 
-    struct Deserializer {
+    pub struct Decoder {
         priv mut parent: Doc,
         priv mut pos: uint,
     }
 
-    pub fn Deserializer(d: Doc) -> Deserializer {
-        Deserializer { mut parent: d, mut pos: d.start }
+    pub fn Decoder(d: Doc) -> Decoder {
+        Decoder { mut parent: d, mut pos: d.start }
     }
 
-    priv impl Deserializer {
+    priv impl Decoder {
         fn _check_label(lbl: &str) {
             if self.pos < self.parent.end {
                 let TaggedDoc { tag: r_tag, doc: r_doc } =
@@ -205,7 +227,7 @@ pub mod Reader {
             }
         }
 
-        fn next_doc(exp_tag: EbmlSerializerTag) -> Doc {
+        fn next_doc(exp_tag: EbmlEncoderTag) -> Doc {
             debug!(". next_doc(exp_tag=%?)", exp_tag);
             if self.pos >= self.parent.end {
                 fail ~"no more documents in current node!";
@@ -238,14 +260,14 @@ pub mod Reader {
             move r
         }
 
-        fn _next_uint(exp_tag: EbmlSerializerTag) -> uint {
+        fn _next_uint(exp_tag: EbmlEncoderTag) -> uint {
             let r = doc_as_u32(self.next_doc(exp_tag));
             debug!("_next_uint exp_tag=%? result=%?", exp_tag, r);
             r as uint
         }
     }
 
-    impl Deserializer {
+    impl Decoder {
         fn read_opaque<R>(&self, op: fn(Doc) -> R) -> R {
             do self.push_doc(self.next_doc(EsOpaque)) {
                 op(copy self.parent)
@@ -253,7 +275,7 @@ pub mod Reader {
         }
     }
 
-    impl Deserializer: serialization::Deserializer {
+    impl Decoder: serialize::Decoder {
         fn read_nil(&self) -> () { () }
 
         fn read_u64(&self) -> u64 { doc_as_u64(self.next_doc(EsU64)) }
@@ -262,7 +284,7 @@ pub mod Reader {
         fn read_u8 (&self) -> u8  { doc_as_u8 (self.next_doc(EsU8 )) }
         fn read_uint(&self) -> uint {
             let v = doc_as_u64(self.next_doc(EsUint));
-            if v > (core::uint::max_value as u64) {
+            if v > (::core::uint::max_value as u64) {
                 fail fmt!("uint %? too large for this architecture", v);
             }
             v as uint
@@ -375,10 +397,13 @@ pub mod Reader {
 
 }
 
-pub mod Writer {
+pub mod writer {
+    use core::io;
+    use core::str;
+    use core::vec;
 
     // ebml writing
-    struct Serializer {
+    pub struct Encoder {
         writer: io::Writer,
         priv mut size_positions: ~[uint],
     }
@@ -403,13 +428,13 @@ pub mod Writer {
         fail fmt!("vint to write too big: %?", n);
     }
 
-    pub fn Serializer(w: io::Writer) -> Serializer {
+    pub fn Encoder(w: io::Writer) -> Encoder {
         let size_positions: ~[uint] = ~[];
-        Serializer { writer: w, mut size_positions: size_positions }
+        Encoder { writer: w, mut size_positions: size_positions }
     }
 
     // FIXME (#2741): Provide a function to write the standard ebml header.
-    impl Serializer {
+    impl Encoder {
         fn start_tag(tag_id: uint) {
             debug!("Start tag %u", tag_id);
 
@@ -507,13 +532,13 @@ pub mod Writer {
     // FIXME (#2743): optionally perform "relaxations" on end_tag to more
     // efficiently encode sizes; this is a fixed point iteration
 
-    // Set to true to generate more debugging in EBML serialization.
+    // Set to true to generate more debugging in EBML code.
     // Totally lame approach.
     const debug: bool = false;
 
-    priv impl Serializer {
+    priv impl Encoder {
         // used internally to emit things like the vector length and so on
-        fn _emit_tagged_uint(t: EbmlSerializerTag, v: uint) {
+        fn _emit_tagged_uint(t: EbmlEncoderTag, v: uint) {
             assert v <= 0xFFFF_FFFF_u;
             self.wr_tagged_u32(t as uint, v as u32);
         }
@@ -521,15 +546,15 @@ pub mod Writer {
         fn _emit_label(label: &str) {
             // There are various strings that we have access to, such as
             // the name of a record field, which do not actually appear in
-            // the serialized EBML (normally).  This is just for
+            // the encoded EBML (normally).  This is just for
             // efficiency.  When debugging, though, we can emit such
-            // labels and then they will be checked by deserializer to
+            // labels and then they will be checked by decoder to
             // try and check failures more quickly.
             if debug { self.wr_tagged_str(EsLabel as uint, label) }
         }
     }
 
-    impl Serializer {
+    impl Encoder {
         fn emit_opaque(&self, f: fn()) {
             do self.wr_tag(EsOpaque as uint) {
                 f()
@@ -537,7 +562,7 @@ pub mod Writer {
         }
     }
 
-    impl Serializer: serialization::Serializer {
+    impl Encoder: ::serialize::Encoder {
         fn emit_nil(&self) {}
 
         fn emit_uint(&self, v: uint) {
@@ -638,17 +663,23 @@ pub mod Writer {
 
 #[cfg(test)]
 mod tests {
+    use ebml::reader;
+    use ebml::writer;
+    use serialize;
+
+    use core::io;
+
     #[test]
     fn test_option_int() {
         fn test_v(v: Option<int>) {
             debug!("v == %?", v);
             let bytes = do io::with_bytes_writer |wr| {
-                let ebml_w = Writer::Serializer(wr);
-                v.serialize(&ebml_w)
+                let ebml_w = writer::Encoder(wr);
+                v.encode(&ebml_w)
             };
-            let ebml_doc = Reader::Doc(@bytes);
-            let deser = Reader::Deserializer(ebml_doc);
-            let v1 = serialization::deserialize(&deser);
+            let ebml_doc = reader::Doc(@bytes);
+            let deser = reader::Decoder(ebml_doc);
+            let v1 = serialize::Decodable::decode(&deser);
             debug!("v1 == %?", v1);
             assert v == v1;
         }

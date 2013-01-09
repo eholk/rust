@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Dynamic arenas.
 
 // Arenas are used to quickly allocate objects that share a
@@ -24,10 +34,19 @@
 
 #[forbid(deprecated_mode)];
 
+use arena;
+use list;
 use list::{List, Cons, Nil};
-use cast::reinterpret_cast;
-use sys::TypeDesc;
-use libc::size_t;
+
+use core::at_vec;
+use core::cast::reinterpret_cast;
+use core::cast;
+use core::libc::size_t;
+use core::ptr;
+use core::sys::TypeDesc;
+use core::sys;
+use core::uint;
+use core::vec;
 
 #[abi = "rust-intrinsic"]
 extern mod rusti {
@@ -85,7 +104,7 @@ pub fn Arena() -> Arena {
 }
 
 #[inline(always)]
-fn round_up_to(base: uint, align: uint) -> uint {
+pure fn round_up_to(base: uint, align: uint) -> uint {
     (base + (align - 1)) & !(align - 1)
 }
 

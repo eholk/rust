@@ -1,12 +1,28 @@
-use std::map::HashMap;
-use libc::{c_uint, c_int};
-use lib::llvm::llvm;
-use syntax::codemap;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use codemap::span;
+use lib::llvm::llvm;
+use lib::llvm::{CallConv, TypeKind, AtomicBinOp, AtomicOrdering};
+use lib::llvm::{Opcode, IntPredicate, RealPredicate, True, False};
 use lib::llvm::{ValueRef, TypeRef, BasicBlockRef, BuilderRef, ModuleRef};
-use lib::llvm::{Opcode, IntPredicate, RealPredicate, True, False,
-        CallConv, TypeKind, AtomicBinOp, AtomicOrdering};
-use common::*;
+use libc::{c_uint, c_int};
+use middle::trans::common::*;
+
+use core::cast;
+use core::libc;
+use core::str;
+use core::vec;
+use std::map::HashMap;
+use syntax::codemap;
 
 fn B(cx: block) -> BuilderRef {
     let b = cx.fcx.ccx.builder.B;
@@ -38,8 +54,8 @@ fn count_insn(cx: block, category: &str) {
         let mut s = ~".";
         i = 0u;
         while i < len {
-            let e = v[i];
-            i = mm.get(e);
+            let e = /*bad*/copy v[i];
+            i = mm.get(/*bad*/ copy e);
             s += ~"/";
             s += e;
             i += 1u;
@@ -647,7 +663,7 @@ fn add_span_comment(bcx: block, sp: span, text: ~str) {
     if !ccx.sess.no_asm_comments() {
         let s = text + ~" (" + ccx.sess.codemap.span_to_str(sp)
             + ~")";
-        log(debug, s);
+        log(debug, copy s);
         add_comment(bcx, s);
     }
 }

@@ -1,6 +1,21 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Information concerning the machine representation of various types.
 
+
 use middle::trans::common::*;
+use middle::trans::type_of;
+use middle::ty;
+
+use syntax::parse::token::special_idents;
 
 // Creates a simpler, size-equivalent type. The resulting type is guaranteed
 // to have (a) the same size as the type that was passed in; (b) to be non-
@@ -26,14 +41,14 @@ pub fn simplify_type(tcx: ty::ctxt, typ: ty::t) -> ty::t {
           }
           // Reduce a class type to a record type in which all the fields are
           // simplified
-          ty::ty_class(did, ref substs) => {
+          ty::ty_struct(did, ref substs) => {
             let simpl_fields = (if ty::ty_dtor(tcx, did).is_present() {
                 // remember the drop flag
-                  ~[{ident: syntax::parse::token::special_idents::dtor,
+                  ~[{ident: special_idents::dtor,
                      mt: {ty: ty::mk_u8(tcx),
                           mutbl: ast::m_mutbl}}] }
                 else { ~[] }) +
-                do ty::lookup_class_fields(tcx, did).map |f| {
+                do ty::lookup_struct_fields(tcx, did).map |f| {
                  let t = ty::lookup_field_type(tcx, did, f.id, substs);
                  {ident: f.ident,
                   mt: {ty: simplify_type(tcx, t), mutbl: ast::m_const}}
@@ -77,7 +92,10 @@ pub fn llsize_of_alloc(cx: @crate_ctxt, t: TypeRef) -> uint {
 // bits in this number of bytes actually carry data related to the datum
 // with the type. Not junk, padding, accidentally-damaged words, or
 // whatever. Rounds up to the nearest byte though, so if you have a 1-bit
-// value, we return 1 here, not 0. Most of rustc works in bytes.
+// value, we return 1 here, not 0. Most of rustc works in bytes. Be warned
+// that LLVM *does* distinguish between e.g. a 1-bit value and an 8-bit value
+// at the codegen level! In general you should prefer `llbitsize_of_real`
+// below.
 pub fn llsize_of_real(cx: @crate_ctxt, t: TypeRef) -> uint {
     let nbits = llvm::LLVMSizeOfTypeInBits(cx.td.lltd, t) as uint;
     if nbits & 7u != 0u {
@@ -86,6 +104,11 @@ pub fn llsize_of_real(cx: @crate_ctxt, t: TypeRef) -> uint {
     } else {
         nbits >> 3
     }
+}
+
+/// Returns the "real" size of the type in bits.
+pub fn llbitsize_of_real(cx: @crate_ctxt, t: TypeRef) -> uint {
+    llvm::LLVMSizeOfTypeInBits(cx.td.lltd, t) as uint
 }
 
 // Returns the "default" size of t, which is calculated by casting null to a
@@ -130,8 +153,9 @@ pub fn static_size_of_enum(cx: @crate_ctxt, t: ty::t) -> uint {
         let mut max_size = 0u;
         let variants = ty::enum_variants(cx.tcx, tid);
         for vec::each(*variants) |variant| {
-            let tup_ty = simplify_type(cx.tcx,
-                                       ty::mk_tup(cx.tcx, variant.args));
+            let tup_ty = simplify_type(
+                cx.tcx,
+                ty::mk_tup(cx.tcx, /*bad*/copy variant.args));
             // Perform any type parameter substitutions.
             let tup_ty = ty::subst(cx.tcx, substs, tup_ty);
             // Here we possibly do a recursive call.

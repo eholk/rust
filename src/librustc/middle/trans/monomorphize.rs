@@ -1,16 +1,39 @@
-use common::*;
-use syntax::ast;
-use syntax::ast_util::local_def;
-use syntax::ast_map::{path, path_mod, path_name};
-use base::{trans_item, get_item_val, no_self, self_arg, trans_fn,
-              impl_self, decl_internal_cdecl_fn,
-              set_inline_hint_if_appr, set_inline_hint,
-              trans_enum_variant, trans_class_dtor,
-              get_insn_ctxt};
-use syntax::parse::token::special_idents;
-use type_of::type_of_fn_from_ty;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use back::link::mangle_exported_name;
+use middle::trans::base::{get_insn_ctxt};
+use middle::trans::base::{set_inline_hint_if_appr, set_inline_hint};
+use middle::trans::base::{trans_enum_variant, trans_struct_dtor};
+use middle::trans::base::{trans_fn, impl_self, decl_internal_cdecl_fn};
+use middle::trans::base::{trans_item, get_item_val, no_self, self_arg};
+use middle::trans::base;
+use middle::trans::common::*;
+use middle::trans::datum;
+use middle::trans::foreign;
+use middle::trans::machine;
+use middle::trans::meth;
+use middle::trans::shape;
+use middle::trans::type_of::type_of_fn_from_ty;
+use middle::trans::type_of;
+use middle::trans::type_use;
 use middle::ty::{FnTyBase, FnMeta, FnSig};
+use middle::typeck;
+
+use core::option;
+use core::vec;
+use syntax::ast;
+use syntax::ast_map::{path, path_mod, path_name};
+use syntax::ast_util::local_def;
+use syntax::parse::token::special_idents;
 
 fn monomorphic_fn(ccx: @crate_ctxt,
                   fn_id: ast::def_id,
@@ -31,7 +54,8 @@ fn monomorphic_fn(ccx: @crate_ctxt,
     for real_substs.each() |s| { assert !ty::type_has_params(*s); }
     for substs.each() |s| { assert !ty::type_has_params(*s); }
     let param_uses = type_use::type_uses_for(ccx, fn_id, substs.len());
-    let hash_id = make_mono_id(ccx, fn_id, substs, vtables, impl_did_opt,
+    // XXX: Bad copy.
+    let hash_id = make_mono_id(ccx, fn_id, copy substs, vtables, impl_did_opt,
                                Some(param_uses));
     if vec::any(hash_id.params,
                 |p| match *p { mono_precise(_, _) => false, _ => true }) {
@@ -63,7 +87,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
     // Get the path so that we can create a symbol
     let (pt, name, span) = match map_node {
       ast_map::node_item(i, pt) => (pt, i.ident, i.span),
-      ast_map::node_variant(v, enm, pt) => (pt, v.node.name, enm.span),
+      ast_map::node_variant(ref v, enm, pt) => (pt, (*v).node.name, enm.span),
       ast_map::node_method(m, _, pt) => (pt, m.ident, m.span),
       ast_map::node_foreign_item(i, ast::foreign_abi_rust_intrinsic, pt)
       => (pt, i.ident, i.span),
@@ -114,7 +138,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
 
     ccx.stats.n_monos += 1;
 
-    let depth = option::get_default(ccx.monomorphizing.find(fn_id), 0u);
+    let depth = option::get_or_default(ccx.monomorphizing.find(fn_id), 0u);
     // Random cut-off -- code that needs to instantiate the same function
     // recursively more than ten times can probably safely be assumed to be
     // causing an infinite expansion.
@@ -124,17 +148,17 @@ fn monomorphic_fn(ccx: @crate_ctxt,
     }
     ccx.monomorphizing.insert(fn_id, depth + 1);
 
-    let pt = vec::append(*pt,
+    let pt = vec::append(/*bad*/copy *pt,
                          ~[path_name((ccx.names)(ccx.sess.str_of(name)))]);
-    let s = mangle_exported_name(ccx, pt, mono_ty);
+    let s = mangle_exported_name(ccx, /*bad*/copy pt, mono_ty);
 
-    let mk_lldecl = || {
-        let lldecl = decl_internal_cdecl_fn(ccx.llmod, s, llfty);
+    let mk_lldecl = |/*bad*/copy s| {
+        let lldecl = decl_internal_cdecl_fn(ccx.llmod, /*bad*/copy s, llfty);
         ccx.monomorphized.insert(hash_id, lldecl);
         lldecl
     };
 
-    let psubsts = Some({
+    let psubsts = Some(param_substs {
         tys: substs,
         vtables: vtables,
         bounds: tpt.bounds,
@@ -142,10 +166,14 @@ fn monomorphic_fn(ccx: @crate_ctxt,
     });
 
     let lldecl = match map_node {
-      ast_map::node_item(i@@{node: ast::item_fn(decl, _, _, body), _}, _) => {
+      ast_map::node_item(i@@{
+                // XXX: Bad copy.
+                node: ast::item_fn(copy decl, _, _, ref body),
+                _
+            }, _) => {
         let d = mk_lldecl();
-        set_inline_hint_if_appr(i.attrs, d);
-        trans_fn(ccx, pt, decl, body, d, no_self, psubsts, fn_id.node, None);
+        set_inline_hint_if_appr(/*bad*/copy i.attrs, d);
+        trans_fn(ccx, pt, decl, *body, d, no_self, psubsts, fn_id.node, None);
         d
       }
       ast_map::node_item(*) => {
@@ -157,16 +185,16 @@ fn monomorphic_fn(ccx: @crate_ctxt,
                                 ref_id);
           d
       }
-      ast_map::node_variant(v, enum_item, _) => {
+      ast_map::node_variant(ref v, enum_item, _) => {
         let tvs = ty::enum_variants(ccx.tcx, local_def(enum_item.id));
         let this_tv = option::get(vec::find(*tvs, |tv| {
             tv.id.node == fn_id.node}));
         let d = mk_lldecl();
         set_inline_hint(d);
-        match v.node.kind {
-            ast::tuple_variant_kind(args) => {
-                trans_enum_variant(ccx, enum_item.id, v, args,
-                                   this_tv.disr_val, (*tvs).len() == 1u,
+        match (*v).node.kind {
+            ast::tuple_variant_kind(ref args) => {
+                trans_enum_variant(ccx, enum_item.id, *v, /*bad*/copy *args,
+                                   this_tv.disr_val, tvs.len() == 1u,
                                    psubsts, d);
             }
             ast::struct_variant_kind(_) =>
@@ -179,7 +207,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
       ast_map::node_method(mth, supplied_impl_did, _) => {
         // XXX: What should the self type be here?
         let d = mk_lldecl();
-        set_inline_hint_if_appr(mth.attrs, d);
+        set_inline_hint_if_appr(/*bad*/copy mth.attrs, d);
 
         // Override the impl def ID if necessary.
         let impl_did;
@@ -198,14 +226,14 @@ fn monomorphic_fn(ccx: @crate_ctxt,
                 None      => ccx.sess.span_bug(dtor.span, ~"Bad self ty in \
                                                             dtor")
         };
-        trans_class_dtor(ccx, *pt, dtor.node.body,
+        trans_struct_dtor(ccx, /*bad*/copy *pt, dtor.node.body,
           dtor.node.id, psubsts, Some(hash_id), parent_id)
       }
       ast_map::node_trait_method(@ast::provided(mth), _, pt) => {
         let d = mk_lldecl();
-        set_inline_hint_if_appr(mth.attrs, d);
+        set_inline_hint_if_appr(/*bad*/copy mth.attrs, d);
         debug!("monomorphic_fn impl_did_opt is %?", impl_did_opt);
-        meth::trans_method(ccx, *pt, mth, psubsts, None, d,
+        meth::trans_method(ccx, /*bad*/copy *pt, mth, psubsts, None, d,
                            impl_did_opt.get());
         d
       }
@@ -213,7 +241,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
         let d = mk_lldecl();
         set_inline_hint(d);
         base::trans_tuple_struct(ccx,
-                                 struct_def.fields,
+                                 /*bad*/copy struct_def.fields,
                                  option::expect(struct_def.ctor_id,
                                                 ~"ast-mapped tuple struct \
                                                   didn't have a ctor id"),
@@ -291,7 +319,7 @@ fn make_mono_id(ccx: @crate_ctxt, item: ast::def_id, substs: ~[ty::t],
             for bounds.each |bound| {
                 match *bound {
                   ty::bound_trait(_) => {
-                    v.push(meth::vtable_id(ccx, vts[i]));
+                    v.push(meth::vtable_id(ccx, /*bad*/copy vts[i]));
                     i += 1u;
                   }
                   _ => ()
@@ -305,39 +333,46 @@ fn make_mono_id(ccx: @crate_ctxt, item: ast::def_id, substs: ~[ty::t],
       }
     };
     let param_ids = match param_uses {
-      Some(uses) => {
-        vec::map2(precise_param_ids, uses, |id, uses| {
-            match *id {
-                (a, b@Some(_)) => mono_precise(a, b),
-                (subst, None) => {
-                    if *uses == 0u {
-                        mono_any
-                    } else if *uses == type_use::use_repr &&
-                        !ty::type_needs_drop(ccx.tcx, subst)
-                    {
-                        let llty = type_of::type_of(ccx, subst);
-                        let size = shape::llsize_of_real(ccx, llty);
-                        let align = shape::llalign_of_pref(ccx, llty);
-                        let mode = datum::appropriate_mode(subst);
+      Some(ref uses) => {
+        vec::map2(precise_param_ids, *uses, |id, uses| {
+            if ccx.sess.no_monomorphic_collapse() {
+                match *id {
+                    (a, b) => mono_precise(a, b)
+                }
+            } else {
+                match *id {
+                    // XXX: Bad copy.
+                    (a, copy b@Some(_)) => mono_precise(a, b),
+                    (subst, None) => {
+                        if *uses == 0u {
+                            mono_any
+                        } else if *uses == type_use::use_repr &&
+                            !ty::type_needs_drop(ccx.tcx, subst)
+                        {
+                            let llty = type_of::type_of(ccx, subst);
+                            let size = machine::llbitsize_of_real(ccx, llty);
+                            let align = shape::llalign_of_pref(ccx, llty);
+                            let mode = datum::appropriate_mode(subst);
 
-                        // FIXME(#3547)---scalars and floats are
-                        // treated differently in most ABIs.  But we
-                        // should be doing something more detailed
-                        // here.
-                        let is_float = match ty::get(subst).sty {
-                            ty::ty_float(_) => true,
-                            _ => false
-                        };
+                            // FIXME(#3547)---scalars and floats are
+                            // treated differently in most ABIs.  But we
+                            // should be doing something more detailed
+                            // here.
+                            let is_float = match ty::get(subst).sty {
+                                ty::ty_float(_) => true,
+                                _ => false
+                            };
 
-                        // Special value for nil to prevent problems
-                        // with undef return pointers.
-                        if size == 1u && ty::type_is_nil(subst) {
-                            mono_repr(0u, 0u, is_float, mode)
+                            // Special value for nil to prevent problems
+                            // with undef return pointers.
+                            if size <= 8u && ty::type_is_nil(subst) {
+                                mono_repr(0u, 0u, is_float, mode)
+                            } else {
+                                mono_repr(size, align, is_float, mode)
+                            }
                         } else {
-                            mono_repr(size, align, is_float, mode)
+                            mono_precise(subst, None)
                         }
-                    } else {
-                        mono_precise(subst, None)
                     }
                 }
             }
@@ -350,5 +385,5 @@ fn make_mono_id(ccx: @crate_ctxt, item: ast::def_id, substs: ~[ty::t],
           })
       }
     };
-    @{def: item, params: param_ids, impl_did_opt: impl_did_opt}
+    @mono_id_ {def: item, params: param_ids, impl_did_opt: impl_did_opt}
 }

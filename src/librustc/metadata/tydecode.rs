@@ -1,15 +1,31 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 // Type decoding
 
 // tjc note: Would be great to have a `match check` macro equivalent
 // for some of these
 
+use middle::ty;
+use middle::ty::{FnTyBase, FnMeta, FnSig};
+
+use core::io;
+use core::str;
+use core::uint;
+use core::vec;
 use syntax::ast;
 use syntax::ast::*;
 use syntax::ast_util;
 use syntax::ast_util::respan;
-use middle::ty;
 use std::map::HashMap;
-use ty::{FnTyBase, FnMeta, FnSig};
 
 export parse_state_from_data;
 export parse_arg_data, parse_ty_data, parse_def_id, parse_ident;
@@ -306,7 +322,7 @@ fn parse_ty(st: @pstate, conv: conv_did) -> ty::t {
         match st.tcx.rcache.find({cnum: st.crate, pos: pos, len: len}) {
           Some(tt) => return tt,
           None => {
-            let ps = @{pos: pos ,.. *st};
+            let ps = @{pos: pos ,.. copy *st};
             let tt = parse_ty(ps, conv);
             st.tcx.rcache.insert({cnum: st.crate, pos: pos, len: len}, tt);
             return tt;
@@ -327,7 +343,7 @@ fn parse_ty(st: @pstate, conv: conv_did) -> ty::t {
           debug!("parsed a def_id %?", did);
           let substs = parse_substs(st, conv);
           assert (next(st) == ']');
-          return ty::mk_class(st.tcx, did, substs);
+          return ty::mk_struct(st.tcx, did, substs);
       }
       c => { error!("unexpected char in type string: %c", c); fail;}
     }
@@ -473,10 +489,10 @@ fn parse_bounds(st: @pstate, conv: conv_did) -> @~[ty::param_bound] {
     let mut bounds = ~[];
     loop {
         bounds.push(match next(st) {
-          'S' => ty::bound_send,
+          'S' => ty::bound_owned,
           'C' => ty::bound_copy,
           'K' => ty::bound_const,
-          'O' => ty::bound_owned,
+          'O' => ty::bound_durable,
           'I' => ty::bound_trait(parse_ty(st, conv)),
           '.' => break,
           _ => fail ~"parse_bounds: bad bounds"

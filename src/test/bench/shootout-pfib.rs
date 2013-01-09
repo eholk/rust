@@ -1,10 +1,20 @@
 // -*- rust -*-
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 
 /*
   A parallel version of fibonacci numbers.
 
   This version is meant mostly as a way of stressing and benchmarking
-  the task system. It supports a lot of command-line arguments to
+  the task system. It supports a lot of oldcommand-line arguments to
   control how it runs.
 
 */
@@ -40,7 +50,7 @@ fn fib(n: int) -> int {
         }
     }
 
-    let (ch, p) = pipes::stream();
+    let (p, ch) = pipes::stream();
     let _t = task::spawn(|move ch| pfib(ch, n) );
     p.recv()
 }
@@ -90,7 +100,7 @@ fn main() {
         args
     };
 
-    let opts = parse_opts(args);
+    let opts = parse_opts(copy args);
 
     if opts.stress {
         stress(2);

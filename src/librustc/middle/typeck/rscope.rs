@@ -1,4 +1,19 @@
-use result::Result;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::ty;
+
+use core::result::Result;
+use core::result;
+use syntax::ast;
 use syntax::parse::token::special_idents;
 
 trait region_scope {
@@ -50,7 +65,7 @@ fn bound_self_region(rp: Option<ty::region_variance>) -> Option<ty::Region> {
 }
 
 enum anon_rscope = {anon: ty::Region, base: region_scope};
-fn in_anon_rscope<RS: region_scope Copy Owned>(self: RS, r: ty::Region)
+fn in_anon_rscope<RS: region_scope Copy Durable>(self: RS, r: ty::Region)
     -> @anon_rscope {
     @anon_rscope({anon: r, base: self as region_scope})
 }
@@ -70,7 +85,7 @@ struct binding_rscope {
     base: region_scope,
     mut anon_bindings: uint,
 }
-fn in_binding_rscope<RS: region_scope Copy Owned>(self: RS)
+fn in_binding_rscope<RS: region_scope Copy Durable>(self: RS)
     -> @binding_rscope {
     let base = self as region_scope;
     @binding_rscope { base: base, anon_bindings: 0 }

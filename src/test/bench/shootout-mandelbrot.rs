@@ -1,18 +1,24 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //  based on:
 //  http://shootout.alioth.debian.org/
 //   u64q/program.php?test=mandelbrot&lang=python3&id=2
 //
-//  takes 3 optional args:
+//  takes 2 optional args:
 //   square image size, defaults to 80_u
-//   yield frequency, defaults to 10_u (yield every 10 spawns)
 //   output path, default is "" (no output), "-" means stdout
 //
 //  in the shootout, they use 16000 as image size
-//  yield frequency doesn't seem to have much effect
 //
 //  writes pbm image to output path
-
-#[legacy_modes];
 
 extern mod std;
 use io::WriterUtil;
@@ -33,7 +39,7 @@ impl cmplx : ops::Mul<cmplx,cmplx> {
 }
 
 impl cmplx : ops::Add<cmplx,cmplx> {
-    pure fn add(x: &cmplx) -> cmplx {
+    pure fn add(&self, x: &cmplx) -> cmplx {
         cmplx {
             re: self.re + (*x).re,
             im: self.im + (*x).im
@@ -41,7 +47,7 @@ impl cmplx : ops::Add<cmplx,cmplx> {
     }
 }
 
-type line = {i: uint, b: ~[u8]};
+struct Line {i: uint, b: ~[u8]}
 
 pure fn cabs(x: cmplx) -> f64
 {
@@ -77,7 +83,7 @@ fn fillbyte(x: cmplx, incr: f64) -> u8 {
     rv
 }
 
-fn chanmb(i: uint, size: uint, ch: comm::Chan<line>) -> ()
+fn chanmb(i: uint, size: uint) -> Line
 {
     let mut crv = ~[];
     let incr = 2f64/(size as f64);
@@ -87,27 +93,24 @@ fn chanmb(i: uint, size: uint, ch: comm::Chan<line>) -> ()
         let x = cmplx {re: xincr*(j as f64) - 1.5f64, im: y};
         crv.push(fillbyte(x, incr));
     };
-    comm::send(ch, {i:i, b:crv});
+    Line {i:i, b:crv}
 }
 
-type devnull = {dn: int};
+struct Devnull();
 
-impl devnull: io::Writer {
-    fn write(_b: &[const u8]) {}
-    fn seek(+_i: int, +_s: io::SeekStyle) {}
-    fn tell() -> uint {0_u}
-    fn flush() -> int {0}
-    fn get_type() -> io::WriterType { io::File }
+impl Devnull: io::Writer {
+    fn write(&self, _b: &[const u8]) {}
+    fn seek(&self, _i: int, _s: io::SeekStyle) {}
+    fn tell(&self) -> uint {0_u}
+    fn flush(&self) -> int {0}
+    fn get_type(&self) -> io::WriterType { io::File }
 }
 
-fn writer(path: ~str, writech: comm::Chan<comm::Chan<line>>, size: uint)
+fn writer(path: ~str, pport: pipes::Port<Line>, size: uint)
 {
-    let p: comm::Port<line> = comm::Port();
-    let ch = comm::Chan(&p);
-    comm::send(writech, ch);
     let cout: io::Writer = match path {
         ~"" => {
-            {dn: 0} as io::Writer
+            Devnull as io::Writer
         }
         ~"-" => {
             io::stdout()
@@ -124,7 +127,7 @@ fn writer(path: ~str, writech: comm::Chan<comm::Chan<line>>, size: uint)
     let mut done = 0_u;
     let mut i = 0_u;
     while i < size {
-        let aline = comm::recv(p);
+        let aline = pport.recv();
         if aline.i == done {
             debug!("W %u", aline.i);
             cout.write(aline.b);
@@ -145,7 +148,7 @@ fn writer(path: ~str, writech: comm::Chan<comm::Chan<line>>, size: uint)
         }
         else {
             debug!("S %u", aline.i);
-            lines.insert(aline.i, aline.b);
+            lines.insert(aline.i, copy aline.b);    // FIXME: bad for perf
         };
         i += 1_u;
     }
@@ -154,31 +157,22 @@ fn writer(path: ~str, writech: comm::Chan<comm::Chan<line>>, size: uint)
 fn main() {
     let args = os::args();
     let args = if os::getenv(~"RUST_BENCH").is_some() {
-        ~[~"", ~"4000", ~"10"]
+        ~[~"", ~"4000"]
     } else {
         args
     };
 
-    let path = if vec::len(args) < 4_u { ~"" }
-    else { args[3] };
-
-    let yieldevery = if vec::len(args) < 3_u { 10_u }
-    else { uint::from_str(args[2]).get() };
+    let path = if vec::len(args) < 3_u { ~"" }
+    else { copy args[2] };  // FIXME: bad for perf
 
     let size = if vec::len(args) < 2_u { 80_u }
     else { uint::from_str(args[1]).get() };
 
-    let writep = comm::Port();
-    let writech = comm::Chan(&writep);
-    do task::spawn {
-        writer(path, writech, size);
-    };
-    let ch = comm::recv(writep);
+    let (pport, pchan) = pipes::stream();
+    let pchan = pipes::SharedChan(pchan);
     for uint::range(0_u, size) |j| {
-        task::spawn(|| chanmb(j, size, ch) );
-        if j % yieldevery == 0_u {
-            debug!("Y %u", j);
-            task::yield();
-        };
+        let cchan = pchan.clone();
+        do task::spawn |move cchan| { cchan.send(chanmb(j, size)) };
     };
+    writer(path, pport, size);
 }

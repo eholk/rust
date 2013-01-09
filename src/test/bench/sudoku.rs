@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 extern mod std;
 
 use std::bitv;
@@ -56,7 +66,7 @@ fn solve_grid(g: grid_t) {
             }
 
             // drop colors already in use in neighbourhood
-            drop_colors(g, avail, row, col);
+            drop_colors(copy g, copy avail, row, col);
 
             // find first remaining color that is available
             for uint::range(1u, 10u) |i| {
@@ -77,7 +87,7 @@ fn solve_grid(g: grid_t) {
             if color != 0u8 { colors.set(color as uint, false); }
         }
 
-        let it = |a,b| drop_color(g, avail, a, b);
+        let it = |a,b| drop_color(copy g, copy avail, a, b);
 
         for u8::range(0u8, 9u8) |idx| {
             it(idx, col); /* check same column fields */
@@ -105,7 +115,7 @@ fn solve_grid(g: grid_t) {
     while (ptr < end) {
         let (row, col) = work[ptr];
         // is there another color to try?
-        if next_color(*g, row, col, (*g)[row][col] + (1 as u8)) {
+        if next_color(copy *g, row, col, (*g)[row][col] + (1 as u8)) {
             //  yes: advance work list
             ptr = ptr + 1u;
         } else {
@@ -163,7 +173,7 @@ fn main() {
     } else {
         read_grid(io::stdin())
     };
-    solve_grid(grid);
+    solve_grid(copy grid);
     write_grid(io::stdout(), grid);
 }
 

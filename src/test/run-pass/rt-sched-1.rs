@@ -1,6 +1,14 @@
-// Tests of the runtime's scheduler interface
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-use ptr::is_null;
+// Tests of the runtime's scheduler interface
 
 type sched_id = int;
 type task_id = *libc::c_void;
@@ -17,8 +25,8 @@ extern mod rustrt {
 }
 
 fn main() unsafe {
-    let po = comm::Port();
-    let ch = comm::Chan(&po);
+    let po = oldcomm::Port();
+    let ch = oldcomm::Chan(&po);
     let parent_sched_id = rustrt::rust_get_sched_id();
     error!("parent %?", parent_sched_id);
     let num_threads = 1u;
@@ -31,10 +39,10 @@ fn main() unsafe {
         error!("child_sched_id %?", child_sched_id);
         assert child_sched_id != parent_sched_id;
         assert child_sched_id == new_sched_id;
-        comm::send(ch, ());
+        oldcomm::send(ch, ());
     };
     let fptr = cast::reinterpret_cast(&ptr::addr_of(&f));
     rustrt::start_task(new_task_id, fptr);
     cast::forget(move f);
-    comm::recv(po);
+    oldcomm::recv(po);
 }

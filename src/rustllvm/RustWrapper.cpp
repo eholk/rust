@@ -1,10 +1,13 @@
-//===- RustWrapper.cpp - Rust wrapper for core functions --------*- C++ -*-===
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //===----------------------------------------------------------------------===
 //
 // This file defines alternate interfaces to core functions that are more
@@ -284,7 +287,7 @@ void *RustMCJITMemoryManager::getPointerToNamedFunction(const std::string &Name,
   if (Name == "mknod") return (void*)(intptr_t)&mknod;
 #endif
 
-  if (Name == "__morestack") return &__morestack;
+  if (Name == "__morestack" || Name == "___morestack") return &__morestack;
 
   const char *NameStr = Name.c_str();
 
@@ -292,6 +295,13 @@ void *RustMCJITMemoryManager::getPointerToNamedFunction(const std::string &Name,
 
   void *Ptr = sys::DynamicLibrary::SearchForAddressOfSymbol(NameStr);
   if (Ptr) return Ptr;
+
+  // If it wasn't found and if it starts with an underscore ('_') character,
+  // try again without the underscore.
+  if (NameStr[0] == '_') {
+    Ptr = sys::DynamicLibrary::SearchForAddressOfSymbol(NameStr+1);
+    if (Ptr) return Ptr;
+  }
 
   if (AbortOnFailure)
     report_fatal_error("Program used external function '" + Name +

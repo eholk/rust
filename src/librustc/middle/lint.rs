@@ -1,16 +1,46 @@
-use driver::session;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use driver::session::Session;
+use driver::session;
+use middle::pat_util::{pat_bindings};
 use middle::ty;
-use syntax::{ast, ast_util, visit};
+use util::ppaux::{ty_to_str};
+
+use core::char;
+use core::cmp;
+use core::either;
+use core::i8;
+use core::i16;
+use core::i32;
+use core::i64;
+use core::int;
+use core::io::WriterUtil;
+use core::str;
+use core::u8;
+use core::u16;
+use core::u32;
+use core::u64;
+use core::uint;
+use core::vec;
+use std::map::{Map, HashMap};
+use std::map;
+use std::smallintmap::{Map, SmallIntMap};
+use std::smallintmap;
+use syntax::ast_util::{path_to_ident};
 use syntax::attr;
 use syntax::codemap::span;
-use std::map::{Map,HashMap};
-use std::smallintmap::{Map,SmallIntMap};
-use io::WriterUtil;
-use util::ppaux::{ty_to_str};
-use middle::pat_util::{pat_bindings};
-use syntax::ast_util::{path_to_ident};
 use syntax::print::pprust::{expr_to_str, mode_to_str, pat_to_str};
+use syntax::{ast, ast_util, visit};
+
 export lint, ctypes, unused_imports, while_true, path_statement, old_vecs;
 export unrecognized_lint, non_implicitly_copyable_typarams;
 export vecs_implicitly_copyable, implicit_copies, legacy_modes;
@@ -55,6 +85,8 @@ enum lint {
     non_camel_case_types,
     structural_records,
     type_limits,
+    default_methods,
+    deprecated_self,
 
     managed_heap_memory,
     owned_heap_memory,
@@ -74,12 +106,12 @@ impl lint : cmp::Eq {
     pure fn ne(&self, other: &lint) -> bool { !(*self).eq(other) }
 }
 
-fn level_to_str(lv: level) -> ~str {
+fn level_to_str(lv: level) -> &static/str {
     match lv {
-      allow => ~"allow",
-      warn => ~"warn",
-      deny => ~"deny",
-      forbid => ~"forbid"
+      allow => "allow",
+      warn => "warn",
+      deny => "deny",
+      forbid => "forbid"
     }
 }
 
@@ -95,7 +127,7 @@ impl level : cmp::Eq {
 }
 
 type lint_spec = @{lint: lint,
-                   desc: ~str,
+                   desc: &static/str,
                    default: level};
 
 type lint_dict = HashMap<~str,lint_spec>;
@@ -108,103 +140,113 @@ fn get_lint_dict() -> lint_dict {
     let v = ~[
         (~"ctypes",
          @{lint: ctypes,
-           desc: ~"proper use of core::libc types in foreign modules",
+           desc: "proper use of core::libc types in foreign modules",
            default: warn}),
 
         (~"unused_imports",
          @{lint: unused_imports,
-           desc: ~"imports that are never used",
+           desc: "imports that are never used",
            default: allow}),
 
         (~"while_true",
          @{lint: while_true,
-           desc: ~"suggest using loop { } instead of while(true) { }",
+           desc: "suggest using loop { } instead of while(true) { }",
            default: warn}),
 
         (~"path_statement",
          @{lint: path_statement,
-           desc: ~"path statements with no effect",
+           desc: "path statements with no effect",
            default: warn}),
 
         (~"unrecognized_lint",
          @{lint: unrecognized_lint,
-           desc: ~"unrecognized lint attribute",
+           desc: "unrecognized lint attribute",
            default: warn}),
 
         (~"non_implicitly_copyable_typarams",
          @{lint: non_implicitly_copyable_typarams,
-           desc: ~"passing non implicitly copyable types as copy type params",
+           desc: "passing non implicitly copyable types as copy type params",
            default: warn}),
 
         (~"vecs_implicitly_copyable",
          @{lint: vecs_implicitly_copyable,
-           desc: ~"make vecs and strs not implicitly copyable \
+           desc: "make vecs and strs not implicitly copyable \
                   (only checked at top level)",
            default: warn}),
 
         (~"implicit_copies",
          @{lint: implicit_copies,
-           desc: ~"implicit copies of non implicitly copyable data",
+           desc: "implicit copies of non implicitly copyable data",
            default: warn}),
 
         (~"deprecated_mode",
          @{lint: deprecated_mode,
-           desc: ~"warn about deprecated uses of modes",
+           desc: "warn about deprecated uses of modes",
            default: warn}),
 
         (~"deprecated_pattern",
          @{lint: deprecated_pattern,
-           desc: ~"warn about deprecated uses of pattern bindings",
+           desc: "warn about deprecated uses of pattern bindings",
            default: allow}),
 
         (~"non_camel_case_types",
          @{lint: non_camel_case_types,
-           desc: ~"types, variants and traits should have camel case names",
+           desc: "types, variants and traits should have camel case names",
            default: allow}),
 
         (~"managed_heap_memory",
          @{lint: managed_heap_memory,
-           desc: ~"use of managed (@ type) heap memory",
+           desc: "use of managed (@ type) heap memory",
            default: allow}),
 
         (~"owned_heap_memory",
          @{lint: owned_heap_memory,
-           desc: ~"use of owned (~ type) heap memory",
+           desc: "use of owned (~ type) heap memory",
            default: allow}),
 
         (~"heap_memory",
          @{lint: heap_memory,
-           desc: ~"use of any (~ type or @ type) heap memory",
+           desc: "use of any (~ type or @ type) heap memory",
            default: allow}),
 
         (~"structural_records",
          @{lint: structural_records,
-           desc: ~"use of any structural records",
+           desc: "use of any structural records",
            default: allow}),
 
         (~"legacy modes",
          @{lint: legacy_modes,
-           desc: ~"allow legacy modes",
+           desc: "allow legacy modes",
            default: forbid}),
 
         (~"type_limits",
          @{lint: type_limits,
-           desc: ~"comparisons made useless by limits of the types involved",
-           default: warn})
+           desc: "comparisons made useless by limits of the types involved",
+           default: warn}),
+
+        (~"default_methods",
+         @{lint: default_methods,
+           desc: "allow default methods",
+           default: deny}),
+
+        (~"deprecated_self",
+         @{lint: deprecated_self,
+           desc: "warn about deprecated uses of `self`",
+           default: allow}),
 
         /* FIXME(#3266)--make liveness warnings lintable
         (~"unused_variable",
          @{lint: unused_variable,
-           desc: ~"detect variables which are not used in any way",
+           desc: "detect variables which are not used in any way",
            default: warn}),
 
         (~"dead_assignment",
          @{lint: dead_assignment,
-           desc: ~"detect assignments that will never be read",
+           desc: "detect assignments that will never be read",
            default: warn}),
         */
     ];
-    std::map::hash_from_vec(v)
+    map::hash_from_vec(v)
 }
 
 // This is a highly not-optimal set of data structure decisions.
@@ -220,7 +262,7 @@ type lint_settings = {
 };
 
 fn mk_lint_settings() -> lint_settings {
-    {default_settings: std::smallintmap::mk(),
+    {default_settings: smallintmap::mk(),
      settings_map: HashMap()}
 }
 
@@ -244,7 +286,7 @@ fn get_lint_settings_level(settings: lint_settings,
 // This is kind of unfortunate. It should be somewhere else, or we should use
 // a persistent data structure...
 fn clone_lint_modes(modes: lint_modes) -> lint_modes {
-    std::smallintmap::SmallIntMap_(@{v: copy modes.v})
+    smallintmap::SmallIntMap_(@{v: copy modes.v})
 }
 
 type ctxt_ = {dict: lint_dict,
@@ -269,7 +311,7 @@ impl ctxt {
         }
     }
 
-    fn span_lint(level: level, span: span, msg: ~str) {
+    fn span_lint(level: level, span: span, +msg: ~str) {
         self.sess.span_lint_level(level, span, msg);
     }
 
@@ -286,15 +328,17 @@ impl ctxt {
         for [allow, warn, deny, forbid].each |level| {
             let level_name = level_to_str(*level);
             let metas =
-                attr::attr_metas(attr::find_attrs_by_name(attrs,
+                attr::attr_metas(attr::find_attrs_by_name(/*bad*/copy attrs,
                                                           level_name));
             for metas.each |meta| {
-                match meta.node {
+                match /*bad*/copy meta.node {
                   ast::meta_list(_, metas) => {
                     for metas.each |meta| {
                         match meta.node {
-                          ast::meta_word(lintname) => {
-                            triples.push((*meta, *level, lintname));
+                          ast::meta_word(ref lintname) => {
+                            triples.push((*meta,
+                                          *level,
+                                          /*bad*/copy *lintname));
                           }
                           _ => {
                             self.sess.span_err(
@@ -313,7 +357,7 @@ impl ctxt {
         }
 
         for triples.each |pair| {
-            let (meta, level, lintname) = *pair;
+            let (meta, level, lintname) = /*bad*/copy *pair;
             match self.dict.find(lintname) {
               None => {
                 self.span_lint(
@@ -353,7 +397,7 @@ impl ctxt {
 
 
 fn build_settings_item(i: @ast::item, &&cx: ctxt, v: visit::vt<ctxt>) {
-    do cx.with_lint_attrs(i.attrs) |cx| {
+    do cx.with_lint_attrs(/*bad*/copy i.attrs) |cx| {
         if !cx.is_default {
             cx.sess.lint_settings.settings_map.insert(i.id, cx.curr);
         }
@@ -364,7 +408,7 @@ fn build_settings_item(i: @ast::item, &&cx: ctxt, v: visit::vt<ctxt>) {
 fn build_settings_crate(sess: session::Session, crate: @ast::crate) {
 
     let cx = ctxt_({dict: get_lint_dict(),
-                    curr: std::smallintmap::mk(),
+                    curr: smallintmap::mk(),
                     is_default: true,
                     sess: sess});
 
@@ -377,7 +421,7 @@ fn build_settings_crate(sess: session::Session, crate: @ast::crate) {
         cx.set_level(lint, level);
     }
 
-    do cx.with_lint_attrs(crate.node.attrs) |cx| {
+    do cx.with_lint_attrs(/*bad*/copy crate.node.attrs) |cx| {
         // Copy out the default settings
         for cx.curr.each |k, v| {
             sess.lint_settings.default_settings.insert(k, v);
@@ -404,6 +448,8 @@ fn check_item(i: @ast::item, cx: ty::ctxt) {
     check_item_structural_records(cx, i);
     check_item_deprecated_modes(cx, i);
     check_item_type_limits(cx, i);
+    check_item_default_methods(cx, i);
+    check_item_deprecated_self(cx, i);
 }
 
 // Take a visitor, and modify it so that it will not proceed past subitems.
@@ -495,7 +541,7 @@ fn check_item_type_limits(cx: ty::ctxt, it: @ast::item) {
         } else {
             binop
         };
-        match ty::get(ty::expr_ty(cx, @*expr)).sty {
+        match ty::get(ty::expr_ty(cx, @/*bad*/copy *expr)).sty {
             ty::ty_int(int_ty) => {
                 let (min, max) = int_ty_range(int_ty);
                 let lit_val: i64 = match lit.node {
@@ -537,9 +583,9 @@ fn check_item_type_limits(cx: ty::ctxt, it: @ast::item) {
     let visit = item_stopping_visitor(visit::mk_simple_visitor(@{
         visit_expr: fn@(e: @ast::expr) {
             match e.node {
-                ast::expr_binary(binop, @l, @r) => {
-                    if is_comparison(binop)
-                       && !check_limits(cx, binop, &l, &r) {
+                ast::expr_binary(ref binop, @ref l, @ref r) => {
+                    if is_comparison(*binop)
+                       && !check_limits(cx, *binop, l, r) {
                         cx.sess.span_lint(
                             type_limits, e.id, it.id, e.span,
                             ~"comparison is useless due to type limits");
@@ -551,6 +597,62 @@ fn check_item_type_limits(cx: ty::ctxt, it: @ast::item) {
         .. *visit::default_simple_visitor()
     }));
     visit::visit_item(it, (), visit);
+}
+
+fn check_item_default_methods(cx: ty::ctxt, item: @ast::item) {
+    match /*bad*/copy item.node {
+        ast::item_trait(_, _, methods) => {
+            for methods.each |method| {
+                match *method {
+                    ast::required(*) => {}
+                    ast::provided(*) => {
+                        cx.sess.span_lint(
+                            default_methods,
+                            item.id,
+                            item.id,
+                            item.span,
+                            ~"default methods are experimental");
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn check_item_deprecated_self(cx: ty::ctxt, item: @ast::item) {
+    fn maybe_warn(cx: ty::ctxt,
+                  item: @ast::item,
+                  self_ty: ast::self_ty) {
+        cx.sess.span_lint(
+            deprecated_self,
+            item.id,
+            item.id,
+            self_ty.span,
+            ~"this method form is deprecated; use an explicit `self` \
+              parameter or mark the method as static");
+    }
+
+    match /*bad*/copy item.node {
+        ast::item_trait(_, _, methods) => {
+            for methods.each |method| {
+                match /*bad*/copy *method {
+                    ast::required(ty_method) => {
+                        maybe_warn(cx, item, ty_method.self_ty);
+                    }
+                    ast::provided(method) => {
+                        maybe_warn(cx, item, method.self_ty);
+                    }
+                }
+            }
+        }
+        ast::item_impl(_, _, _, methods) => {
+            for methods.each |method| {
+                maybe_warn(cx, item, method.self_ty);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn check_item_structural_records(cx: ty::ctxt, it: @ast::item) {
@@ -602,10 +704,11 @@ fn check_item_ctypes(cx: ty::ctxt, it: @ast::item) {
     }
 
     match it.node {
-      ast::item_foreign_mod(nmod) if attr::foreign_abi(it.attrs) !=
-      either::Right(ast::foreign_abi_rust_intrinsic) => {
+      ast::item_foreign_mod(ref nmod)
+      if attr::foreign_abi(it.attrs) !=
+            either::Right(ast::foreign_abi_rust_intrinsic) => {
         for nmod.items.each |ni| {
-            match ni.node {
+            match /*bad*/copy ni.node {
               ast::foreign_item_fn(decl, _, _) => {
                 check_foreign_fn(cx, it.id, decl);
               }
@@ -666,7 +769,7 @@ fn check_item_heap(cx: ty::ctxt, it: @ast::item) {
       ast::item_fn(*) |
       ast::item_ty(*) |
       ast::item_enum(*) |
-      ast::item_class(*) |
+      ast::item_struct(*) |
       ast::item_trait(*) => check_type(cx, it.id, it.id, it.span,
                                        ty::node_id_to_type(cx, it.id)),
       _ => ()
@@ -713,14 +816,14 @@ fn check_item_non_camel_case_types(cx: ty::ctxt, it: @ast::item) {
             !ident.contains_char('_')
     }
 
-    fn ident_without_trailing_underscores(ident: ~str) -> ~str {
+    fn ident_without_trailing_underscores(+ident: ~str) -> ~str {
         match str::rfind(ident, |c| c != '_') {
             Some(idx) => (ident).slice(0, idx + 1),
             None => { ident } // all underscores
         }
     }
 
-    fn ident_without_leading_underscores(ident: ~str) -> ~str {
+    fn ident_without_leading_underscores(+ident: ~str) -> ~str {
         match str::find(ident, |c| c != '_') {
           Some(idx) => ident.slice(idx, ident.len()),
           None => {
@@ -742,11 +845,11 @@ fn check_item_non_camel_case_types(cx: ty::ctxt, it: @ast::item) {
     }
 
     match it.node {
-      ast::item_ty(*) | ast::item_class(*) |
+      ast::item_ty(*) | ast::item_struct(*) |
       ast::item_trait(*) => {
         check_case(cx, it.ident, it.id, it.id, it.span)
       }
-      ast::item_enum(enum_definition, _) => {
+      ast::item_enum(ref enum_definition, _) => {
         check_case(cx, it.ident, it.id, it.id, it.span);
         for enum_definition.variants.each |variant| {
             check_case(cx, variant.node.name,
@@ -754,27 +857,6 @@ fn check_item_non_camel_case_types(cx: ty::ctxt, it: @ast::item) {
         }
       }
       _ => ()
-    }
-}
-
-fn check_pat(tcx: ty::ctxt, pat: @ast::pat) {
-    debug!("lint check_pat pat=%s", pat_to_str(pat, tcx.sess.intr()));
-
-    do pat_bindings(tcx.def_map, pat) |binding_mode, id, span, path| {
-        match binding_mode {
-          ast::bind_by_ref(_) | ast::bind_by_value | ast::bind_by_move => {}
-          ast::bind_by_implicit_ref => {
-            let pat_ty = ty::node_id_to_type(tcx, id);
-            let kind = ty::type_kind(tcx, pat_ty);
-            if !ty::kind_is_safe_for_default_mode(kind) {
-                tcx.sess.span_lint(
-                    deprecated_pattern, id, id,
-                    span,
-                    fmt!("binding `%s` should use ref or copy mode",
-                         tcx.sess.str_of(path_to_ident(path))));
-            }
-          }
-        }
     }
 }
 
@@ -796,7 +878,7 @@ fn check_fn(tcx: ty::ctxt, fk: visit::fn_kind, decl: ast::fn_decl,
 fn check_fn_deprecated_modes(tcx: ty::ctxt, fn_ty: ty::t, decl: ast::fn_decl,
                              span: span, id: ast::node_id) {
     match ty::get(fn_ty).sty {
-        ty::ty_fn(fn_ty) => {
+        ty::ty_fn(ref fn_ty) => {
             let mut counter = 0;
             for vec::each2(fn_ty.sig.inputs, decl.inputs) |arg_ty, arg_ast| {
                 counter += 1;
@@ -894,8 +976,6 @@ fn check_crate(tcx: ty::ctxt, crate: @ast::crate) {
             check_item(it, tcx),
         visit_fn: |fk, decl, body, span, id|
             check_fn(tcx, fk, decl, body, span, id),
-        visit_pat: |pat|
-            check_pat(tcx, pat),
         .. *visit::default_simple_visitor()
     });
     visit::visit_crate(*crate, (), v);

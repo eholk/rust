@@ -1,15 +1,31 @@
-use base::{ext_ctxt, mac_result, mr_any, mr_def, normal_tt};
-use codemap::span;
-use ast::{ident, matcher_, matcher, match_tok,
-             match_nonterminal, match_seq, tt_delim};
-use parse::lexer::{new_tt_reader, reader};
-use parse::token::{FAT_ARROW, SEMI, LBRACE, RBRACE, nt_matchers, nt_tt};
-use parse::parser::Parser;
-use macro_parser::{parse, parse_or_else, success, failure, named_match,
-                      matched_seq, matched_nonterminal, error};
-use std::map::HashMap;
-use parse::token::special_idents;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use ast::{ident, matcher_, matcher, match_tok, match_nonterminal, match_seq};
+use ast::{tt_delim};
+use ast;
 use ast_util::dummy_sp;
+use codemap::span;
+use ext::base::{ext_ctxt, mac_result, mr_any, mr_def, normal_tt};
+use ext::base;
+use ext::tt::macro_parser::{error};
+use ext::tt::macro_parser::{named_match, matched_seq, matched_nonterminal};
+use ext::tt::macro_parser::{parse, parse_or_else, success, failure};
+use parse::lexer::{new_tt_reader, reader};
+use parse::parser::Parser;
+use parse::token::special_idents;
+use parse::token::{FAT_ARROW, SEMI, LBRACE, RBRACE, nt_matchers, nt_tt};
+use print;
+
+use core::io;
+use std::map::HashMap;
 
 fn add_new_extension(cx: ext_ctxt, sp: span, name: ident,
                      arg: ~[ast::token_tree]) -> base::mac_result {
@@ -74,17 +90,19 @@ fn add_new_extension(cx: ext_ctxt, sp: span, name: ident,
 
         for lhses.eachi() |i, lhs| { // try each arm's matchers
             match *lhs {
-              @matched_nonterminal(nt_matchers(mtcs)) => {
+              @matched_nonterminal(nt_matchers(ref mtcs)) => {
                 // `none` is because we're not interpolating
                 let arg_rdr = new_tt_reader(s_d, itr, None, arg) as reader;
-                match parse(cx.parse_sess(), cx.cfg(), arg_rdr, mtcs) {
+                match parse(cx.parse_sess(), cx.cfg(), arg_rdr, (*mtcs)) {
                   success(named_matches) => {
                     let rhs = match rhses[i] {
                         // okay, what's your transcriber?
-                        @matched_nonterminal(nt_tt(@tt)) => {
-                            match tt {
+                        @matched_nonterminal(nt_tt(@ref tt)) => {
+                            match (*tt) {
                                 // cut off delimiters; don't parse 'em
-                                tt_delim(tts) => tts.slice(1u,tts.len()-1u),
+                                tt_delim(ref tts) => {
+                                    (*tts).slice(1u,(*tts).len()-1u)
+                                }
                                 _ => cx.span_fatal(
                                     sp, ~"macro rhs must be delimited")
                             }
@@ -103,11 +121,11 @@ fn add_new_extension(cx: ext_ctxt, sp: span, name: ident,
                                   || p.parse_item(~[/* no attrs*/]),
                                   || p.parse_stmt(~[/* no attrs*/]));
                   }
-                  failure(sp, msg) => if sp.lo >= best_fail_spot.lo {
+                  failure(sp, ref msg) => if sp.lo >= best_fail_spot.lo {
                     best_fail_spot = sp;
-                    best_fail_msg = msg;
+                    best_fail_msg = (*msg);
                   },
-                  error(sp, msg) => cx.span_fatal(sp, msg)
+                  error(sp, ref msg) => cx.span_fatal(sp, (*msg))
                 }
               }
               _ => cx.bug(~"non-matcher found in parsed lhses")

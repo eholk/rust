@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 Divides the document tree into pages.
 
@@ -5,9 +15,20 @@ Each page corresponds is a logical section. There may be pages for
 individual modules, pages for the crate, indexes, etc.
 */
 
+use astsrv;
+use config;
 use doc::{ItemUtils, PageUtils};
-use syntax::ast;
+use doc;
+use fold::Fold;
+use fold;
+use sort_pass;
 use util::NominalOp;
+use util;
+
+use core::oldcomm;
+use core::option;
+use core::vec;
+use syntax::ast;
 
 pub fn mk_pass(output_style: config::OutputStyle) -> Pass {
     {
@@ -28,24 +49,24 @@ fn run(
         return doc;
     }
 
-    let (result_port, page_chan) = do task::spawn_conversation
+    let (result_port, page_chan) = do util::spawn_conversation
         |page_port, result_chan| {
-        comm::send(result_chan, make_doc_from_pages(page_port));
+        oldcomm::send(result_chan, make_doc_from_pages(page_port));
     };
 
     find_pages(doc, page_chan);
-    comm::recv(result_port)
+    oldcomm::recv(result_port)
 }
 
-type PagePort = comm::Port<Option<doc::Page>>;
-type PageChan = comm::Chan<Option<doc::Page>>;
+type PagePort = oldcomm::Port<Option<doc::Page>>;
+type PageChan = oldcomm::Chan<Option<doc::Page>>;
 
 type NominalPageChan = NominalOp<PageChan>;
 
 fn make_doc_from_pages(page_port: PagePort) -> doc::Doc {
     let mut pages = ~[];
     loop {
-        let val = comm::recv(page_port);
+        let val = oldcomm::recv(page_port);
         if val.is_some() {
             pages += ~[option::unwrap(move val)];
         } else {
@@ -58,15 +79,15 @@ fn make_doc_from_pages(page_port: PagePort) -> doc::Doc {
 }
 
 fn find_pages(doc: doc::Doc, page_chan: PageChan) {
-    let fold = fold::Fold({
+    let fold = Fold {
         fold_crate: fold_crate,
         fold_mod: fold_mod,
         fold_nmod: fold_nmod,
-        .. *fold::default_any_fold(NominalOp { op: page_chan })
-    });
+        .. fold::default_any_fold(NominalOp { op: page_chan })
+    };
     (fold.fold_doc)(&fold, doc);
 
-    comm::send(page_chan, None);
+    oldcomm::send(page_chan, None);
 }
 
 fn fold_crate(
@@ -81,7 +102,7 @@ fn fold_crate(
         .. doc
     });
 
-    comm::send(fold.ctxt.op, Some(page));
+    oldcomm::send(fold.ctxt.op, Some(page));
 
     doc
 }
@@ -97,7 +118,7 @@ fn fold_mod(
 
         let doc = strip_mod(doc);
         let page = doc::ItemPage(doc::ModTag(doc));
-        comm::send(fold.ctxt.op, Some(page));
+        oldcomm::send(fold.ctxt.op, Some(page));
     }
 
     doc
@@ -122,7 +143,7 @@ fn fold_nmod(
 ) -> doc::NmodDoc {
     let doc = fold::default_seq_fold_nmod(fold, doc);
     let page = doc::ItemPage(doc::NmodTag(doc));
-    comm::send(fold.ctxt.op, Some(page));
+    oldcomm::send(fold.ctxt.op, Some(page));
     return doc;
 }
 
@@ -162,6 +183,12 @@ fn should_remove_foreign_mods_from_containing_mods() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use config;
+    use doc;
+    use extract;
+
     fn mk_doc_(
         output_style: config::OutputStyle,
         source: ~str

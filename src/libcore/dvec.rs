@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 Dynamic vector
@@ -13,8 +23,10 @@ Note that recursive use is not permitted.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
+use cast;
 use cast::reinterpret_cast;
 use ptr::null;
+use vec;
 
 /**
  * A growable, modifiable vector type that accumulates elements into a
@@ -57,17 +69,17 @@ pub pure fn DVec<A>() -> DVec<A> {
 }
 
 /// Creates a new dvec with a single element
-pub fn from_elem<A>(e: A) -> DVec<A> {
+pub pure fn from_elem<A>(e: A) -> DVec<A> {
     DVec {mut data: ~[move e]}
 }
 
 /// Creates a new dvec with the contents of a vector
-pub fn from_vec<A>(v: ~[A]) -> DVec<A> {
+pub pure fn from_vec<A>(v: ~[A]) -> DVec<A> {
     DVec {mut data: move v}
 }
 
 /// Consumes the vector and returns its contents
-pub fn unwrap<A>(d: DVec<A>) -> ~[A] {
+pub pure fn unwrap<A>(d: DVec<A>) -> ~[A] {
     let DVec {data: v} = move d;
     move v
 }
@@ -100,6 +112,9 @@ priv impl<A> DVec<A> {
             self.data = move data;
         }
     }
+
+    #[inline(always)]
+    fn unwrap(self) -> ~[A] { unwrap(self) }
 }
 
 // In theory, most everything should work with any A, but in practice
@@ -350,7 +365,7 @@ impl<A: Copy> DVec<A> {
 
 impl<A:Copy> DVec<A>: Index<uint,A> {
     #[inline(always)]
-    pure fn index(idx: uint) -> A {
+    pure fn index(&self, idx: uint) -> A {
         self.get_elt(idx)
     }
 }

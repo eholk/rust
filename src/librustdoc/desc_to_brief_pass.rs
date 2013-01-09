@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 Pulls a brief description out of a long description.
 
@@ -5,7 +15,15 @@ If the first paragraph of a long description is short enough then it
 is interpreted as the brief description.
 */
 
+use astsrv;
 use doc::ItemUtils;
+use doc;
+use fold::Fold;
+use fold;
+
+use core::str;
+use core::vec;
+use std::par;
 
 pub fn mk_pass() -> Pass {
     {
@@ -18,12 +36,12 @@ fn run(
     _srv: astsrv::Srv,
     +doc: doc::Doc
 ) -> doc::Doc {
-    let fold = fold::Fold({
+    let fold = Fold {
         fold_item: fold_item,
         fold_trait: fold_trait,
         fold_impl: fold_impl,
-        .. *fold::default_any_fold(())
-    });
+        .. fold::default_any_fold(())
+    };
     (fold.fold_doc)(&fold, doc)
 }
 
@@ -82,10 +100,16 @@ fn should_promote_impl_method_desc() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use attr_pass;
+    use doc;
+    use extract;
+
     fn mk_doc(source: ~str) -> doc::Doc {
         do astsrv::from_str(source) |srv| {
             let doc = extract::from_srv(srv, ~"");
-            let doc = attr_pass::mk_pass().f(srv, doc);
+            let doc = (attr_pass::mk_pass().f)(srv, doc);
             run(srv, doc)
         }
     }

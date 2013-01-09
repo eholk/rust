@@ -570,53 +570,29 @@ Semantic rules called "dynamic semantics" govern the behavior of programs at run
 A program that fails to compile due to violation of a compile-time rule has no defined dynamic semantics; the compiler should halt with an error report, and produce no executable artifact.
 
 The compilation model centres on artifacts called _crates_.
-Each compilation processes a single crate in source form, and if successful, produces a single crate in binary form: either an executable or a library.
+Each compilation processes a single crate in source form, and if successful, produces a single crate in binary form: either an executable or a library.^[A crate is somewhat
+analogous to an *assembly* in the ECMA-335 CLI model, a *library* in the
+SML/NJ Compilation Manager, a *unit* in the Owens and Flatt module system,
+or a *configuration* in Mesa.]
 
 A _crate_ is a unit of compilation and linking, as well as versioning, distribution and runtime loading.
 A crate contains a _tree_ of nested [module](#modules) scopes.
 The top level of this tree is a module that is anonymous (from the point of view of paths within the module) and any item within a crate has a canonical [module path](#paths) denoting its location within the crate's module tree.
 
-Crates are provided to the Rust compiler through two kinds of file:
+The Rust compiler is always invoked with a single source file as input, and always produces a single output crate.
+The processing of that source file may result in other source files being loaded as modules.
+Source files typically have the extension `.rs` but, by convention,
+source files that represent crates have the extension `.rc`, called *crate files*.
 
-  - _crate files_, that end in `.rc` and each define a `crate`.
-  - _source files_, that end in `.rs` and each define a `module`.
+A Rust source file describes a module, the name and
+location of which -- in the module tree of the current crate -- are defined
+from outside the source file: either by an explicit `mod_item` in
+a referencing source file, or by the name of the crate ittself.
 
-> **Note:** The functionality of crate files will be merged into source files in future versions of Rust.
-> The separate processing of crate files, both their grammar and file extension, will be removed.
-
-The Rust compiler is always invoked with a single crate file as input, and always produces a single output crate.
-
-When the Rust compiler is invoked with a crate file, it reads the _explicit_
-definition of the crate it's compiling from that file, and populates the
-crate with modules derived from all the source files referenced by the
-crate, reading and processing all the referenced modules at once.
-
-When the Rust compiler is invoked with a source file, it creates an _implicit_ crate and treats the source file as if it is the sole module populating this explicit crate.
-The module name is derived from the source file name, with the `.rs` extension removed.
-
-## Crate files
-
-~~~~~~~~ {.ebnf .gram}
-crate : attribute [ ';' | attribute* directive ]
-      | directive ;
-directive : view_item | dir_directive | source_directive ;
-~~~~~~~~
-
-A crate file contains a crate definition, for which the production above
-defines the grammar. It is a declarative grammar that guides the compiler in
-assembling a crate from component source files.^[A crate is somewhat
-analogous to an *assembly* in the ECMA-335 CLI model, a *library* in the
-SML/NJ Compilation Manager, a *unit* in the Owens and Flatt module system,
-or a *configuration* in Mesa.] A crate file describes:
-
-* [Attributes](#attributes) about the crate, such as author, name, version,
-  and copyright. These are used for linking, versioning and distributing
-  crates.
-* The source-file and directory modules that make up the crate.
-* Any `use` or `extern mod` [view items](#view-items) that apply to
-  the anonymous module at the top-level of the crate's module tree.
-
-An example of a crate file:
+Each source file contains a sequence of zero or more `item` definitions,
+and may optionally begin with any number of `attributes` that apply to the containing module.
+Atributes on the anonymous crate module define important metadata that influences
+the behavior of the compiler.
 
 ~~~~~~~~{.xfail-test}
 // Linkage attributes
@@ -629,39 +605,16 @@ An example of a crate file:
    license = "BSD" ];
    author = "Jane Doe" ];
 
-// Import a module.
-extern mod std (ver = "1.0");
+// Specify the output type
+#[ crate_type = "lib" ];
 
-// Define some modules.
-#[path = "foo.rs"]
-mod foo;
-mod bar {
-    #[path =  "quux.rs"]
-    mod quux;
-}
+// Turn on a warning
+#[ warn(non_camel_case_types) ];
 ~~~~~~~~
 
-### Dir directives
-
-A `dir_directive` forms a module in the module tree making up the crate, as
-well as implicitly relating that module to a directory in the filesystem
-containing source files and/or further subdirectories. The filesystem
-directory associated with a `dir_directive` module can either be explicit,
-or if omitted, is implicitly the same name as the module.
-
-A `source_directive` references a source file, either explicitly or implicitly, by combining the module name with the file extension `.rs`.
-The module contained in that source file is bound to the module path formed by the `dir_directive` modules containing the `source_directive`.
-
-## Source files
-
-A source file contains a `module`: that is, a sequence of zero or more
-`item` definitions. Each source file is an implicit module, the name and
-location of which -- in the module tree of the current crate -- is defined
-from outside the source file: either by an explicit `source_directive` in
-a referencing crate file, or by the filename of the source file itself.
-
-A source file that contains a `main` function can be compiled to an executable.
+A crate that contains a `main` function can be compiled to an executable.
 If a `main` function is present, its return type must be [`unit`](#primitive-types) and it must take no arguments.
+
 
 # Items and attributes
 
@@ -719,7 +672,7 @@ That is, Rust has no notion of type abstraction: there are no first-class "foral
 ### Modules
 
 ~~~~~~~~ {.ebnf .gram}
-mod_item : "mod" ident '{' mod '}' ;
+mod_item : "mod" ident ( ';' | '{' mod '}' );
 mod : [ view_item | item ] * ;
 ~~~~~~~~
 
@@ -752,6 +705,37 @@ mod math {
 }
 ~~~~~~~~
 
+Modules and types share the same namespace.
+Declaring a named type that has the same name as a module in scope is forbidden:
+that is, a type definition, trait, struct, enumeration, or type parameter
+can't shadow the name of a module in scope, or vice versa.
+
+A module without a body is loaded from an external file, by default with the same
+name as the module, plus the `.rs` extension.
+When a nested submodule is loaded from an external file,
+it is loaded from a subdirectory path that mirrors the module hierarchy.
+
+~~~ {.xfail-test}
+// Load the `vec` module from `vec.rs`
+mod vec;
+
+mod task {
+    // Load the `local_data` module from `task/local_data.rs`
+    mod local_data;
+}
+~~~
+
+The directories and files used for loading external file modules can be influenced
+with the `path` attribute.
+
+~~~ {.xfail-test}
+#[path = "task_files"]
+mod task {
+    // Load the `local_data` module from `task_files/tls.rs`
+    #[path = "tls.rs"]
+    mod local_data;
+}
+~~~
 
 #### View items
 
@@ -847,9 +831,25 @@ fn main() {
 
 Like items, `use` declarations are private to the containing module, by default.
 Also like items, a `use` declaration can be public, if qualified by the `pub` keyword.
+Such a `use` declaration serves to _re-export_ a name.
 A public `use` declaration can therefore be used to _redirect_ some public name to a different target definition,
 even a definition with a private canonical path, inside a different module.
 If a sequence of such redirections form a cycle or cannot be unambiguously resolved, they represent a compile-time error.
+
+An example of re-exporting:
+~~~~
+# fn main() { }
+mod quux {
+    pub mod foo {
+        pub fn bar() { }
+        pub fn baz() { }
+    }
+    
+    pub use quux::foo::*;
+}
+~~~~
+
+In this example, the module `quux` re-exports all of the public names defined in `foo`.
 
 ### Functions
 
@@ -875,6 +875,13 @@ fn add(x: int, y: int) -> int {
     return x + y;
 }
 ~~~~
+
+As with `let` bindings, function arguments are irrefutable patterns,
+so any pattern that is valid in a let binding is also valid as an argument.
+
+~~~
+fn first((value, _): (int, int)) -> int { value }
+~~~
 
 
 #### Generic functions
@@ -1072,6 +1079,15 @@ let p = Point {x: 10, y: 11};
 let px: int = p.x;
 ~~~~
 
+A _tuple structure_ is a nominal [tuple type](#tuple-types), also defined with the keyword `struct`.
+For example:
+
+~~~~
+struct Point(int, int);
+let p = Point(10, 11);
+let px: int = match p { Point(x, _) => x };
+~~~~
+
 ### Enumerations
 
 An _enumeration_ is a simultaneous definition of a nominal [enumerated type](#enumerated-types) as well as a set of *constructors*,
@@ -1091,6 +1107,19 @@ let mut a: Animal = Dog;
 a = Cat;
 ~~~~
 
+Enumeration constructors can have either named or unnamed fields:
+~~~~
+enum Animal {
+    Dog (~str, float),
+    Cat { name: ~str, weight: float }
+}
+
+let mut a: Animal = Dog(~"Cocoa", 37.2);
+a = Cat{ name: ~"Spotty", weight: 2.7 };
+~~~~
+
+In this example, `Cat` is a _struct-like enum variant_,
+whereas `Dog` is simply called an enum variant.
 ### Constants
 
 ~~~~~~~~ {.ebnf .gram}
@@ -1131,7 +1160,7 @@ A _trait_ describes a set of method types.
 Traits can include default implementations of methods,
 written in terms of some unknown [`self` type](#self-types);
 the `self` type may either be completely unspecified,
-or constrained by some other [trait type](#trait-types).
+or constrained by some other trait.
 
 Traits are implemented for specific types through separate [implementations](#implementations).
 
@@ -1176,7 +1205,7 @@ fn draw_twice<T: Shape>(surface: Surface, sh: T) {
 }
 ~~~~
 
-Traits also define a [type](#trait-types) with the same name as the trait.
+Traits also define an [object type](#object-types) with the same name as the trait.
 Values of this type are created by [casting](#type-cast-expressions) pointer values
 (pointing to a type for which an implementation of the given trait is in scope)
 to pointers to the trait name, used as a type.
@@ -1195,8 +1224,61 @@ Values with a trait type can have [methods called](#method-call-expressions) on 
 for any method in the trait,
 and can be used to instantiate type parameters that are bounded by the trait.
 
-Trait methods may be static. Currently implementations of static methods behave like
-functions declared in the implentation's module.
+Trait methods may be static,
+which means that they lack a `self` argument.
+This means that they can only be called with function call syntax (`f(x)`)
+and not method call syntax (`obj.f()`).
+The way to refer to the name of a static method is to qualify it with the trait name,
+treating the trait name like a module.
+For example:
+
+~~~~
+trait Num {
+    static pure fn from_int(n: int) -> self;
+}
+impl float: Num {
+    static pure fn from_int(n: int) -> float { n as float }
+}
+let x: float = Num::from_int(42);     
+~~~~
+
+Traits may inherit from other traits. For example, in
+
+~~~~
+trait Shape { fn area() -> float; }
+trait Circle : Shape { fn radius() -> float; }
+~~~~
+
+the syntax `Circle : Shape` means that types that implement `Circle` must also have an implementation for `Shape`.
+Multiple supertraits are separated by spaces, `trait Circle : Shape Eq { }`.
+In an implementation of `Circle` for a given type `T`, methods can refer to `Shape` methods,
+since the typechecker checks that any type with an implementation of `Circle` also has an implementation of `Shape`.
+
+In type-parameterized functions,
+methods of the supertrait may be called on values of subtrait-bound type parameters.
+Refering to the previous example of `trait Circle : Shape`:
+
+~~~
+# trait Shape { fn area() -> float; }
+# trait Circle : Shape { fn radius() -> float; }
+fn radius_times_area<T: Circle>(c: T) -> float {
+    // `c` is both a Circle and a Shape
+    c.radius() * c.area()
+}
+~~~
+
+Likewise, supertrait methods may also be called on trait objects.
+
+~~~ {.xfail-test}
+# trait Shape { fn area() -> float; }
+# trait Circle : Shape { fn radius() -> float; }
+# impl int: Shape { fn area() -> float { 0.0 } }
+# impl int: Circle { fn radius() -> float { 0.0 } }
+# let mycircle = 0;
+
+let mycircle: Circle = @mycircle as @Circle;
+let nonsense = mycircle.radius() * mycircle.area();
+~~~
 
 ### Implementations
 
@@ -1465,6 +1547,14 @@ when evaluated in an _rvalue context_, it denotes the value held _in_ that memor
 When an rvalue is used in lvalue context, a temporary un-named lvalue is created and used instead.
 A temporary's lifetime equals the largest lifetime of any borrowed pointer that points to it.
 
+#### Moved and copied types
+
+When a [local variable](#memory-slots) is used as an [rvalue](#lvalues-rvalues-and-temporaries)
+the variable will either be [moved](#move-expressions) or [copied](#copy-expressions),
+depending on its type.
+For types that contain mutable fields or [owning pointers](#owning-pointers), the variable is moved.
+All other types are copied.
+
 
 ### Literal expressions
 
@@ -1495,6 +1585,53 @@ values.
 ("a", 4u, true);
 ~~~~~~~~
 
+### Structure expressions
+
+~~~~~~~~{.ebnf .gram}
+struct_expr : expr_path '{' ident ':' expr
+                      [ ',' ident ':' expr ] *
+                      [ ".." expr ] '}' |
+              expr_path '(' expr
+                      [ ',' expr ] * ')'
+~~~~~~~~
+
+There are several forms of structure expressions.
+A _structure expression_ consists of the [path](#paths) of a [structure item](#structures),
+followed by a brace-enclosed list of one or more comma-separated name-value pairs,
+providing the field values of a new instance of the structure.
+A field name can be any identifier, and is separated from its value expression by a colon.
+To indicate that a field is mutable, the `mut` keyword is written before its name.
+
+A _tuple structure expression_ constists of the [path](#paths) of a [structure item](#structures),
+followed by a parenthesized list of one or more comma-separated expressions
+(in other words, the path of a structured item followed by a tuple expression).
+The structure item must be a tuple structure item.
+
+The following are examples of structure expressions:
+
+~~~~
+# struct Point { x: float, y: float }
+# struct TuplePoint(float, float);
+# mod game { pub struct User { name: &str, age: uint, mut score: uint } } 
+# use game;
+Point {x: 10f, y: 20f};
+TuplePoint(10f, 20f);
+let u = game::User {name: "Joe", age: 35u, mut score: 100_000};
+~~~~
+
+A structure expression forms a new value of the named structure type.
+
+A structure expression can terminate with the syntax `..` followed by an expression to denote a functional update.
+The expression following `..` (the base) must be of the same structure type as the new structure type being formed.
+A new structure will be created, of the same type as the base expression, with the given values for the fields that were explicitly specified,
+and the values in the base record for all other fields.
+
+~~~~
+# struct Point3d { x: int, y: int, z: int }
+let base = Point3d {x: 1, y: 2, z: 3};
+Point3d {y: 0, z: 10, .. base};
+~~~~
+
 ### Record expressions
 
 ~~~~~~~~{.ebnf .gram}
@@ -1503,9 +1640,11 @@ rec_expr : '{' ident ':' expr
                [ ".." expr ] '}'
 ~~~~~~~~
 
+> **Note:** In future versions of Rust, record expressions and [record types](#record-types) will be removed.
+
 A [_record_](#record-types) _expression_ is one or more comma-separated
-name-value pairs enclosed by braces. A fieldname can be any identifier
-(including keywords), and is separated from its value expression by a
+name-value pairs enclosed by braces. A fieldname can be any identifier,
+and is separated from its value expression by a
 colon. To indicate that a field is mutable, the `mut` keyword is
 written before its name.
 
@@ -1542,7 +1681,7 @@ method_call_expr : expr '.' ident paren_expr_list ;
 A _method call_ consists of an expression followed by a single dot, an identifier, and a parenthesized expression-list.
 Method calls are resolved to methods on specific traits,
 either statically dispatching to a method if the exact `self`-type of the left-hand-side is known,
-or dynamically dispatching if the left-hand-side expression is an indirect [trait type](#trait-types).
+or dynamically dispatching if the left-hand-side expression is an indirect [object type](#object-types).
 
 
 ### Field expressions
@@ -1787,7 +1926,7 @@ y.z <-> b.c;
 An _assignment expression_ consists of an [lvalue](#lvalues-rvalues-and-temporaries) expression followed by an
 equals sign (`=`) and an [rvalue](#lvalues-rvalues-and-temporaries) expression.
 
-Evaluating an assignment expression copies the expression on the right-hand side and stores it in the location on the left-hand side.
+Evaluating an assignment expression [either copies or moves](#moved-and-copied-types) its right-hand operand to its left-hand operand.
 
 ~~~~
 # let mut x = 0;
@@ -1860,7 +1999,7 @@ copy.
 as are raw and borrowed pointers.
 [Owned boxes](#pointer-types), [owned vectors](#vector-types) and similar owned types are deep-copied.
 
-Since the binary [assignment operator](#assignment-expressions) `=` performs a copy implicitly,
+Since the binary [assignment operator](#assignment-expressions) `=` performs a copy or move implicitly,
 the unary copy operator is typically only used to cause an argument to a function to be copied and passed by value.
 
 An example of a copy expression:
@@ -1884,11 +2023,15 @@ move_expr : "move" expr ;
 ~~~~~~~~
 
 A _unary move expression_ is similar to a [unary copy](#unary-copy-expressions) expression,
-except that it can only be applied to an [lvalue](#lvalues-rvalues-and-temporaries),
+except that it can only be applied to a [local variable](#memory-slots),
 and it performs a _move_ on its operand, rather than a copy.
 That is, the memory location denoted by its operand is de-initialized after evaluation,
 and the resulting value is a shallow copy of the operand,
 even if the operand is an [owning type](#type-kinds).
+
+
+> **Note:** In future versions of Rust, `move` may be removed as a separate operator;
+> moves are now [automatically performed](#moved-and-copied-types) for most cases `move` would be appropriate.
 
 
 ### Call expressions
@@ -2201,7 +2344,7 @@ then a placeholder (`_`) represents the remaining fields.
 # type options = {choose: bool, size: ~str};
 # type player = {player: ~str, stats: (), options: options};
 # fn load_stats() { }
-# fn choose_player(r: player) { }
+# fn choose_player(r: &player) { }
 # fn next_player() { }
 
 fn main() {
@@ -2216,10 +2359,10 @@ fn main() {
 
     match r {
       {options: {choose: true, _}, _} => {
-        choose_player(r)
+        choose_player(&r)
       }
-      {player: p, options: {size: ~"small", _}, _} => {
-        log(info, p + ~" is small");
+      {player: ref p, options: {size: ~"small", _}, _} => {
+        log(info, (copy *p) + ~" is small");
       }
       _ => {
         next_player();
@@ -2244,8 +2387,9 @@ The compiler interprets a variable pattern `x` as a binding _only_ if there is n
 A convention you can use to avoid conflicts is simply to name variants with upper-case letters,
 and local variables with lower-case letters.
 
-Multiple match patterns may be joined with the `|` operator.  A
-range of values may be specified with `..`. For example:
+Multiple match patterns may be joined with the `|` operator.
+A range of values may be specified with `..`.
+For example:
 
 ~~~~
 # let x = 2;
@@ -2256,6 +2400,10 @@ let message = match x {
   _      => "lots"
 };
 ~~~~
+
+Range patterns only work on scalar types
+(like integers and characters; not like vectors and structs, which have sub-components).
+A range pattern may not be a sub-range of another range pattern inside the same `match`.
 
 Finally, match patterns can accept *pattern guards* to further refine the
 criteria for matching a case. Pattern guards appear after the pattern and
@@ -2515,6 +2663,7 @@ the resulting `struct` value will always be laid out in memory in the order spec
 The fields of a `struct` may be qualified by [visibility modifiers](#visibility-modifiers),
 to restrict access to implementation-private data in a structure.
 
+A `tuple struct` type is just like a structure type, except that the fields are anonymous.
 
 ### Enumerated types
 
@@ -2651,10 +2800,21 @@ let bo: Binop = add;
 x = bo(5,7);
 ~~~~~~~~
 
-### Trait types
+### Object types
 
-Every trait item (see [traits](#traits)) defines a type with the same name
-as the trait. For a trait `T`, cast expressions introduce values of type `T`:
+Every trait item (see [traits](#traits)) defines a type with the same name as the trait.
+This type is called the _object type_ of the trait.
+Object types permit "late binding" of methods, dispatched using _virtual method tables_ ("vtables").
+Whereas most calls to trait methods are "early bound" (statically resolved) to specific implementations at compile time,
+a call to a method on an object type is only resolved to a vtable entry at compile time.
+The actual implementation for each vtable entry can vary on an object-by-object basis.
+
+Given a pointer-typed expression `E` of type `&T`, `~T` or `@T`, where `T` implements trait `R`,
+casting `E` to the corresponding pointer type `&R`, `~R` or `@R` results in a value of the _object type_ `R`.
+This result is represented as a pair of pointers:
+the vtable pointer for the `T` implementation of `R`, and the pointer value of `E`.
+
+An example of an object type:
 
 ~~~~~~~~
 trait Printable {
@@ -2674,8 +2834,8 @@ fn main() {
 }
 ~~~~~~~~
 
-In this example, the trait `Printable` occurs as a type in both the type signature of
-`print`, and the cast expression in `main`.
+In this example, the trait `Printable` occurs as an object type in both the type signature of `print`,
+and the cast expression in `main`.
 
 ### Type parameters
 
@@ -2699,18 +2859,18 @@ The special type `self` has a meaning within methods inside an
 impl item. It refers to the type of the implicit `self` argument. For
 example, in:
 
-~~~~~~
+~~~~~~~~
 trait Printable {
-  fn to_str() -> ~str;
+  fn make_string() -> ~str;
 }
 
 impl ~str: Printable {
-  fn to_str() -> ~str { self }
+  fn make_string() -> ~str { copy self }
 }
-~~~~~~
+~~~~~~~~
 
 `self` refers to the value of type `~str` that is the receiver for a
-call to the method `to_str`.
+call to the method `make_string`.
 
 ## Type kinds
 
@@ -2720,17 +2880,28 @@ The kinds are:
 `Const`
   : Types of this kind are deeply immutable;
     they contain no mutable memory locations directly or indirectly via pointers.
-`Send`
+`Owned`
   : Types of this kind can be safely sent between tasks.
     This kind includes scalars, owning pointers, owned closures, and
-    structural types containing only other sendable types.
-`Owned`
+    structural types containing only other owned types. All `Owned` types are `Static`.
+`Static`
   : Types of this kind do not contain any borrowed pointers;
     this can be a useful guarantee for code that breaks borrowing assumptions using [`unsafe` operations](#unsafe-functions).
 `Copy`
   : This kind includes all types that can be copied. All types with
     sendable kind are copyable, as are managed boxes, managed closures,
     trait types, and structural types built out of these.
+    Types with destructors (types that implement `Drop`) can not implement `Copy`.
+`Drop`
+  : This is not strictly a kind, but its presence interacts with kinds: the `Drop`
+    trait provides a single method `finalize` that takes no parameters, and is run
+    when values of the type are dropped. Such a method is called a "destructor",
+    and are always executed in "top-down" order: a value is completely destroyed
+    before any of the values it owns run their destructors. Only `Owned` types
+    that do not implement `Copy` can implement `Drop`.
+
+> **Note:** The `finalize` method may be renamed in future versions of Rust.
+
 _Default_
   : Types with destructors, closure environments,
     and various other _non-first-class_ types,
@@ -2812,10 +2983,10 @@ frame they are allocated within.
 A task owns all memory it can *safely* reach through local variables,
 as well as managed, owning and borrowed pointers.
 
-When a task sends a value that has the `Send` trait to another task,
+When a task sends a value that has the `Owned` trait to another task,
 it loses ownership of the value sent and can no longer refer to it.
 This is statically guaranteed by the combined use of "move semantics",
-and the compiler-checked _meaning_ of the `Send` trait:
+and the compiler-checked _meaning_ of the `Owned` trait:
 it is only instantiated for (transitively) sendable kinds of data constructor and pointers,
 never including managed or borrowed pointers.
 
@@ -2950,7 +3121,7 @@ These include:
   - read-only and read-write shared variables with various safe mutual exclusion patterns
   - simple locks and semaphores
 
-When such facilities carry values, the values are restricted to the [`Send` type-kind](#type-kinds).
+When such facilities carry values, the values are restricted to the [`Owned` type-kind](#type-kinds).
 Restricting communication interfaces to this kind ensures that no borrowed or managed pointers move between tasks.
 Thus access to an entire data structure can be mediated through its owning "root" value;
 no further locking or copying is required to avoid data races within the substructure of such a value.
@@ -3009,67 +3180,6 @@ preemption point, and another task within is scheduled, pseudo-randomly.
 An executing task can yield control at any time, by making a library call to
 `core::task::yield`, which deschedules it immediately. Entering any other
 non-executing state (blocked, dead) similarly deschedules the task.
-
-
-### Spawning tasks
-
-A call to `core::task::spawn`, passing a 0-argument function as its single
-argument, causes the runtime to construct a new task executing the passed
-function. The passed function is referred to as the _entry function_ for
-the spawned task, and any captured environment it carries is moved from the
-spawning task to the spawned task before the spawned task begins execution.
-
-The result of a `spawn` call is a `core::task::Task` value.
-
-An example of a `spawn` call:
-
-~~~~
-let po = comm::Port();
-let ch = comm::Chan(&po);
-
-do task::spawn {
-    // let task run, do other things
-    ...
-    comm::send(ch, true);
-};
-
-let result = comm::recv(po);
-~~~~
-
-
-### Sending values into channels
-
-Sending a value into a channel is done by a library call to `core::comm::send`,
-which takes a channel and a value to send, and moves the value into the
-channel's outgoing buffer.
-
-An example of a send:
-
-~~~~
-let po = comm::Port();
-let ch = comm::Chan(&po);
-comm::send(ch, ~"hello, world");
-~~~~
-
-
-### Receiving values from ports
-
-Receiving a value is done by a call to the `recv` method on a value of type
-`core::comm::Port`. This call causes the receiving task to enter the *blocked
-reading* state until a value arrives in the port's receive queue, at which
-time the port deques a value to return, and un-blocks the receiving task.
-
-An example of a *receive*:
-
-~~~~~~~~
-# let po = comm::Port();
-# let ch = comm::Chan(&po);
-# comm::send(ch, ~"");
-let s = comm::recv(po);
-~~~~~~~~
-
-> **Note:** this communication system will be replaced by a higher-performance system called "pipes",
-> in future versions of Rust.
 
 
 # Runtime services, linkage and debugging
@@ -3148,12 +3258,12 @@ crate name the crate is given a default name that matches the source file,
 with the extension removed. In that case, to turn on logging for a program
 compiled from, e.g. `helloworld.rs`, `RUST_LOG` should be set to `helloworld`.
 
-As a convenience, the logging spec can also be set to a special psuedo-crate,
+As a convenience, the logging spec can also be set to a special pseudo-crate,
 `::help`. In this case, when the application starts, the runtime will
 simply output a list of loaded modules containing log expressions, then exit.
 
 The Rust runtime itself generates logging information. The runtime's logs are
-generated for a number of artificial modules in the `::rt` psuedo-crate,
+generated for a number of artificial modules in the `::rt` pseudo-crate,
 and can be enabled just like the logs for any standard module. The full list
 of runtime logging modules follows.
 
@@ -3231,7 +3341,7 @@ have come and gone during the course of Rust's development:
 
 * The Newsqueak (1988), Alef (1995), and Limbo (1996) family. These
   languages were developed by Rob Pike, Phil Winterbottom, Sean Dorward and
-  others in their group at Bell labs Computing Sciences Research Center
+  others in their group at Bell Labs Computing Sciences Research Center
   (Murray Hill, NJ, USA).
 
 * The Napier (1985) and Napier88 (1988) family. These languages were

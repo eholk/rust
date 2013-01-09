@@ -1,7 +1,23 @@
-use combine::combine;
-use integral::*;
-use floating::*;
-use to_str::ToStr;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::ty;
+use middle::typeck::infer::combine::combine;
+use middle::typeck::infer::floating::*;
+use middle::typeck::infer::floating;
+use middle::typeck::infer::integral::*;
+use middle::typeck::infer::integral;
+use middle::typeck::infer::to_str::ToStr;
+
+use core::result;
 use std::smallintmap::SmallIntMap;
 
 enum var_value<V:Copy, T:Copy> {
@@ -29,18 +45,18 @@ impl infer_ctxt {
           None => {
             self.tcx.sess.bug(fmt!("failed lookup of vid `%u`", vid_u));
           }
-          Some(var_val) => {
-            match var_val {
-              redirect(vid) => {
-                let node = self.get(vb, vid);
-                if node.root != vid {
+          Some(ref var_val) => {
+            match (*var_val) {
+              redirect(ref vid) => {
+                let node = self.get(vb, (*vid));
+                if node.root.ne(vid) {
                     // Path compression
-                    vb.vals.insert(vid.to_uint(), redirect(node.root));
+                    vb.vals.insert((*vid).to_uint(), redirect(node.root));
                 }
                 node
               }
-              root(pt, rk) => {
-                node {root: vid, possible_types: pt, rank: rk}
+              root(ref pt, rk) => {
+                node {root: vid, possible_types: (*pt), rank: rk}
               }
             }
           }
@@ -351,6 +367,10 @@ impl infer_ctxt {
     }
 
     fn int_var_sub_t(a_id: ty::IntVid, b: ty::t) -> ures {
+        if ty::type_is_char(b) {
+            return Err(ty::terr_integer_as_char);
+        }
+
         assert ty::type_is_integral(b);
 
         let vb = &self.int_var_bindings;

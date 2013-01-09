@@ -1,5 +1,23 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Types/fns concerning Internet Protocol (IP), versions 4 & 6
 #[forbid(deprecated_mode)];
+
+use core::libc;
+use core::oldcomm;
+use core::ptr;
+use core::result;
+use core::str;
+use core::uint;
+use core::vec;
 
 use iotask = uv::iotask::IoTask;
 use interact = uv::iotask::interact;
@@ -20,7 +38,6 @@ use create_uv_getaddrinfo_t = uv::ll::getaddrinfo_t;
 use set_data_for_req = uv::ll::set_data_for_req;
 use get_data_for_req = uv::ll::get_data_for_req;
 use ll = uv::ll;
-use comm = core::comm;
 
 /// An IP address
 pub enum IpAddr {
@@ -98,7 +115,7 @@ enum IpGetAddrErr {
  */
 pub fn get_addr(node: &str, iotask: iotask)
         -> result::Result<~[IpAddr], IpGetAddrErr> {
-    do core::comm::listen |output_ch| {
+    do oldcomm::listen |output_ch| {
         do str::as_buf(node) |node_ptr, len| unsafe {
             log(debug, fmt!("slice len %?", len));
             let handle = create_uv_getaddrinfo_t();
@@ -130,6 +147,14 @@ pub fn get_addr(node: &str, iotask: iotask)
 }
 
 pub mod v4 {
+    use uv::ll;
+
+    use core::ptr;
+    use core::result;
+    use core::str;
+    use core::uint;
+    use core::vec;
+
     /**
      * Convert a str to `ip_addr`
      *
@@ -216,6 +241,9 @@ pub mod v4 {
     }
 }
 pub mod v6 {
+    use core::result;
+    use core::str;
+
     /**
      * Convert a str to `ip_addr`
      *
@@ -258,7 +286,7 @@ pub mod v6 {
 }
 
 type GetAddrData = {
-    output_ch: comm::Chan<result::Result<~[IpAddr],IpGetAddrErr>>
+    output_ch: oldcomm::Chan<result::Result<~[IpAddr],IpGetAddrErr>>
 };
 
 extern fn get_addr_cb(handle: *uv_getaddrinfo_t, status: libc::c_int,
@@ -322,6 +350,13 @@ extern fn get_addr_cb(handle: *uv_getaddrinfo_t, status: libc::c_int,
 
 #[cfg(test)]
 mod test {
+    use net_ip::v4;
+    use net_ip::v6;
+    use uv;
+
+    use core::result;
+    use core::vec;
+
     #[test]
     fn test_ip_ipv4_parse_and_format_ip() {
         let localhost_str = ~"127.0.0.1";

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 Runtime type reflection
@@ -9,6 +19,8 @@ Runtime type reflection
 
 use intrinsic::{TyDesc, get_tydesc, visit_tydesc, TyVisitor};
 use libc::c_void;
+use sys;
+use vec;
 
 /**
  * Trait for visitor that wishes to reflect on data. To use this, create a
@@ -18,16 +30,18 @@ use libc::c_void;
  */
 pub trait MovePtr {
     fn move_ptr(adjustment: fn(*c_void) -> *c_void);
+    fn push_ptr();
+    fn pop_ptr();
 }
 
 /// Helper function for alignment calculation.
 #[inline(always)]
-fn align(size: uint, align: uint) -> uint {
+pub fn align(size: uint, align: uint) -> uint {
     ((size + align) - 1u) & !(align - 1u)
 }
 
 /// Adaptor to wrap around visitors implementing MovePtr.
-struct MovePtrAdaptor<V: TyVisitor MovePtr> {
+pub struct MovePtrAdaptor<V: TyVisitor MovePtr> {
     inner: V
 }
 pub fn MovePtrAdaptor<V: TyVisitor MovePtr>(v: V) -> MovePtrAdaptor<V> {
@@ -392,6 +406,7 @@ impl<V: TyVisitor MovePtr> MovePtrAdaptor<V>: TyVisitor {
                                 disr_val: int,
                                 n_fields: uint,
                                 name: &str) -> bool {
+        self.inner.push_ptr();
         if ! self.inner.visit_enter_enum_variant(variant, disr_val,
                                                  n_fields, name) {
             return false;
@@ -400,7 +415,9 @@ impl<V: TyVisitor MovePtr> MovePtrAdaptor<V>: TyVisitor {
     }
 
     fn visit_enum_variant_field(i: uint, inner: *TyDesc) -> bool {
+        unsafe { self.align((*inner).align); }
         if ! self.inner.visit_enum_variant_field(i, inner) { return false; }
+        unsafe { self.bump((*inner).size); }
         true
     }
 
@@ -412,6 +429,7 @@ impl<V: TyVisitor MovePtr> MovePtrAdaptor<V>: TyVisitor {
                                                  n_fields, name) {
             return false;
         }
+        self.inner.pop_ptr();
         true
     }
 
@@ -419,6 +437,7 @@ impl<V: TyVisitor MovePtr> MovePtrAdaptor<V>: TyVisitor {
         if ! self.inner.visit_leave_enum(n_variants, sz, align) {
             return false;
         }
+        self.bump(sz);
         true
     }
 

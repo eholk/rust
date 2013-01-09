@@ -1,12 +1,34 @@
-use syntax::{visit, ast_util};
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::freevars::freevar_entry;
+use middle::freevars;
+use middle::lint::{non_implicitly_copyable_typarams, implicit_copies};
+use middle::liveness;
+use middle::pat_util;
+use middle::ty::{CopyValue, MoveValue, ReadValue};
+use middle::ty::{Kind, kind_copyable, kind_noncopyable, kind_const};
+use middle::ty;
+use middle::typeck;
+use middle;
+use util::ppaux::{ty_to_str, tys_to_str};
+
+use core::option;
+use core::str;
+use core::vec;
+use std::map::HashMap;
 use syntax::ast::*;
 use syntax::codemap::span;
-use middle::ty::{Kind, kind_copyable, kind_noncopyable, kind_const};
-use std::map::HashMap;
-use util::ppaux::{ty_to_str, tys_to_str};
 use syntax::print::pprust::expr_to_str;
-use freevars::freevar_entry;
-use lint::{non_implicitly_copyable_typarams,implicit_copies};
+use syntax::{visit, ast_util};
 
 // Kind analysis pass.
 //
@@ -51,15 +73,15 @@ fn kind_to_str(k: Kind) -> ~str {
     }
 
     if ty::kind_can_be_sent(k) {
-        kinds.push(~"send");
-    } else if ty::kind_is_owned(k) {
         kinds.push(~"owned");
+    } else if ty::kind_is_durable(k) {
+        kinds.push(~"durable");
     }
 
     str::connect(kinds, ~" ")
 }
 
-type rval_map = std::map::HashMap<node_id, ()>;
+type rval_map = HashMap<node_id, ()>;
 
 type ctx = {tcx: ty::ctxt,
             method_map: typeck::method_map,
@@ -124,7 +146,7 @@ fn with_appropriate_checker(cx: ctx, id: node_id, b: fn(check_fn)) {
     fn check_for_box(cx: ctx, id: node_id, fv: Option<@freevar_entry>,
                      is_move: bool, var_t: ty::t, sp: span) {
         // all captured data must be owned
-        if !check_owned(cx.tcx, var_t, sp) { return; }
+        if !check_durable(cx.tcx, var_t, sp) { return; }
 
         // copied in data must be copyable, but moved in data can be anything
         let is_implicit = fv.is_some();
@@ -189,7 +211,6 @@ fn check_fn(fk: visit::fn_kind, decl: fn_decl, body: blk, sp: span,
             let cap_def = cx.tcx.def_map.get(cap_item.id);
             let cap_def_id = ast_util::def_id_of_def(cap_def).node;
             let ty = ty::node_id_to_type(cx.tcx, cap_def_id);
-            // Here's where is_move isn't always false...
             chk(cx, fn_id, None, cap_item.is_move, ty, cap_item.span);
             cap_def_id
         };
@@ -203,9 +224,12 @@ fn check_fn(fk: visit::fn_kind, decl: fn_decl, body: blk, sp: span,
             if captured_vars.contains(&id) { loop; }
 
             let ty = ty::node_id_to_type(cx.tcx, id);
-            // is_move is always false here. See the let captured_vars...
-            // code above for where it's not always false.
-            chk(cx, fn_id, Some(*fv), false, ty, fv.span);
+
+            // is_move is true if this type implicitly moves and false
+            // otherwise.
+            let is_move = ty::type_implicitly_moves(cx.tcx, ty);
+
+            chk(cx, fn_id, Some(*fv), is_move, ty, fv.span);
         }
     }
 
@@ -239,7 +263,7 @@ fn check_expr(e: @expr, cx: ctx, v: visit::vt<ctx>) {
     debug!("kind::check_expr(%s)", expr_to_str(e, cx.tcx.sess.intr()));
     let id_to_use = match e.node {
         expr_index(*)|expr_assign_op(*)|
-        expr_unary(*)|expr_binary(*) => e.callee_id,
+        expr_unary(*)|expr_binary(*)|expr_method_call(*) => e.callee_id,
         _ => e.id
     };
 
@@ -273,7 +297,7 @@ fn check_expr(e: @expr, cx: ctx, v: visit::vt<ctx>) {
         }
     }
 
-    match e.node {
+    match /*bad*/copy e.node {
       expr_assign(_, ex) |
       expr_unary(box(_), ex) | expr_unary(uniq(_), ex) |
       expr_ret(Some(ex)) => {
@@ -298,23 +322,23 @@ fn check_expr(e: @expr, cx: ctx, v: visit::vt<ctx>) {
         check_copy_ex(cx, ls, false, reason);
         check_copy_ex(cx, rs, false, reason);
       }
-      expr_rec(fields, def) | expr_struct(_, fields, def) => {
-        for fields.each |field| { maybe_copy(cx, field.node.expr,
+      expr_rec(ref fields, def) | expr_struct(_, ref fields, def) => {
+        for (*fields).each |field| { maybe_copy(cx, field.node.expr,
                                    Some(("record or struct fields require \
                                           copyable arguments", ""))); }
         match def {
           Some(ex) => {
             // All noncopyable fields must be overridden
             let t = ty::expr_ty(cx.tcx, ex);
-            let ty_fields = match ty::get(t).sty {
+            let ty_fields = match /*bad*/copy ty::get(t).sty {
               ty::ty_rec(f) => f,
-              ty::ty_class(did, substs) =>
-                  ty::class_items_as_fields(cx.tcx, did, &substs),
+              ty::ty_struct(did, ref substs) =>
+                  ty::struct_fields(cx.tcx, did, &(*substs)),
               _ => cx.tcx.sess.span_bug(ex.span,
                                         ~"bad base expr type in record")
             };
             for ty_fields.each |tf| {
-                if !vec::any(fields, |f| f.node.ident == tf.ident ) &&
+                if !vec::any((*fields), |f| f.node.ident == tf.ident ) &&
                     !ty::kind_can_be_copied(ty::type_kind(cx.tcx, tf.mt.ty)) {
                     cx.tcx.sess.span_err(e.span,
                                          ~"copying a noncopyable value");
@@ -335,6 +359,18 @@ fn check_expr(e: @expr, cx: ctx, v: visit::vt<ctx>) {
                      Some(("function arguments must be copyable",
                            "try changing the function to take a reference \
                             instead"))),
+              by_ref | by_val | by_move => ()
+            }
+        }
+      }
+      expr_method_call(_, _, _, args, _) => {
+        for ty::ty_fn_args(ty::node_id_to_type(cx.tcx, e.callee_id)).eachi
+                |i, arg_t| {
+            match ty::arg_mode(cx.tcx, *arg_t) {
+              by_copy => maybe_copy(cx, args[i],
+                     Some(("function arguments must be copyable",
+                           "try changing the function to take a \
+                            reference instead"))),
               by_ref | by_val | by_move => ()
             }
         }
@@ -372,7 +408,7 @@ fn check_expr(e: @expr, cx: ctx, v: visit::vt<ctx>) {
 
 fn check_stmt(stmt: @stmt, cx: ctx, v: visit::vt<ctx>) {
     match stmt.node {
-      stmt_decl(@{node: decl_local(locals), _}, _) => {
+      stmt_decl(@{node: decl_local(ref locals), _}, _) => {
         for locals.each |local| {
             match local.node.init {
               Some(expr) =>
@@ -458,8 +494,16 @@ fn check_copy_ex(cx: ctx, ex: @expr, implicit_copy: bool,
         // borrowed unique value isn't really a copy
         !is_autorefd(cx, ex)
     {
-        let ty = ty::expr_ty(cx.tcx, ex);
-        check_copy(cx, ex.id, ty, ex.span, implicit_copy, why);
+        match cx.tcx.value_modes.find(ex.id) {
+            None => cx.tcx.sess.span_bug(ex.span, ~"no value mode for lval"),
+            Some(MoveValue) | Some(ReadValue) => {} // Won't be a copy.
+            Some(CopyValue) => {
+                debug!("(kind checking) is a copy value: `%s`",
+                       expr_to_str(ex, cx.tcx.sess.intr()));
+                let ty = ty::expr_ty(cx.tcx, ex);
+                check_copy(cx, ex.id, ty, ex.span, implicit_copy, why);
+            }
+        }
     }
 
     fn is_autorefd(cx: ctx, ex: @expr) -> bool {
@@ -521,12 +565,12 @@ fn check_send(cx: ctx, ty: ty::t, sp: span) -> bool {
 }
 
 // note: also used from middle::typeck::regionck!
-fn check_owned(tcx: ty::ctxt, ty: ty::t, sp: span) -> bool {
-    if !ty::kind_is_owned(ty::type_kind(tcx, ty)) {
+fn check_durable(tcx: ty::ctxt, ty: ty::t, sp: span) -> bool {
+    if !ty::kind_is_durable(ty::type_kind(tcx, ty)) {
         match ty::get(ty).sty {
           ty::ty_param(*) => {
             tcx.sess.span_err(sp, ~"value may contain borrowed \
-                                    pointers; use `owned` bound");
+                                    pointers; use `durable` bound");
           }
           _ => {
             tcx.sess.span_err(sp, ~"value may contain borrowed \
@@ -571,7 +615,7 @@ fn check_cast_for_escaping_regions(
     // worries.
     let target_ty = ty::expr_ty(cx.tcx, target);
     let target_substs = match ty::get(target_ty).sty {
-      ty::ty_trait(_, substs, _) => {substs}
+      ty::ty_trait(_, ref substs, _) => {(/*bad*/copy *substs)}
       _ => { return; /* not a cast to a trait */ }
     };
 
@@ -598,7 +642,7 @@ fn check_cast_for_escaping_regions(
             if target_params.contains(&source_param) {
                 /* case (2) */
             } else {
-                check_owned(cx.tcx, ty, source.span); /* case (3) */
+                check_durable(cx.tcx, ty, source.span); /* case (3) */
             }
           }
           _ => {}

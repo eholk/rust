@@ -1,3 +1,13 @@
+# Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+# file at the top-level directory of this distribution and at
+# http://rust-lang.org/COPYRIGHT.
+#
+# Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+# http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+# <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+# option. This file may not be copied, modified, or distributed
+# except according to those terms.
+
 ######################################################################
 # Cleanup
 ######################################################################
@@ -39,7 +49,7 @@ clean-misc:
 	$(Q)rm -Rf $(DOCS)
 	$(Q)rm -Rf $(GENERATED)
 	$(Q)rm -f tmp/*.log tmp/*.rc tmp/*.rs
-	$(Q)rm -Rf $(PKG_NAME)-*.tar.gz dist
+	$(Q)rm -Rf rust-stage0-*.tar.bz2 $(PKG_NAME)-*.tar.gz dist
 	$(Q)rm -Rf $(foreach ext, \
                  html aux cp fn ky log pdf pg toc tp vr cps, \
                  $(wildcard doc/*.$(ext) \
@@ -110,6 +120,8 @@ clean$(1)_T_$(2)_H_$(3):
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/$(CFG_RUSTLLVM)
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/libstd.rlib
 	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/libmorestack.a
+	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/librun_pass_stage* # For unix
+	$(Q)rm -f $$(TLIB$(1)_T_$(2)_H_$(3))/run_pass_stage* # For windows
 endef
 
 $(foreach host, $(CFG_TARGET_TRIPLES), \

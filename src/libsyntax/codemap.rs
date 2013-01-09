@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 The CodeMap tracks all the source code used within a single crate, mapping
@@ -11,11 +21,15 @@ source code snippets, etc.
 
 */
 
-use dvec::DVec;
-use std::serialization::{Serializable,
-                         Deserializable,
-                         Serializer,
-                         Deserializer};
+use ast_util;
+
+use core::cmp;
+use core::dvec::DVec;
+use core::str;
+use core::to_bytes;
+use core::uint;
+use core::vec;
+use std::serialize::{Encodable, Decodable, Encoder, Decoder};
 
 trait Pos {
     static pure fn from_uint(n: uint) -> self;
@@ -49,38 +63,18 @@ impl BytePos: cmp::Ord {
     pure fn gt(&self, other: &BytePos) -> bool { **self > **other }
 }
 
-impl BytePos: Num {
-    pure fn add(other: &BytePos) -> BytePos {
-        BytePos(*self + **other)
-    }
-    pure fn sub(other: &BytePos) -> BytePos {
-        BytePos(*self - **other)
-    }
-    pure fn mul(other: &BytePos) -> BytePos {
-        BytePos(*self * (**other))
-    }
-    pure fn div(other: &BytePos) -> BytePos {
-        BytePos(*self / **other)
-    }
-    pure fn modulo(other: &BytePos) -> BytePos {
-        BytePos(*self % **other)
-    }
-    pure fn neg() -> BytePos {
-        BytePos(-*self)
-    }
-    pure fn to_int() -> int { *self as int }
-    static pure fn from_int(+n: int) -> BytePos { BytePos(n as uint) }
-}
-
-#[cfg(stage0)]
-impl BytePos: to_bytes::IterBytes {
-    pure fn iter_bytes(+lsb0: bool, f: to_bytes::Cb) {
-        (*self).iter_bytes(lsb0, f)
+impl BytePos: Add<BytePos, BytePos> {
+    pure fn add(&self, rhs: &BytePos) -> BytePos {
+        BytePos(**self + **rhs)
     }
 }
 
-#[cfg(stage1)]
-#[cfg(stage2)]
+impl BytePos: Sub<BytePos, BytePos> {
+    pure fn sub(&self, rhs: &BytePos) -> BytePos {
+        BytePos(**self - **rhs)
+    }
+}
+
 impl BytePos: to_bytes::IterBytes {
     pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
         (**self).iter_bytes(lsb0, f)
@@ -104,40 +98,21 @@ impl CharPos: cmp::Ord {
     pure fn gt(&self, other: &CharPos) -> bool { **self > **other }
 }
 
-impl CharPos: Num {
-    pure fn add(other: &CharPos) -> CharPos {
-        CharPos(*self + **other)
-    }
-    pure fn sub(other: &CharPos) -> CharPos {
-        CharPos(*self - **other)
-    }
-    pure fn mul(other: &CharPos) -> CharPos {
-        CharPos(*self * (**other))
-    }
-    pure fn div(other: &CharPos) -> CharPos {
-        CharPos(*self / **other)
-    }
-    pure fn modulo(other: &CharPos) -> CharPos {
-        CharPos(*self % **other)
-    }
-    pure fn neg() -> CharPos {
-        CharPos(-*self)
-    }
-    pure fn to_int() -> int { *self as int }
-    static pure fn from_int(+n: int) -> CharPos { CharPos(n as uint) }
-}
-
-#[cfg(stage0)]
-impl CharPos: to_bytes::IterBytes {
-    pure fn iter_bytes(+lsb0: bool, f: to_bytes::Cb) {
-        (*self).iter_bytes(lsb0, f)
-    }
-}
-#[cfg(stage1)]
-#[cfg(stage2)]
 impl CharPos: to_bytes::IterBytes {
     pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
         (**self).iter_bytes(lsb0, f)
+    }
+}
+
+impl CharPos: Add<CharPos, CharPos> {
+    pure fn add(&self, rhs: &CharPos) -> CharPos {
+        CharPos(**self + **rhs)
+    }
+}
+
+impl CharPos: Sub<CharPos, CharPos> {
+    pure fn sub(&self, rhs: &CharPos) -> CharPos {
+        CharPos(**self - **rhs)
     }
 }
 
@@ -160,13 +135,13 @@ impl span : cmp::Eq {
     pure fn ne(&self, other: &span) -> bool { !(*self).eq(other) }
 }
 
-impl<S: Serializer> span: Serializable<S> {
-    /* Note #1972 -- spans are serialized but not deserialized */
-    fn serialize(&self, _s: &S) { }
+impl<S: Encoder> span: Encodable<S> {
+    /* Note #1972 -- spans are encoded but not decoded */
+    fn encode(&self, _s: &S) { }
 }
 
-impl<D: Deserializer> span: Deserializable<D> {
-    static fn deserialize(_d: &D) -> span {
+impl<D: Decoder> span: Decodable<D> {
+    static fn decode(_d: &D) -> span {
         ast_util::dummy_sp()
     }
 }
@@ -315,10 +290,10 @@ pub impl CodeMap {
                 self.lookup_char_pos_adj(
                     sp.lo + (pos - loc.file.start_pos))
             }
-            FssExternal(eloc) => {
-                {filename: /* FIXME (#2543) */ copy eloc.filename,
-                 line: eloc.line + loc.line - 1u,
-                 col: if loc.line == 1u {eloc.col + loc.col} else {loc.col},
+            FssExternal(ref eloc) => {
+                {filename: /* FIXME (#2543) */ copy (*eloc).filename,
+                 line: (*eloc).line + loc.line - 1u,
+                 col: if loc.line == 1 {eloc.col + loc.col} else {loc.col},
                  file: None}
             }
         }

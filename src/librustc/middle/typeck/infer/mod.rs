@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 # Type inference engine
@@ -249,40 +259,42 @@ section on "Type Combining" below for details.
 #[warn(deprecated_mode)];
 #[warn(deprecated_pattern)];
 
-use std::smallintmap;
-use std::smallintmap::smallintmap;
-use std::map::HashMap;
+use middle::ty::{TyVid, IntVid, FloatVid, RegionVid, vid};
+use middle::ty::{mk_fn, type_is_bot};
+use middle::ty::{ty_int, ty_uint, get, terr_fn, TyVar, IntVar, FloatVar};
 use middle::ty;
-use middle::ty::{TyVid, IntVid, FloatVid, RegionVid, vid,
-                 ty_int, ty_uint, get, terr_fn, TyVar, IntVar, FloatVar};
-use syntax::{ast, ast_util};
-use syntax::ast::{ret_style, purity};
-use util::ppaux::{ty_to_str, mt_to_str};
-use result::{Result, Ok, Err, map_vec, map_vec2, iter_vec2};
-use ty::{mk_fn, type_is_bot};
-use check::regionmanip::{replace_bound_regions_in_fn_ty};
+use middle::typeck::check::regionmanip::{replace_bound_regions_in_fn_ty};
+use middle::typeck::infer::assignment::Assign;
+use middle::typeck::infer::combine::{combine_fields, eq_tys};
+use middle::typeck::infer::floating::{float_ty_set, float_ty_set_all};
+use middle::typeck::infer::glb::Glb;
+use middle::typeck::infer::integral::{int_ty_set, int_ty_set_all};
+use middle::typeck::infer::lub::Lub;
+use middle::typeck::infer::region_inference::{RegionVarBindings};
+use middle::typeck::infer::resolve::{force_all, not_regions};
+use middle::typeck::infer::resolve::{force_tvar, force_rvar, force_ivar};
+use middle::typeck::infer::resolve::{resolve_and_force_all_but_regions};
+use middle::typeck::infer::resolve::{resolve_ivar, resolve_all};
+use middle::typeck::infer::resolve::{resolve_nested_tvar, resolve_rvar};
+use middle::typeck::infer::resolve::{resolver};
+use middle::typeck::infer::sub::Sub;
+use middle::typeck::infer::to_str::ToStr;
+use middle::typeck::infer::unify::{vals_and_bindings, root};
 use util::common::{indent, indenter};
-use ast::{unsafe_fn, impure_fn, pure_fn, extern_fn};
-use ast::{m_const, m_imm, m_mutbl};
-use dvec::DVec;
-use region_inference::{RegionVarBindings};
-use ast_util::dummy_sp;
-use cmp::Eq;
+use util::ppaux::{ty_to_str, mt_to_str};
 
-// From submodules:
-use resolve::{resolve_nested_tvar, resolve_rvar, resolve_ivar, resolve_all,
-                 force_tvar, force_rvar, force_ivar, force_all, not_regions,
-                 resolve_and_force_all_but_regions, resolver};
-use unify::{vals_and_bindings, root};
-use integral::{int_ty_set, int_ty_set_all};
-use floating::{float_ty_set, float_ty_set_all};
-use combine::{combine_fields, eq_tys};
-use assignment::Assign;
-use to_str::ToStr;
-
-use sub::Sub;
-use lub::Lub;
-use glb::Glb;
+use core::cmp::Eq;
+use core::dvec::DVec;
+use core::result::{Result, Ok, Err, map_vec, map_vec2, iter_vec2};
+use core::result;
+use core::vec;
+use std::map::HashMap;
+use std::smallintmap;
+use syntax::ast::{ret_style, purity};
+use syntax::ast::{m_const, m_imm, m_mutbl};
+use syntax::ast::{unsafe_fn, impure_fn, pure_fn, extern_fn};
+use syntax::ast_util::dummy_sp;
+use syntax::{ast, ast_util};
 
 export infer_ctxt;
 export new_infer_ctxt;
@@ -301,6 +313,18 @@ export cres, fres, fixup_err, fixup_err_to_str;
 export assignment;
 export root, to_str;
 export int_ty_set_all;
+export assignment;
+export combine;
+export floating;
+export glb;
+export integral;
+export lattice;
+export lub;
+export region_inference;
+export resolve;
+export sub;
+export to_str;
+export unify;
 
 #[legacy_exports]
 mod assignment;
@@ -511,8 +535,8 @@ trait ToUres {
 impl<T> cres<T>: ToUres {
     fn to_ures() -> ures {
         match self {
-          Ok(_v) => Ok(()),
-          Err(e) => Err(e)
+          Ok(ref _v) => Ok(()),
+          Err(ref e) => Err((*e))
         }
     }
 }
@@ -751,7 +775,7 @@ impl infer_ctxt {
         &self, span: span,
         fty: &ty::FnTy) -> (ty::FnTy, isr_alist)
     {
-        let {fn_ty, isr, _} =
+        let {fn_ty: fn_ty, isr: isr, _} =
             replace_bound_regions_in_fn_ty(self.tcx, @Nil, None, fty, |br| {
                 // N.B.: The name of the bound region doesn't have anything to
                 // do with the region variable that's created for it.  The

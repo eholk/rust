@@ -1,11 +1,27 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 // A pass that annotates for each loops and functions with the free
 // variables that they contain.
 
-use syntax::print::pprust::path_to_str;
+use middle::resolve;
+use middle::ty;
+
+use core::int;
+use core::option::*;
+use core::vec;
 use std::map::*;
-use option::*;
-use syntax::{ast, ast_util, visit};
 use syntax::codemap::span;
+use syntax::print::pprust::path_to_str;
+use syntax::{ast, ast_util, visit};
 
 export annotate_freevars;
 export freevar_map;
@@ -16,8 +32,8 @@ export has_freevars;
 
 // A vector of defs representing the free variables referred to in a function.
 // (The def_upvar will already have been stripped).
-#[auto_serialize]
-#[auto_deserialize]
+#[auto_encode]
+#[auto_decode]
 type freevar_entry = {
     def: ast::def, //< The variable being accessed free.
     span: span     //< First span where it is accessed (there can be multiple)
@@ -77,7 +93,7 @@ fn collect_freevars(def_map: resolve::DefMap, blk: ast::blk)
     let v = visit::mk_vt(@{visit_item: ignore_item, visit_expr: walk_expr,
                            .. *visit::default_visitor()});
     (v.visit_block)(blk, 1, v);
-    return @*refs;
+    return @/*bad*/copy *refs;
 }
 
 // Build a map from every function and for-each body to a set of the

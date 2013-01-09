@@ -1,10 +1,21 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // This test creates a bunch of tasks that simultaneously send to each
 // other in a ring. The messages should all be basically
 // independent. It's designed to hammer the global kernel lock, so
 // that things will look really good once we get that lock out of the
 // message path.
 
-use comm::*;
+use core::oldcomm::*;
+use core::oldcomm;
 
 extern mod std;
 use std::time;
@@ -12,8 +23,8 @@ use std::future;
 
 fn thread_ring(i: uint,
                count: uint,
-               num_chan: comm::Chan<uint>,
-               num_port: comm::Port<uint>) {
+               num_chan: oldcomm::Chan<uint>,
+               num_port: oldcomm::Port<uint>) {
     // Send/Receive lots of messages.
     for uint::range(0u, count) |j| {
         num_chan.send(i * j);

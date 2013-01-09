@@ -1,9 +1,24 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // ----------------------------------------------------------------------
 // Loan(Ex, M, S) = Ls holds if ToAddr(Ex) will remain valid for the entirety
 // of the scope S, presuming that the returned set of loans `Ls` are honored.
 
+
+use middle::ty;
+
+use core::result::{Result, Ok, Err};
+use syntax::ast;
+
 export public_methods;
-use result::{Result, Ok, Err};
 
 impl borrowck_ctxt {
     fn loan(cmt: cmt,
@@ -15,7 +30,7 @@ impl borrowck_ctxt {
             loans: ~[]
         };
         match lc.loan(cmt, mutbl) {
-          Err(e) => Err(e),
+          Err(ref e) => Err((*e)),
           Ok(()) => {
               let LoanContext {loans, _} = move lc;
               Ok(loans)

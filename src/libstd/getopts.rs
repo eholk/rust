@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * Simple getopt alternative.
  *
@@ -11,7 +21,8 @@
  * Single-character options are expected to appear on the command line with a
  * single preceding dash; multiple-character options are expected to be
  * proceeded by two dashes. Options that expect an argument accept their
- * argument following either a space or an equals sign.
+ * argument following either a space or an equals sign. Single-character
+ * options don't require the space.
  *
  * # Example
  *
@@ -65,20 +76,31 @@
 
 use core::cmp::Eq;
 use core::result::{Err, Ok};
+use core::result;
 use core::option;
 use core::option::{Some, None};
+use core::str;
+use core::vec;
 
+#[deriving_eq]
 enum Name {
     Long(~str),
     Short(char),
 }
 
+#[deriving_eq]
 enum HasArg { Yes, No, Maybe, }
 
+#[deriving_eq]
 enum Occur { Req, Optional, Multi, }
 
 /// A description of a possible option
-pub type Opt = {name: Name, hasarg: HasArg, occur: Occur};
+#[deriving_eq]
+pub struct Opt {
+    name: Name,
+    hasarg: HasArg,
+    occur: Occur
+}
 
 fn mkname(nm: &str) -> Name {
     let unm = str::from_slice(nm);
@@ -87,72 +109,29 @@ fn mkname(nm: &str) -> Name {
         } else { Long(unm) };
 }
 
-impl Name : Eq {
-    pure fn eq(&self, other: &Name) -> bool {
-        match (*self) {
-            Long(ref e0a) => {
-                match (*other) {
-                    Long(ref e0b) => e0a == e0b,
-                    _ => false
-                }
-            }
-            Short(e0a) => {
-                match (*other) {
-                    Short(e0b) => e0a == e0b,
-                    _ => false
-                }
-            }
-        }
-    }
-    pure fn ne(&self, other: &Name) -> bool { !(*self).eq(other) }
-}
-
-impl Occur : Eq {
-    pure fn eq(&self, other: &Occur) -> bool {
-        ((*self) as uint) == ((*other) as uint)
-    }
-    pure fn ne(&self, other: &Occur) -> bool { !(*self).eq(other) }
-}
-
-impl HasArg : Eq {
-    pure fn eq(&self, other: &HasArg) -> bool {
-        ((*self) as uint) == ((*other) as uint)
-    }
-    pure fn ne(&self, other: &HasArg) -> bool { !(*self).eq(other) }
-}
-
-impl Opt : Eq {
-    pure fn eq(&self, other: &Opt) -> bool {
-        (*self).name   == (*other).name   &&
-        (*self).hasarg == (*other).hasarg &&
-        (*self).occur  == (*other).occur
-    }
-    pure fn ne(&self, other: &Opt) -> bool { !(*self).eq(other) }
-}
-
 /// Create an option that is required and takes an argument
 pub fn reqopt(name: &str) -> Opt {
-    return {name: mkname(name), hasarg: Yes, occur: Req};
+    return Opt {name: mkname(name), hasarg: Yes, occur: Req};
 }
 
 /// Create an option that is optional and takes an argument
 pub fn optopt(name: &str) -> Opt {
-    return {name: mkname(name), hasarg: Yes, occur: Optional};
+    return Opt {name: mkname(name), hasarg: Yes, occur: Optional};
 }
 
 /// Create an option that is optional and does not take an argument
 pub fn optflag(name: &str) -> Opt {
-    return {name: mkname(name), hasarg: No, occur: Optional};
+    return Opt {name: mkname(name), hasarg: No, occur: Optional};
 }
 
 /// Create an option that is optional and does not take an argument
 pub fn optflagmulti(name: &str) -> Opt {
-    return {name: mkname(name), hasarg: No, occur: Multi};
+    return Opt {name: mkname(name), hasarg: No, occur: Multi};
 }
 
 /// Create an option that is optional and takes an optional argument
 pub fn optflagopt(name: &str) -> Opt {
-    return {name: mkname(name), hasarg: Maybe, occur: Optional};
+    return Opt {name: mkname(name), hasarg: Maybe, occur: Optional};
 }
 
 /**
@@ -160,40 +139,25 @@ pub fn optflagopt(name: &str) -> Opt {
  * multiple times
  */
 pub fn optmulti(name: &str) -> Opt {
-    return {name: mkname(name), hasarg: Yes, occur: Multi};
+    return Opt {name: mkname(name), hasarg: Yes, occur: Multi};
 }
 
+#[deriving_eq]
 enum Optval { Val(~str), Given, }
 
 /**
  * The result of checking command line arguments. Contains a vector
  * of matches and a vector of free strings.
  */
-pub type Matches = {opts: ~[Opt], vals: ~[~[Optval]], free: ~[~str]};
-
-impl Optval : Eq {
-    pure fn eq(&self, other: &Optval) -> bool {
-        match (*self) {
-            Val(ref s) => match *other { Val (ref os) => s == os,
-                                          Given => false },
-            Given       => match *other { Val(_) => false,
-                                          Given => true }
-        }
-    }
-    pure fn ne(&self, other: &Optval) -> bool { !(*self).eq(other) }
-}
-
-impl Matches : Eq {
-    pure fn eq(&self, other: &Matches) -> bool {
-        (*self).opts == (*other).opts &&
-        (*self).vals == (*other).vals &&
-        (*self).free == (*other).free
-    }
-    pure fn ne(&self, other: &Matches) -> bool { !(*self).eq(other) }
+#[deriving_eq]
+pub struct Matches {
+    opts: ~[Opt],
+    vals: ~[~[Optval]],
+    free: ~[~str]
 }
 
 fn is_arg(arg: &str) -> bool {
-    return arg.len() > 1u && arg[0] == '-' as u8;
+    return arg.len() > 1 && arg[0] == '-' as u8;
 }
 
 fn name_str(nm: &Name) -> ~str {
@@ -211,41 +175,13 @@ fn find_opt(opts: &[Opt], nm: Name) -> Option<uint> {
  * The type returned when the command line does not conform to the
  * expected format. Pass this value to <fail_str> to get an error message.
  */
+#[deriving_eq]
 pub enum Fail_ {
     ArgumentMissing(~str),
     UnrecognizedOption(~str),
     OptionMissing(~str),
     OptionDuplicated(~str),
     UnexpectedArgument(~str),
-}
-
-impl Fail_ : Eq {
-    // this whole thing should be easy to infer...
-    pure fn eq(&self, other: &Fail_) -> bool {
-        match (*self) {
-            ArgumentMissing(ref s) => {
-                match *other { ArgumentMissing(ref so)    => s == so,
-                               _                          => false }
-            }
-            UnrecognizedOption(ref s) => {
-                match *other { UnrecognizedOption(ref so) => s == so,
-                               _                          => false }
-            }
-            OptionMissing(ref s) => {
-                match *other { OptionMissing(ref so)      => s == so,
-                               _                          => false }
-            }
-            OptionDuplicated(ref s) => {
-                match *other { OptionDuplicated(ref so)   => s == so,
-                               _                          => false }
-            }
-            UnexpectedArgument(ref s) => {
-                match *other { UnexpectedArgument(ref so) => s == so,
-                               _                          => false }
-            }
-        }
-    }
-    pure fn ne(&self, other: &Fail_) -> bool { !(*self).eq(other) }
 }
 
 /// Convert a `fail_` enum into an error string
@@ -283,38 +219,37 @@ pub type Result = result::Result<Matches, Fail_>;
  * Use <fail_str> to get an error message.
  */
 pub fn getopts(args: &[~str], opts: &[Opt]) -> Result unsafe {
-    let n_opts = vec::len::<Opt>(opts);
+    let n_opts = opts.len();
     fn f(_x: uint) -> ~[Optval] { return ~[]; }
     let vals = vec::to_mut(vec::from_fn(n_opts, f));
     let mut free: ~[~str] = ~[];
-    let l = vec::len(args);
-    let mut i = 0u;
+    let l = args.len();
+    let mut i = 0;
     while i < l {
         let cur = args[i];
         let curlen = cur.len();
         if !is_arg(cur) {
             free.push(cur);
         } else if cur == ~"--" {
-            let mut j = i + 1u;
-            while j < l { free.push(args[j]); j += 1u; }
+            let mut j = i + 1;
+            while j < l { free.push(args[j]); j += 1; }
             break;
         } else {
             let mut names;
-            let mut i_arg = option::None::<~str>;
+            let mut i_arg = None;
             if cur[1] == '-' as u8 {
-                let tail = str::slice(cur, 2u, curlen);
-                let tail_eq = str::splitn_char(tail, '=', 1u);
-                if vec::len(tail_eq) <= 1u {
+                let tail = str::slice(cur, 2, curlen);
+                let tail_eq = str::splitn_char(tail, '=', 1);
+                if tail_eq.len() <= 1 {
                     names = ~[Long(tail)];
                 } else {
                     names =
                         ~[Long(tail_eq[0])];
-                    i_arg =
-                        option::Some::<~str>(tail_eq[1]);
+                    i_arg = Some(tail_eq[1]);
                 }
             } else {
-                let mut j = 1u;
-                let mut last_valid_opt_id = option::None;
+                let mut j = 1;
+                let mut last_valid_opt_id = None;
                 names = ~[];
                 while j < curlen {
                     let range = str::char_range_at(cur, j);
@@ -328,7 +263,7 @@ pub fn getopts(args: &[~str], opts: &[Opt]) -> Result unsafe {
                     */
 
                     match find_opt(opts, opt) {
-                      Some(id) => last_valid_opt_id = option::Some(id),
+                      Some(id) => last_valid_opt_id = Some(id),
                       None => {
                         let arg_follows =
                             last_valid_opt_id.is_some() &&
@@ -338,11 +273,11 @@ pub fn getopts(args: &[~str], opts: &[Opt]) -> Result unsafe {
                               Yes | Maybe => true,
                               No => false
                             };
-                        if arg_follows && j + 1 < curlen {
-                            i_arg = option::Some(str::slice(cur, j, curlen));
+                        if arg_follows && j < curlen {
+                            i_arg = Some(cur.slice(j, curlen));
                             break;
                         } else {
-                            last_valid_opt_id = option::None;
+                            last_valid_opt_id = None;
                         }
                       }
                     }
@@ -350,9 +285,9 @@ pub fn getopts(args: &[~str], opts: &[Opt]) -> Result unsafe {
                     j = range.next;
                 }
             }
-            let mut name_pos = 0u;
-            for vec::each(names) |nm| {
-                name_pos += 1u;
+            let mut name_pos = 0;
+            for names.each() |nm| {
+                name_pos += 1;
                 let optid = match find_opt(opts, *nm) {
                   Some(id) => id,
                   None => return Err(UnrecognizedOption(name_str(nm)))
@@ -367,40 +302,40 @@ pub fn getopts(args: &[~str], opts: &[Opt]) -> Result unsafe {
                   Maybe => {
                     if !i_arg.is_none() {
                         vals[optid].push(Val(i_arg.get()));
-                    } else if name_pos < vec::len::<Name>(names) ||
-                                  i + 1u == l || is_arg(args[i + 1u]) {
+                    } else if name_pos < names.len() ||
+                                  i + 1 == l || is_arg(args[i + 1]) {
                         vals[optid].push(Given);
-                    } else { i += 1u; vals[optid].push(Val(args[i])); }
+                    } else { i += 1; vals[optid].push(Val(args[i])); }
                   }
                   Yes => {
                     if !i_arg.is_none() {
                         vals[optid].push(Val(i_arg.get()));
-                    } else if i + 1u == l {
+                    } else if i + 1 == l {
                         return Err(ArgumentMissing(name_str(nm)));
-                    } else { i += 1u; vals[optid].push(Val(args[i])); }
+                    } else { i += 1; vals[optid].push(Val(args[i])); }
                   }
                 }
             }
         }
-        i += 1u;
+        i += 1;
     }
     i = 0u;
     while i < n_opts {
-        let n = vec::len::<Optval>(vals[i]);
+        let n = vals[i].len();
         let occ = opts[i].occur;
         if occ == Req {
-            if n == 0u {
+            if n == 0 {
                 return Err(OptionMissing(name_str(&(opts[i].name))));
             }
         }
         if occ != Multi {
-            if n > 1u {
+            if n > 1 {
                 return Err(OptionDuplicated(name_str(&(opts[i].name))));
             }
         }
-        i += 1u;
+        i += 1;
     }
-    return Ok({opts: vec::from_slice(opts),
+    return Ok(Matches {opts: vec::from_slice(opts),
                vals: vec::from_mut(move vals),
                free: free});
 }
@@ -505,6 +440,7 @@ pub fn opt_default(mm: &Matches, nm: &str, def: &str) -> Option<~str> {
                            _      => Some::<~str>(str::from_slice(def)) }
 }
 
+#[deriving_eq]
 enum FailType {
     ArgumentMissing_,
     UnrecognizedOption_,
@@ -513,42 +449,26 @@ enum FailType {
     UnexpectedArgument_,
 }
 
-impl FailType : Eq {
-    pure fn eq(&self, other: &FailType) -> bool {
-        ((*self) as uint) == ((*other) as uint)
-    }
-    pure fn ne(&self, other: &FailType) -> bool { !(*self).eq(other) }
-}
-
 /** A module which provides a way to specify descriptions and
  *  groups of short and long option names, together.
  */
 pub mod groups {
+    use getopts::Result;
+
+    use core::str;
+    use core::vec;
 
     /** one group of options, e.g., both -h and --help, along with
      * their shared description and properties
      */
-    pub type OptGroup = {
+    #[deriving_eq]
+    pub struct OptGroup {
         short_name: ~str,
         long_name: ~str,
         hint: ~str,
         desc: ~str,
         hasarg: HasArg,
         occur: Occur
-    };
-
-    impl OptGroup : Eq {
-        pure fn eq(&self, other: &OptGroup) -> bool {
-            (*self).short_name == (*other).short_name &&
-            (*self).long_name  == (*other).long_name  &&
-            (*self).hint       == (*other).hint       &&
-            (*self).desc       == (*other).desc       &&
-            (*self).hasarg     == (*other).hasarg     &&
-            (*self).occur      == (*other).occur
-        }
-        pure fn ne(&self, other: &OptGroup) -> bool {
-            !self.eq(other)
-        }
     }
 
     /// Create a long option that is required and takes an argument
@@ -556,7 +476,7 @@ pub mod groups {
                   desc: &str, hint: &str) -> OptGroup {
         let len = short_name.len();
         assert len == 1 || len == 0;
-        return {short_name: str::from_slice(short_name),
+        return OptGroup { short_name: str::from_slice(short_name),
                 long_name: str::from_slice(long_name),
                 hint: str::from_slice(hint),
                 desc: str::from_slice(desc),
@@ -569,7 +489,7 @@ pub mod groups {
                   desc: &str, hint: &str) -> OptGroup {
         let len = short_name.len();
         assert len == 1 || len == 0;
-        return {short_name: str::from_slice(short_name),
+        return OptGroup {short_name: str::from_slice(short_name),
                 long_name: str::from_slice(long_name),
                 hint: str::from_slice(hint),
                 desc: str::from_slice(desc),
@@ -582,7 +502,7 @@ pub mod groups {
                    desc: &str) -> OptGroup {
         let len = short_name.len();
         assert len == 1 || len == 0;
-        return {short_name: str::from_slice(short_name),
+        return OptGroup {short_name: str::from_slice(short_name),
                 long_name: str::from_slice(long_name),
                 hint: ~"",
                 desc: str::from_slice(desc),
@@ -595,7 +515,7 @@ pub mod groups {
                       desc: &str, hint: &str) -> OptGroup {
         let len = short_name.len();
         assert len == 1 || len == 0;
-        return {short_name: str::from_slice(short_name),
+        return OptGroup {short_name: str::from_slice(short_name),
                 long_name: str::from_slice(long_name),
                 hint: str::from_slice(hint),
                 desc: str::from_slice(desc),
@@ -611,7 +531,7 @@ pub mod groups {
                     desc: &str, hint: &str) -> OptGroup {
         let len = short_name.len();
         assert len == 1 || len == 0;
-        return {short_name: str::from_slice(short_name),
+        return OptGroup {short_name: str::from_slice(short_name),
                 long_name: str::from_slice(long_name),
                 hint: str::from_slice(hint),
                 desc: str::from_slice(desc),
@@ -627,20 +547,20 @@ pub mod groups {
 
            (0,0) => fail ~"this long-format option was given no name",
 
-           (0,_) => ~[{name:   Long(((*lopt).long_name)),
-                       hasarg: (*lopt).hasarg,
-                       occur:  (*lopt).occur}],
+           (0,_) => ~[Opt {name:   Long(((*lopt).long_name)),
+                           hasarg: (*lopt).hasarg,
+                           occur:  (*lopt).occur}],
 
-           (1,0) => ~[{name:  Short(str::char_at((*lopt).short_name, 0)),
-                       hasarg: (*lopt).hasarg,
-                       occur:  (*lopt).occur}],
+           (1,0) => ~[Opt {name: Short(str::char_at((*lopt).short_name, 0)),
+                           hasarg: (*lopt).hasarg,
+                           occur:  (*lopt).occur}],
 
-           (1,_) => ~[{name:   Short(str::char_at((*lopt).short_name, 0)),
-                       hasarg: (*lopt).hasarg,
-                       occur:  (*lopt).occur},
-                      {name:   Long(((*lopt).long_name)),
-                       hasarg: (*lopt).hasarg,
-                       occur:  (*lopt).occur}],
+           (1,_) => ~[Opt {name: Short(str::char_at((*lopt).short_name, 0)),
+                           hasarg: (*lopt).hasarg,
+                           occur:  (*lopt).occur},
+                      Opt {name:   Long(((*lopt).long_name)),
+                           hasarg: (*lopt).hasarg,
+                           occur:  (*lopt).occur}],
 
            (_,_) => fail ~"something is wrong with the long-form opt"
         }
@@ -714,7 +634,11 @@ pub mod groups {
 mod tests {
     #[legacy_exports];
     use opt = getopts;
-    use result::{Err, Ok};
+    use getopts::groups::OptGroup;
+    use getopts::groups;
+
+    use core::result::{Err, Ok};
+    use core::result;
 
     fn check_fail_type(f: Fail_, ft: FailType) {
         match f {
@@ -1265,20 +1189,23 @@ mod tests {
 
     #[test]
     fn test_nospace() {
-        let args = ~[~"-Lfoo"];
-        let opts = ~[optmulti(~"L")];
+        let args = ~[~"-Lfoo", ~"-M."];
+        let opts = ~[optmulti(~"L"), optmulti(~"M")];
         let matches = &match getopts(args, opts) {
           result::Ok(move m) => m,
           result::Err(_) => fail
         };
         assert opts_present(matches, ~[~"L"]);
         assert opts_str(matches, ~[~"L"]) == ~"foo";
+        assert opts_present(matches, ~[~"M"]);
+        assert opts_str(matches, ~[~"M"]) == ~".";
+
     }
 
     #[test]
     fn test_groups_reqopt() {
         let opt = groups::reqopt(~"b", ~"banana", ~"some bananas", ~"VAL");
-        assert opt == { short_name: ~"b",
+        assert opt == OptGroup { short_name: ~"b",
                         long_name: ~"banana",
                         hint: ~"VAL",
                         desc: ~"some bananas",
@@ -1289,7 +1216,7 @@ mod tests {
     #[test]
     fn test_groups_optopt() {
         let opt = groups::optopt(~"a", ~"apple", ~"some apples", ~"VAL");
-        assert opt == { short_name: ~"a",
+        assert opt == OptGroup { short_name: ~"a",
                         long_name: ~"apple",
                         hint: ~"VAL",
                         desc: ~"some apples",
@@ -1300,7 +1227,7 @@ mod tests {
     #[test]
     fn test_groups_optflag() {
         let opt = groups::optflag(~"k", ~"kiwi", ~"some kiwis");
-        assert opt == { short_name: ~"k",
+        assert opt == OptGroup { short_name: ~"k",
                         long_name: ~"kiwi",
                         hint: ~"",
                         desc: ~"some kiwis",
@@ -1312,7 +1239,7 @@ mod tests {
     fn test_groups_optflagopt() {
         let opt = groups::optflagopt(~"p", ~"pineapple",
                                        ~"some pineapples", ~"VAL");
-        assert opt == { short_name: ~"p",
+        assert opt == OptGroup { short_name: ~"p",
                         long_name: ~"pineapple",
                         hint: ~"VAL",
                         desc: ~"some pineapples",
@@ -1324,7 +1251,7 @@ mod tests {
     fn test_groups_optmulti() {
         let opt = groups::optmulti(~"l", ~"lime",
                                      ~"some limes", ~"VAL");
-        assert opt == { short_name: ~"l",
+        assert opt == OptGroup { short_name: ~"l",
                         long_name: ~"lime",
                         hint: ~"VAL",
                         desc: ~"some limes",

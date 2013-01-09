@@ -1,5 +1,21 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use ast;
+use codemap;
 use codemap::span;
-use base::ext_ctxt;
+use ext::base::ext_ctxt;
+use ext::build;
+
+use core::dvec;
+use core::option;
 
 fn mk_expr(cx: ext_ctxt, sp: codemap::span, expr: ast::expr_) ->
     @ast::expr {
@@ -45,9 +61,18 @@ fn mk_raw_path_(sp: span,
              -> @ast::path {
     @{ span: sp, global: false, idents: idents, rp: None, types: move types }
 }
+fn mk_raw_path_global(sp: span, idents: ~[ast::ident]) -> @ast::path {
+    let p : @ast::path = @{span: sp, global: true, idents: idents,
+                           rp: None, types: ~[]};
+    return p;
+}
 fn mk_path(cx: ext_ctxt, sp: span, idents: ~[ast::ident]) ->
     @ast::expr {
     mk_expr(cx, sp, ast::expr_path(mk_raw_path(sp, idents)))
+}
+fn mk_path_global(cx: ext_ctxt, sp: span, idents: ~[ast::ident]) ->
+    @ast::expr {
+    mk_expr(cx, sp, ast::expr_path(mk_raw_path_global(sp, idents)))
 }
 fn mk_access_(cx: ext_ctxt, sp: span, p: @ast::expr, m: ast::ident)
     -> @ast::expr {
@@ -68,6 +93,11 @@ fn mk_call_(cx: ext_ctxt, sp: span, fn_expr: @ast::expr,
 fn mk_call(cx: ext_ctxt, sp: span, fn_path: ~[ast::ident],
              args: ~[@ast::expr]) -> @ast::expr {
     let pathexpr = mk_path(cx, sp, fn_path);
+    return mk_call_(cx, sp, pathexpr, args);
+}
+fn mk_call_global(cx: ext_ctxt, sp: span, fn_path: ~[ast::ident],
+                  args: ~[@ast::expr]) -> @ast::expr {
+    let pathexpr = mk_path_global(cx, sp, fn_path);
     return mk_call_(cx, sp, pathexpr, args);
 }
 // e = expr, t = type
@@ -135,6 +165,24 @@ fn mk_glob_use(cx: ext_ctxt, sp: span,
       vis: ast::private,
       span: sp}
 }
+fn mk_local(cx: ext_ctxt, sp: span, mutbl: bool,
+            ident: ast::ident, ex: @ast::expr) -> @ast::stmt {
+
+    let pat : @ast::pat = @{id: cx.next_id(),
+                            node: ast::pat_ident(ast::bind_by_value,
+                                                 mk_raw_path(sp, ~[ident]),
+                                                 None),
+                           span: sp};
+    let ty : @ast::Ty = @{ id: cx.next_id(), node: ast::ty_infer, span: sp };
+    let local : @ast::local = @{node: {is_mutbl: mutbl,
+                                       ty: ty,
+                                       pat: pat,
+                                       init: Some(ex),
+                                       id: cx.next_id()},
+                                span: sp};
+    let decl = {node: ast::decl_local(~[local]), span: sp};
+    @{ node: ast::stmt_decl(@decl, cx.next_id()), span: sp }
+}
 fn mk_block(cx: ext_ctxt, sp: span,
             view_items: ~[@ast::view_item],
             stmts: ~[@ast::stmt],
@@ -191,6 +239,14 @@ fn mk_pat_enum(cx: ext_ctxt,
     let pat = ast::pat_enum(path, Some(move subpats));
     mk_pat(cx, span, move pat)
 }
+fn mk_pat_struct(cx: ext_ctxt,
+                 span: span,
+                 path: @ast::path,
+                 +field_pats: ~[ast::field_pat])
+              -> @ast::pat {
+    let pat = ast::pat_struct(path, move field_pats, false);
+    mk_pat(cx, span, move pat)
+}
 fn mk_bool(cx: ext_ctxt, span: span, value: bool) -> @ast::expr {
     let lit_expr = ast::expr_lit(@{ node: ast::lit_bool(value), span: span });
     build::mk_expr(cx, span, move lit_expr)
@@ -204,6 +260,15 @@ fn mk_ty_path(cx: ext_ctxt,
               idents: ~[ ast::ident ])
            -> @ast::Ty {
     let ty = build::mk_raw_path(span, idents);
+    let ty = ast::ty_path(ty, cx.next_id());
+    let ty = @{ id: cx.next_id(), node: move ty, span: span };
+    ty
+}
+fn mk_ty_path_global(cx: ext_ctxt,
+                     span: span,
+                     idents: ~[ ast::ident ])
+                  -> @ast::Ty {
+    let ty = build::mk_raw_path_global(span, idents);
     let ty = ast::ty_path(ty, cx.next_id());
     let ty = @{ id: cx.next_id(), node: move ty, span: span };
     ty

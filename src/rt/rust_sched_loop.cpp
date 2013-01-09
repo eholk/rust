@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 
 #include "rust_sched_loop.h"
 #include "rust_util.h"
@@ -90,6 +100,7 @@ rust_sched_loop::kill_all_tasks() {
 
 size_t
 rust_sched_loop::number_of_live_tasks() {
+    lock.must_have_lock();
     return running_tasks.length() + blocked_tasks.length();
 }
 
@@ -138,14 +149,10 @@ rust_sched_loop::release_task(rust_task *task) {
 rust_task *
 rust_sched_loop::schedule_task() {
     lock.must_have_lock();
-    assert(this);
     if (running_tasks.length() > 0) {
         size_t k = isaac_rand(&rctx);
-        // Look around for a runnable task, starting at k.
-        for(size_t j = 0; j < running_tasks.length(); ++j) {
-            size_t  i = (j + k) % running_tasks.length();
-            return (rust_task *)running_tasks[i];
-        }
+        size_t i = k % running_tasks.length();
+        return (rust_task *)running_tasks[i];
     }
     return NULL;
 }

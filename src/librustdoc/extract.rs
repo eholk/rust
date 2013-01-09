@@ -1,8 +1,24 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Converts the Rust AST to the rustdoc document model
 
-use syntax::ast;
+use astsrv;
 use doc::ItemUtils;
-use task::local_data::local_data_get;
+use doc;
+
+use core::cast;
+use core::task::local_data::local_data_get;
+use core::vec;
+use syntax::ast;
+use syntax;
 
 /* can't import macros yet, so this is copied from token.rs. See its comment
  * there. */
@@ -117,7 +133,7 @@ fn moddoc_from_mod(
                     tydoc_from_ty(ItemDoc)
                 ))
               }
-              ast::item_class(def, _) => {
+              ast::item_struct(def, _) => {
                 Some(doc::StructTag(
                     structdoc_from_struct(ItemDoc, def)
                 ))
@@ -327,6 +343,12 @@ fn should_extract_struct_fields() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use doc;
+    use parse;
+
+    use core::vec;
 
     fn mk_doc(+source: ~str) -> doc::Doc {
         let ast = parse::from_str(source);

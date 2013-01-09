@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 
 use driver::session;
 use middle::trans::base;
@@ -26,8 +36,10 @@ fn declare_upcalls(targ_cfg: @session::config,
     fn nothrow(f: ValueRef) -> ValueRef {
         base::set_no_unwind(f); f
     }
-    let d = |a,b,c| decl(llmod, ~"upcall_", a, b, c);
-    let dv = |a,b| decl(llmod, ~"upcall_", a, b, T_void());
+    let d: &fn(+a: ~str, +b: ~[TypeRef], +c: TypeRef) -> ValueRef =
+        |a,b,c| decl(llmod, ~"upcall_", a, b, c);
+    let dv: &fn(+a: ~str, +b: ~[TypeRef]) -> ValueRef =
+        |a,b| decl(llmod, ~"upcall_", a, b, T_void());
 
     let int_t = T_int(targ_cfg);
 

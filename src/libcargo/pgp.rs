@@ -1,3 +1,16 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use core::os;
+use core::run;
+
 fn gpgv(args: ~[~str]) -> { status: int, out: ~str, err: ~str } {
     return run::program_output(~"gpgv", args);
 }
@@ -92,7 +105,7 @@ fn verify(root: &Path, data: &Path, sig: &Path) -> bool {
     let path = root.push("gpg");
     let res = gpgv(~[~"--homedir", path.to_str(),
                   ~"--keyring", ~"pubring.gpg",
-                  ~"--verbose",
+                  ~"--verify",
                  sig.to_str(), data.to_str()]);
     if res.status != 0 {
         return false;

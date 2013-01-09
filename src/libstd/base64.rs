@@ -1,5 +1,19 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #[forbid(deprecated_mode)];
-use io::Reader;
+
+use core::io::Reader;
+use core::iter;
+use core::str;
+use core::vec;
 
 pub trait ToBase64 {
     pure fn to_base64() -> ~str;
@@ -139,6 +153,9 @@ impl ~str: FromBase64 {
 #[cfg(test)]
 mod tests {
     #[legacy_exports];
+
+    use core::str;
+
     #[test]
     fn test_to_base64() {
         assert (~"").to_base64()       == ~"";

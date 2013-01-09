@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Determines the ways in which a generic function body depends
 // on its type parameters. Used to aggressively reuse compiled
 // function bodies for different types.
@@ -17,13 +27,22 @@
 // much information, but have the disadvantage of being very
 // invasive.)
 
-use std::map::HashMap;
-use std::list;
-use std::list::{List, Cons, Nil};
+
 use metadata::csearch;
-use syntax::ast::*, syntax::ast_util, syntax::visit;
+use middle::freevars;
+use middle::trans::common::*;
+use middle::trans::inline;
+
+use core::option;
+use core::uint;
+use core::vec;
+use std::list::{List, Cons, Nil};
+use std::list;
+use std::map::HashMap;
+use syntax::ast::*;
 use syntax::ast_map;
-use common::*;
+use syntax::ast_util;
+use syntax::visit;
 
 type type_uses = uint; // Bitmask
 const use_repr: uint = 1u;   /* Dependency on size/alignment/mode and
@@ -66,18 +85,18 @@ fn type_uses_for(ccx: @crate_ctxt, fn_id: def_id, n_tps: uint)
 
     if fn_id_loc.crate != local_crate {
         let uses = vec::from_mut(copy cx.uses);
-        ccx.type_use_cache.insert(fn_id, uses);
+        ccx.type_use_cache.insert(fn_id, copy uses);
         return uses;
     }
     let map_node = match ccx.tcx.items.find(fn_id_loc.node) {
-        Some(x) => x,
+        Some(ref x) => (/*bad*/copy *x),
         None    => ccx.sess.bug(fmt!("type_uses_for: unbound item ID %?",
                                      fn_id_loc))
     };
     match map_node {
-      ast_map::node_item(@{node: item_fn(_, _, _, body), _}, _) |
-      ast_map::node_method(@{body, _}, _, _) => {
-        handle_body(cx, body);
+      ast_map::node_item(@{node: item_fn(_, _, _, ref body), _}, _) |
+      ast_map::node_method(@{body: ref body, _}, _, _) => {
+        handle_body(cx, (*body));
       }
       ast_map::node_trait_method(*) => {
         // This will be a static trait method. For now, we just assume
@@ -113,6 +132,22 @@ fn type_uses_for(ccx: @crate_ctxt, fn_id: def_id, n_tps: uint)
                 ~"visit_tydesc"  | ~"forget" | ~"addr_of" |
                 ~"frame_address" | ~"morestack_addr" => 0,
 
+                ~"sqrtf32" | ~"sqrtf64" | ~"powif32" | ~"powif64" |
+                ~"sinf32"  | ~"sinf64"  | ~"cosf32"  | ~"cosf64"  |
+                ~"powf32"  | ~"powf64"  | ~"expf32"  | ~"expf64"  |
+                ~"exp2f32" | ~"exp2f64" | ~"logf32"  | ~"logf64"  |
+                ~"log10f32"| ~"log10f64"| ~"log2f32" | ~"log2f64" |
+                ~"fmaf32"  | ~"fmaf64"  | ~"fabsf32" | ~"fabsf64" |
+                ~"floorf32"| ~"floorf64"| ~"ceilf32" | ~"ceilf64" |
+                ~"truncf32"| ~"truncf64" => 0,
+
+                ~"ctpop8" | ~"ctpop16" | ~"ctpop32" | ~"ctpop64" => 0,
+
+                ~"ctlz8" | ~"ctlz16" | ~"ctlz32" | ~"ctlz64" => 0,
+                ~"cttz8" | ~"cttz16" | ~"cttz32" | ~"cttz64" => 0,
+
+                ~"bswap16" | ~"bswap32" | ~"bswap64" => 0,
+
                 // would be cool to make these an enum instead of strings!
                 _ => fail ~"unknown intrinsic in type_use"
             };
@@ -122,10 +157,22 @@ fn type_uses_for(ccx: @crate_ctxt, fn_id: def_id, n_tps: uint)
       ast_map::node_dtor(_, dtor, _, _) => {
         handle_body(cx, dtor.node.body);
       }
-      _ => fail ~"unknown node type in type_use"
+      ast_map::node_struct_ctor(*) => {
+        // Similarly to node_variant, this monomorphized function just uses
+        // the representations of all of its type parameters.
+        for uint::range(0, n_tps) |n| { cx.uses[n] |= use_repr; }
+      }
+      _ => {
+        ccx.tcx.sess.bug(fmt!("unknown node type in type_use: %s",
+                              ast_map::node_id_to_str(
+                                ccx.tcx.items,
+                                fn_id_loc.node,
+                                ccx.tcx.sess.parse_sess.interner)));
+      }
     }
     let uses = vec::from_mut(copy cx.uses);
-    ccx.type_use_cache.insert(fn_id, uses);
+    // XXX: Bad copy, use @vec instead?
+    ccx.type_use_cache.insert(fn_id, copy uses);
     uses
 }
 
@@ -152,12 +199,12 @@ fn type_needs_inner(cx: ctx, use_: uint, ty: ty::t,
                  */
               ty::ty_fn(_) | ty::ty_ptr(_) | ty::ty_rptr(_, _)
                | ty::ty_trait(_, _, _) => false,
-              ty::ty_enum(did, substs) => {
+              ty::ty_enum(did, ref substs) => {
                 if option::is_none(&list::find(enums_seen, |id| *id == did)) {
                     let seen = @Cons(did, enums_seen);
                     for vec::each(*ty::enum_variants(cx.ccx.tcx, did)) |v| {
                         for vec::each(v.args) |aty| {
-                            let t = ty::subst(cx.ccx.tcx, &substs, *aty);
+                            let t = ty::subst(cx.ccx.tcx, &(*substs), *aty);
                             type_needs_inner(cx, use_, t, seen);
                         }
                     }
@@ -176,6 +223,25 @@ fn type_needs_inner(cx: ctx, use_: uint, ty: ty::t,
 
 fn node_type_needs(cx: ctx, use_: uint, id: node_id) {
     type_needs(cx, use_, ty::node_id_to_type(cx.ccx.tcx, id));
+}
+
+fn mark_for_method_call(cx: ctx, e_id: node_id, callee_id: node_id) {
+    do option::iter(&cx.ccx.maps.method_map.find(e_id)) |mth| {
+        match mth.origin {
+          typeck::method_static(did) => {
+            do cx.ccx.tcx.node_type_substs.find(callee_id).iter |ts| {
+                let type_uses = type_uses_for(cx.ccx, did, ts.len());
+                for vec::each2(type_uses, *ts) |uses, subst| {
+                    type_needs(cx, *uses, *subst)
+                }
+            }
+          }
+          typeck::method_param({param_num: param, _}) => {
+            cx.uses[param] |= use_tydesc;
+          }
+          typeck::method_trait(*) | typeck::method_self(*) => (),
+        }
+    }
 }
 
 fn mark_for_expr(cx: ctx, e: @expr) {
@@ -236,23 +302,7 @@ fn mark_for_expr(cx: ctx, e: @expr) {
         // the chosen field.
         let base_ty = ty::node_id_to_type(cx.ccx.tcx, base.id);
         type_needs(cx, use_repr, ty::type_autoderef(cx.ccx.tcx, base_ty));
-
-        do option::iter(&cx.ccx.maps.method_map.find(e.id)) |mth| {
-            match mth.origin {
-              typeck::method_static(did) => {
-                do cx.ccx.tcx.node_type_substs.find(e.id).iter |ts| {
-                    let type_uses = type_uses_for(cx.ccx, did, ts.len());
-                    for vec::each2(type_uses, *ts) |uses, subst| {
-                        type_needs(cx, *uses, *subst)
-                    }
-                }
-              }
-              typeck::method_param({param_num: param, _}) => {
-                cx.uses[param] |= use_tydesc;
-              }
-              typeck::method_trait(*) | typeck::method_self(*) => (),
-            }
-        }
+        mark_for_method_call(cx, e.id, e.callee_id);
       }
       expr_log(_, _, val) => {
         node_type_needs(cx, use_tydesc, val.id);
@@ -268,6 +318,21 @@ fn mark_for_expr(cx: ctx, e: @expr) {
                   _ => ()
               }
           }
+      }
+      expr_method_call(rcvr, _, _, _, _) => {
+        let base_ty = ty::node_id_to_type(cx.ccx.tcx, rcvr.id);
+        type_needs(cx, use_repr, ty::type_autoderef(cx.ccx.tcx, base_ty));
+
+        for ty::ty_fn_args(ty::node_id_to_type(cx.ccx.tcx,
+                                               e.callee_id)).each |a| {
+          match a.mode {
+              expl(by_move) | expl(by_copy) | expl(by_val) => {
+                  type_needs(cx, use_repr, a.ty);
+              }
+              _ => ()
+          }
+        }
+        mark_for_method_call(cx, e.id, e.callee_id);
       }
       expr_paren(e) => mark_for_expr(cx, e),
       expr_match(*) | expr_block(_) | expr_if(*) |

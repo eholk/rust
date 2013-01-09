@@ -1,8 +1,24 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! A general sorting pass
 
+use astsrv;
 use doc::ItemUtils;
-use std::sort;
+use doc;
+use extract;
+use fold::Fold;
+use fold;
 use util::NominalOp;
+
+use std::sort;
 
 pub type ItemLtEqOp = pure fn~(v1: &doc::ItemTag, v2:  &doc::ItemTag) -> bool;
 
@@ -23,10 +39,10 @@ fn run(
     +doc: doc::Doc,
     +lteq: ItemLtEq
 ) -> doc::Doc {
-    let fold = fold::Fold({
+    let fold = Fold {
         fold_mod: fold_mod,
-        .. *fold::default_any_fold(move lteq)
-    });
+        .. fold::default_any_fold(move lteq)
+    };
     (fold.fold_doc)(&fold, doc)
 }
 
@@ -51,7 +67,7 @@ fn test() {
     let source = ~"mod z { mod y { } fn x() { } } mod w { }";
     do astsrv::from_str(source) |srv| {
         let doc = extract::from_srv(srv, ~"");
-        let doc = mk_pass(~"", name_lteq).f(srv, doc);
+        let doc = (mk_pass(~"", name_lteq).f)(srv, doc);
         assert doc.cratemod().mods()[0].name() == ~"w";
         assert doc.cratemod().mods()[1].items[0].name() == ~"x";
         assert doc.cratemod().mods()[1].items[1].name() == ~"y";
@@ -68,10 +84,10 @@ fn should_be_stable() {
     let source = ~"mod a { mod b { } } mod c { mod d { } }";
     do astsrv::from_str(source) |srv| {
         let doc = extract::from_srv(srv, ~"");
-        let doc = mk_pass(~"", always_eq).f(srv, doc);
+        let doc = (mk_pass(~"", always_eq).f)(srv, doc);
         assert doc.cratemod().mods()[0].items[0].name() == ~"b";
         assert doc.cratemod().mods()[1].items[0].name() == ~"d";
-        let doc = mk_pass(~"", always_eq).f(srv, doc);
+        let doc = (mk_pass(~"", always_eq).f)(srv, doc);
         assert doc.cratemod().mods()[0].items[0].name() == ~"b";
         assert doc.cratemod().mods()[1].items[0].name() == ~"d";
     }

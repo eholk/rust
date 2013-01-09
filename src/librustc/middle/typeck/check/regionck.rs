@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*
 
 The region check is a final pass that runs over the AST after we have
@@ -17,18 +27,22 @@ this point a bit better.
 
 */
 
-use util::ppaux;
-use ppaux::{note_and_explain_region, ty_to_str};
-use syntax::print::pprust;
-use infer::{resolve_and_force_all_but_regions, fres};
-use syntax::ast::{def_arg, def_binding, def_local, def_self, def_upvar};
-use syntax::ast::{ProtoBare, ProtoBox, ProtoUniq, ProtoBorrowed};
+
 use middle::freevars::get_freevars;
-use middle::kind::check_owned;
 use middle::pat_util::pat_bindings;
 use middle::ty::{encl_region, re_scope};
 use middle::ty::{ty_fn_proto, vstore_box, vstore_fixed, vstore_slice};
 use middle::ty::{vstore_uniq};
+use middle::ty;
+use middle::typeck::infer::{resolve_and_force_all_but_regions, fres};
+use util::ppaux::{note_and_explain_region, ty_to_str};
+
+use core::result;
+use syntax::ast::{ProtoBare, ProtoBox, ProtoUniq, ProtoBorrowed};
+use syntax::ast::{def_arg, def_binding, def_local, def_self, def_upvar};
+use syntax::ast;
+use syntax::print::pprust;
+use syntax::visit;
 
 enum rcx { rcx_({fcx: @fn_ctxt, mut errors_reported: uint}) }
 type rvt = visit::vt<@rcx>;
@@ -36,7 +50,7 @@ type rvt = visit::vt<@rcx>;
 fn encl_region_of_def(fcx: @fn_ctxt, def: ast::def) -> ty::Region {
     let tcx = fcx.tcx();
     match def {
-        def_local(node_id, _) | def_arg(node_id, _) | def_self(node_id) |
+        def_local(node_id, _) | def_arg(node_id, _) | def_self(node_id, _) |
         def_binding(node_id, _) =>
             return encl_region(tcx, node_id),
         def_upvar(_, subdef, closure_id, body_id) => {
@@ -155,7 +169,7 @@ fn visit_expr(expr: @ast::expr, &&rcx: @rcx, v: rvt) {
     debug!("visit_expr(e=%s)",
            pprust::expr_to_str(expr, rcx.fcx.tcx().sess.intr()));
 
-    match expr.node {
+    match /*bad*/copy expr.node {
         ast::expr_path(*) => {
             // Avoid checking the use of local variables, as we
             // already check their definitions.  The def'n always
@@ -194,6 +208,17 @@ fn visit_expr(expr: @ast::expr, &&rcx: @rcx, v: rvt) {
                 constrain_auto_ref(rcx, callee);
             }
 
+            for args.each |arg| {
+                constrain_auto_ref(rcx, *arg);
+            }
+        }
+
+        ast::expr_method_call(rcvr, _, _, args, _) => {
+            // Check for a.b() where b is a method.  Ensure that
+            // any types in the callee are valid for the entire
+            // method call.
+
+            constrain_auto_ref(rcx, rcvr);
             for args.each |arg| {
                 constrain_auto_ref(rcx, *arg);
             }

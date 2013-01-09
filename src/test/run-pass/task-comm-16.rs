@@ -1,6 +1,15 @@
 // -*- rust -*-
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-extern mod std;
+
 use pipes::send;
 use pipes::Port;
 use pipes::recv;
@@ -10,7 +19,7 @@ use pipes::Chan;
 fn test_rec() {
     type r = {val0: int, val1: u8, val2: char};
 
-    let (ch, po) = pipes::stream();
+    let (po, ch) = pipes::stream();
     let r0: r = {val0: 0, val1: 1u8, val2: '2'};
     ch.send(r0);
     let mut r1: r;
@@ -21,7 +30,7 @@ fn test_rec() {
 }
 
 fn test_vec() {
-    let (ch, po) = pipes::stream();
+    let (po, ch) = pipes::stream();
     let v0: ~[int] = ~[0, 1, 2];
     ch.send(v0);
     let v1 = po.recv();
@@ -31,7 +40,7 @@ fn test_vec() {
 }
 
 fn test_str() {
-    let (ch, po) = pipes::stream();
+    let (po, ch) = pipes::stream();
     let s0 = ~"test";
     ch.send(s0);
     let s1 = po.recv();
@@ -75,7 +84,7 @@ impl t : cmp::Eq {
 }
 
 fn test_tag() {
-    let (ch, po) = pipes::stream();
+    let (po, ch) = pipes::stream();
     ch.send(tag1);
     ch.send(tag2(10));
     ch.send(tag3(10, 11u8, 'A'));
@@ -89,8 +98,8 @@ fn test_tag() {
 }
 
 fn test_chan() {
-    let (ch, po) = pipes::stream();
-    let (ch0, po0) = pipes::stream();
+    let (po, ch) = pipes::stream();
+    let (po0, ch0) = pipes::stream();
     ch.send(move ch0);
     let ch1 = po.recv();
     // Does the transmitted channel still work?

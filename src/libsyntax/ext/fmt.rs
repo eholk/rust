@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 
 
 /*
@@ -5,15 +15,22 @@
  * should all get sucked into either the standard library extfmt module or the
  * compiler syntax extension plugin interface.
  */
-use extfmt::ct::*;
-use base::*;
+
+use ast;
 use codemap::span;
+use ext::base::*;
+use ext::base;
 use ext::build::*;
+use extfmt::ct::*;
+
 export expand_syntax_ext;
 
-fn expand_syntax_ext(cx: ext_ctxt, sp: span, arg: ast::mac_arg,
-                     _body: ast::mac_body) -> @ast::expr {
-    let args = get_mac_args_no_max(cx, sp, arg, 1u, ~"fmt");
+fn expand_syntax_ext(cx: ext_ctxt, sp: span, tts: ~[ast::token_tree])
+    -> base::mac_result {
+    let args = get_exprs_from_tts(cx, copy tts);
+    if args.len() == 0 {
+        cx.span_fatal(sp, "fmt! takes at least 1 argument.");
+    }
     let fmt =
         expr_to_str(cx, args[0],
                     ~"first argument to fmt! must be a string literal.");
@@ -27,7 +44,7 @@ fn expand_syntax_ext(cx: ext_ctxt, sp: span, arg: ast::mac_arg,
         parse_fmt_err_(cx, fmtspan, s)
     };
     let pieces = parse_fmt_string(fmt, parse_fmt_err);
-    return pieces_to_expr(cx, sp, pieces, args);
+    mr_expr(pieces_to_expr(cx, sp, pieces, args))
 }
 
 // FIXME (#2249): A lot of these functions for producing expressions can
@@ -44,7 +61,7 @@ fn pieces_to_expr(cx: ext_ctxt, sp: span,
     }
     fn make_rt_path_expr(cx: ext_ctxt, sp: span, nm: @~str) -> @ast::expr {
         let path = make_path_vec(cx, nm);
-        return mk_path(cx, sp, path);
+        return mk_path_global(cx, sp, path);
     }
     // Produces an AST expression that represents a RT::conv record,
     // which tells the RT::conv* functions how to perform the conversion
@@ -74,7 +91,7 @@ fn pieces_to_expr(cx: ext_ctxt, sp: span,
                 let count_lit = mk_uint(cx, sp, c as uint);
                 let count_is_path = make_path_vec(cx, @~"CountIs");
                 let count_is_args = ~[count_lit];
-                return mk_call(cx, sp, count_is_path, count_is_args);
+                return mk_call_global(cx, sp, count_is_path, count_is_args);
               }
               _ => cx.span_unimpl(sp, ~"unimplemented fmt! conversion")
             }
@@ -116,7 +133,7 @@ fn pieces_to_expr(cx: ext_ctxt, sp: span,
         let path = make_path_vec(cx, @fname);
         let cnv_expr = make_rt_conv_expr(cx, sp, cnv);
         let args = ~[cnv_expr, arg];
-        return mk_call(cx, arg.span, path, args);
+        return mk_call_global(cx, arg.span, path, args);
     }
 
     fn make_new_conv(cx: ext_ctxt, sp: span, cnv: Conv, arg: @ast::expr) ->
@@ -245,8 +262,8 @@ fn pieces_to_expr(cx: ext_ctxt, sp: span,
     let nargs = args.len();
     for pieces.each |pc| {
         match *pc {
-          PieceString(s) => {
-            piece_exprs.push(mk_uniq_str(cx, fmt_sp, s))
+          PieceString(ref s) => {
+            piece_exprs.push(mk_uniq_str(cx, fmt_sp, (*s)))
           }
           PieceConv(conv) => {
             n += 1u;
@@ -272,10 +289,11 @@ fn pieces_to_expr(cx: ext_ctxt, sp: span,
     }
 
     let arg_vec = mk_fixed_vec_e(cx, fmt_sp, piece_exprs);
-    return mk_call(cx, fmt_sp,
-                   ~[cx.parse_sess().interner.intern(@~"str"),
-                     cx.parse_sess().interner.intern(@~"concat")],
-                   ~[arg_vec]);
+    return mk_call_global(cx,
+                          fmt_sp,
+                          ~[cx.parse_sess().interner.intern(@~"str"),
+                            cx.parse_sess().interner.intern(@~"concat")],
+                          ~[arg_vec]);
 }
 //
 // Local Variables:

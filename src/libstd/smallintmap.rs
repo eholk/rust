@@ -1,13 +1,26 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * A simple map based on a vector for small integer keys. Space requirements
  * are O(highest integer key).
  */
 #[forbid(deprecated_mode)];
 
-use core::option;
-use core::option::{Some, None};
-use dvec::DVec;
+use map;
 use map::Map;
+
+use core::dvec::DVec;
+use core::ops;
+use core::option::{Some, None};
+use core::option;
 
 // FIXME (#2347): Should not be @; there's a bug somewhere in rustc that
 // requires this to be.
@@ -141,9 +154,9 @@ impl<V: Copy> SmallIntMap<V>: map::Map<uint, V> {
 }
 
 impl<V: Copy> SmallIntMap<V>: ops::Index<uint, V> {
-    pure fn index(key: uint) -> V {
+    pure fn index(&self, key: uint) -> V {
         unsafe {
-            get(self, key)
+            get(*self, key)
         }
     }
 }
@@ -155,6 +168,8 @@ pub fn as_map<V: Copy>(s: SmallIntMap<V>) -> map::Map<uint, V> {
 
 #[cfg(test)]
 mod tests {
+    use core::option::None;
+    use core::option;
 
     #[test]
     fn test_insert_with_key() {

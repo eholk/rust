@@ -1,11 +1,29 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Misc low level stuff
 
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
+use cast;
 use cmp::{Eq, Ord};
-use libc::c_void;
+use gc;
+use io;
+use libc;
+use libc::{c_void, c_char, size_t};
+use ptr;
+use repr;
+use str;
+use vec;
 
 pub type FreeGlue = fn(*TypeDesc, *c_void);
 
@@ -31,6 +49,11 @@ extern mod rusti {
     fn size_of<T>() -> uint;
     fn pref_align_of<T>() -> uint;
     fn min_align_of<T>() -> uint;
+}
+
+extern mod rustrt {
+    #[rust_stack]
+    fn rust_upcall_fail(expr: *c_char, file: *c_char, line: size_t);
 }
 
 /// Compares contents of two pointers using the default method.
@@ -98,8 +121,31 @@ pub pure fn log_str<T>(t: &T) -> ~str {
     }
 }
 
+/** Initiate task failure */
+pub pure fn begin_unwind(msg: ~str, file: ~str, line: uint) -> ! {
+    do str::as_buf(msg) |msg_buf, _msg_len| {
+        do str::as_buf(file) |file_buf, _file_len| {
+            unsafe {
+                let msg_buf = cast::transmute(msg_buf);
+                let file_buf = cast::transmute(file_buf);
+                begin_unwind_(msg_buf, file_buf, line as libc::size_t)
+            }
+        }
+    }
+}
+
+// XXX: Temorary until rt::rt_fail_ goes away
+pub pure fn begin_unwind_(msg: *c_char, file: *c_char, line: size_t) -> ! {
+    unsafe {
+        gc::cleanup_stack_for_failure();
+        rustrt::rust_upcall_fail(msg, file, line);
+        cast::transmute(())
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
+    use cast;
 
     #[test]
     pub fn size_of_basic() {

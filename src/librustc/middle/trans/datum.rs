@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  *
  * A `Datum` contains all the information you need to describe the LLVM
@@ -85,12 +95,22 @@
  * methods themselves.  Most are only suitable for some types of
  * values. */
 
+
 use lib::llvm::ValueRef;
-use base::*;
-use common::*;
-use build::*;
-use util::ppaux::ty_to_str;
+use middle::trans::base::*;
+use middle::trans::build::*;
+use middle::trans::common::*;
+use middle::trans::common;
+use middle::trans::tvec;
+use middle::typeck;
 use util::common::indenter;
+use util::ppaux::ty_to_str;
+
+use core::cmp;
+use core::option;
+use core::uint;
+use core::vec;
+use syntax::parse::token::special_idents;
 
 enum CopyAction {
     INIT,
@@ -145,14 +165,6 @@ impl DatumMode: cmp::Eq {
     pure fn ne(&self, other: &DatumMode) -> bool { !(*self).eq(other) }
 }
 
-#[cfg(stage0)]
-impl DatumMode: to_bytes::IterBytes {
-    pure fn iter_bytes(+lsb0: bool, f: to_bytes::Cb) {
-        (self as uint).iter_bytes(lsb0, f)
-    }
-}
-#[cfg(stage1)]
-#[cfg(stage2)]
 impl DatumMode: to_bytes::IterBytes {
     pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
         (*self as uint).iter_bytes(lsb0, f)
@@ -507,13 +519,17 @@ impl Datum {
         }
     }
 
-    fn GEPi(bcx: block, ixs: &[uint], ty: ty::t) -> Datum {
+    fn GEPi(bcx: block,
+            ixs: &[uint],
+            ty: ty::t,
+            source: DatumSource)
+         -> Datum {
         let base_val = self.to_ref_llval(bcx);
         Datum {
             val: GEPi(bcx, base_val, ixs),
             mode: ByRef,
             ty: ty,
-            source: FromLvalue
+            source: source
         }
     }
 
@@ -659,11 +675,11 @@ impl Datum {
                     }
                 };
             }
-            ty::ty_class(did, ref substs) => {
+            ty::ty_struct(did, ref substs) => {
                 // Check whether this struct is a newtype struct.
-                let fields = ty::class_items_as_fields(ccx.tcx, did, substs);
+                let fields = ty::struct_fields(ccx.tcx, did, substs);
                 if fields.len() != 1 || fields[0].ident !=
-                    syntax::parse::token::special_idents::unnamed_field {
+                    special_idents::unnamed_field {
                     return None;
                 }
 

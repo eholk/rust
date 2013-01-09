@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 # Method lookup
@@ -69,16 +79,27 @@ obtained the type `Foo`, we would never match this method.
 
 */
 
-use coherence::{ProvidedMethodInfo, get_base_type_def_id};
+
 use middle::resolve::{Impl, MethodInfo};
+use middle::resolve;
 use middle::ty::*;
-use syntax::ast::{def_id, sty_by_ref, sty_value, sty_region, sty_box,
-                  sty_uniq, sty_static, node_id, by_copy, by_ref,
-                  m_const, m_mutbl, m_imm};
+use middle::ty;
+use middle::typeck::check;
+use middle::typeck::check::vtable;
+use middle::typeck::coherence::get_base_type_def_id;
+use middle::typeck::infer;
+
+use core::dvec::DVec;
+use core::result;
+use core::uint;
+use core::vec;
+use syntax::ast::{def_id, sty_by_ref, sty_value, sty_region, sty_box};
+use syntax::ast::{sty_uniq, sty_static, node_id, by_copy, by_ref};
+use syntax::ast::{m_const, m_mutbl, m_imm};
+use syntax::ast;
 use syntax::ast_map;
 use syntax::ast_map::node_id_to_str;
 use syntax::ast_util::dummy_sp;
-use dvec::DVec;
 
 fn lookup(
     fcx: @fn_ctxt,
@@ -130,6 +151,7 @@ struct LookupContext {
 struct Candidate {
     rcvr_ty: ty::t,
     rcvr_substs: ty::substs,
+    explicit_self: ast::self_ty_,
 
     // FIXME #3446---these two fields should be easily derived from
     // origin, yet are not
@@ -137,6 +159,15 @@ struct Candidate {
     self_mode: ast::rmode,
 
     origin: method_origin,
+}
+
+/**
+ * How the self type should be transformed according to the form of explicit
+ * self provided by the method.
+ */
+enum TransformTypeFlag {
+    TransformTypeNormally,
+    TransformTypeForObject,
 }
 
 impl LookupContext {
@@ -257,7 +288,7 @@ impl LookupContext {
                     self.push_inherent_candidates_from_self(
                         self_ty, self_did, &substs);
                 }
-                ty_enum(did, _) | ty_class(did, _) => {
+                ty_enum(did, _) | ty_struct(did, _) => {
                     self.push_inherent_impl_candidates_for_type(did);
                 }
                 _ => { /* No inherent methods in these types */ }
@@ -293,7 +324,7 @@ impl LookupContext {
                 }
 
                 // Look for default methods.
-                match coherence_info.provided_methods.find(*trait_did) {
+                match self.tcx().provided_methods.find(*trait_did) {
                     Some(methods) => {
                         self.push_candidates_from_provided_methods(
                             &self.extension_candidates, self_ty, *trait_did,
@@ -305,7 +336,8 @@ impl LookupContext {
         }
     }
 
-    fn push_inherent_candidates_from_param(&self, rcvr_ty: ty::t,
+    fn push_inherent_candidates_from_param(&self,
+                                           rcvr_ty: ty::t,
                                            param_ty: param_ty) {
         debug!("push_inherent_candidates_from_param(param_ty=%?)",
                param_ty);
@@ -319,15 +351,15 @@ impl LookupContext {
             let bound_trait_ty = match *bound {
                 ty::bound_trait(bound_t) => bound_t,
 
-                ty::bound_copy | ty::bound_send |
-                ty::bound_const | ty::bound_owned => {
+                ty::bound_copy | ty::bound_owned |
+                ty::bound_const | ty::bound_durable => {
                     loop; // skip non-trait bounds
                 }
             };
 
 
             let bound_substs = match ty::get(bound_trait_ty).sty {
-                ty::ty_trait(_, substs, _) => substs,
+                ty::ty_trait(_, ref substs, _) => (/*bad*/copy *substs),
                 _ => {
                     self.bug(fmt!("add_candidates_from_param: \
                                    non-trait bound %s",
@@ -355,7 +387,7 @@ impl LookupContext {
 
             let mut i = 0;
             while i < worklist.len() {
-                let (init_trait_ty, init_substs) = worklist[i];
+                let (init_trait_ty, init_substs) = /*bad*/copy worklist[i];
                 i += 1;
 
                 let init_trait_id = ty::ty_to_def_id(init_trait_ty).get();
@@ -401,11 +433,15 @@ impl LookupContext {
 
                 let (rcvr_ty, rcvr_substs) =
                     self.create_rcvr_ty_and_substs_for_method(
-                        method.self_ty, rcvr_ty, move init_substs);
+                        method.self_ty,
+                        rcvr_ty,
+                        move init_substs,
+                        TransformTypeNormally);
 
                 let cand = Candidate {
                     rcvr_ty: rcvr_ty,
                     rcvr_substs: rcvr_substs,
+                    explicit_self: method.self_ty,
                     num_method_tps: method.tps.len(),
                     self_mode: get_mode_from_self_type(method.self_ty),
                     origin: method_param({trait_id:init_trait_id,
@@ -456,15 +492,18 @@ impl LookupContext {
         // `trait_ty` for `self` here, because it allows the compiler
         // to soldier on.  An error will be reported should this
         // candidate be selected if the method refers to `self`.
-        let rcvr_substs = {self_ty: Some(self_ty), ..*substs};
+        let rcvr_substs = {self_ty: Some(self_ty), ../*bad*/copy *substs};
 
         let (rcvr_ty, rcvr_substs) =
-            self.create_rcvr_ty_and_substs_for_method(
-                method.self_ty, self_ty, move rcvr_substs);
+            self.create_rcvr_ty_and_substs_for_method(method.self_ty,
+                                                      self_ty,
+                                                      move rcvr_substs,
+                                                      TransformTypeForObject);
 
         self.inherent_candidates.push(Candidate {
             rcvr_ty: rcvr_ty,
             rcvr_substs: move rcvr_substs,
+            explicit_self: method.self_ty,
             num_method_tps: method.tps.len(),
             self_mode: get_mode_from_self_type(method.self_ty),
             origin: method_trait(did, index, vstore)
@@ -484,14 +523,18 @@ impl LookupContext {
         }
         let method = &methods[index];
 
-        let rcvr_substs = { self_ty: Some(self_ty), ..*substs };
+        let rcvr_substs = { self_ty: Some(self_ty), ../*bad*/copy *substs };
         let (rcvr_ty, rcvr_substs) =
             self.create_rcvr_ty_and_substs_for_method(
-                method.self_ty, self_ty, move rcvr_substs);
+                method.self_ty,
+                self_ty,
+                move rcvr_substs,
+                TransformTypeNormally);
 
         self.inherent_candidates.push(Candidate {
             rcvr_ty: rcvr_ty,
             rcvr_substs: move rcvr_substs,
+            explicit_self: method.self_ty,
             num_method_tps: method.tps.len(),
             self_mode: get_mode_from_self_type(method.self_ty),
             origin: method_self(did, index)
@@ -538,11 +581,15 @@ impl LookupContext {
 
         let (impl_ty, impl_substs) =
             self.create_rcvr_ty_and_substs_for_method(
-                method.self_type, impl_ty, move impl_substs);
+                method.self_type,
+                impl_ty,
+                move impl_substs,
+                TransformTypeNormally);
 
         candidates.push(Candidate {
             rcvr_ty: impl_ty,
             rcvr_substs: move impl_substs,
+            explicit_self: method.self_type,
             num_method_tps: method.n_tps,
             self_mode: get_mode_from_self_type(method.self_type),
             origin: method_static(method.did)
@@ -572,11 +619,13 @@ impl LookupContext {
                 self.create_rcvr_ty_and_substs_for_method(
                     provided_method_info.method_info.self_type,
                     self_ty,
-                    dummy_substs);
+                    dummy_substs,
+                    TransformTypeNormally);
 
             candidates.push(Candidate {
                 rcvr_ty: impl_ty,
                 rcvr_substs: move impl_substs,
+                explicit_self: provided_method_info.method_info.self_type,
                 num_method_tps: provided_method_info.method_info.n_tps,
                 self_mode: get_mode_from_self_type(
                     provided_method_info.method_info.self_type),
@@ -588,8 +637,9 @@ impl LookupContext {
     fn create_rcvr_ty_and_substs_for_method(&self,
                                             self_decl: ast::self_ty_,
                                             self_ty: ty::t,
-                                            +self_substs: ty::substs)
-        -> (ty::t, ty::substs) {
+                                            +self_substs: ty::substs,
+                                            transform_type: TransformTypeFlag)
+                                         -> (ty::t, ty::substs) {
         // If the self type includes a region (like &self), we need to
         // ensure that the receiver substitutions have a self region.
         // If the receiver type does not itself contain borrowed
@@ -618,10 +668,11 @@ impl LookupContext {
             }
         };
 
-        let rcvr_ty =
-            transform_self_type_for_method(
-                self.tcx(), rcvr_substs.self_r,
-                self_ty, self_decl);
+        let rcvr_ty = transform_self_type_for_method(self.tcx(),
+                                                     rcvr_substs.self_r,
+                                                     self_ty,
+                                                     self_decl,
+                                                     transform_type);
 
         (rcvr_ty, rcvr_substs)
     }
@@ -638,6 +689,10 @@ impl LookupContext {
         match self.search_for_method(self_ty) {
             None => None,
             Some(move mme) => {
+                debug!("(searching for autoderef'd method) writing \
+                       adjustment (%u) to %d",
+                       autoderefs,
+                       self.self_expr.id);
                 self.fcx.write_autoderef_adjustment(
                     self.self_expr.id, autoderefs);
                 Some(mme)
@@ -661,19 +716,46 @@ impl LookupContext {
             ty_evec(mt, vstore_box) |
             ty_evec(mt, vstore_uniq) |
             ty_evec(mt, vstore_fixed(_)) => {
-                self.search_for_some_kind_of_autorefd_method(
+                // First try to borrow to a slice
+                let entry = self.search_for_some_kind_of_autorefd_method(
                     AutoBorrowVec, autoderefs, [m_const, m_imm, m_mutbl],
                     |m,r| ty::mk_evec(tcx,
                                       {ty:mt.ty, mutbl:m},
-                                      vstore_slice(r)))
+                                      vstore_slice(r)));
+
+                if entry.is_some() { return entry; }
+
+                // Then try to borrow to a slice *and* borrow a pointer.
+                self.search_for_some_kind_of_autorefd_method(
+                    AutoBorrowVecRef, autoderefs, [m_const, m_imm, m_mutbl],
+                    |m,r| {
+                        let slice_ty = ty::mk_evec(tcx,
+                                                   {ty:mt.ty, mutbl:m},
+                                                   vstore_slice(r));
+                        // NB: we do not try to autoref to a mutable
+                        // pointer. That would be creating a pointer
+                        // to a temporary pointer (the borrowed
+                        // slice), so any update the callee makes to
+                        // it can't be observed.
+                        ty::mk_rptr(tcx, r, {ty:slice_ty, mutbl:m_imm})
+                    })
             }
 
             ty_estr(vstore_box) |
             ty_estr(vstore_uniq) |
             ty_estr(vstore_fixed(_)) => {
-                self.search_for_some_kind_of_autorefd_method(
+                let entry = self.search_for_some_kind_of_autorefd_method(
                     AutoBorrowVec, autoderefs, [m_imm],
-                    |_m,r| ty::mk_estr(tcx, vstore_slice(r)))
+                    |_m,r| ty::mk_estr(tcx, vstore_slice(r)));
+
+                if entry.is_some() { return entry; }
+
+                self.search_for_some_kind_of_autorefd_method(
+                    AutoBorrowVecRef, autoderefs, [m_imm],
+                    |m,r| {
+                        let slice_ty = ty::mk_estr(tcx, vstore_slice(r));
+                        ty::mk_rptr(tcx, r, {ty:slice_ty, mutbl:m})
+                    })
             }
 
             ty_trait(*) | ty_fn(*) => {
@@ -705,7 +787,7 @@ impl LookupContext {
             ty_self | ty_param(*) | ty_nil | ty_bot | ty_bool |
             ty_int(*) | ty_uint(*) |
             ty_float(*) | ty_enum(*) | ty_ptr(*) | ty_rec(*) |
-            ty_class(*) | ty_tup(*) | ty_estr(*) | ty_evec(*) |
+            ty_struct(*) | ty_tup(*) | ty_estr(*) | ty_evec(*) |
             ty_trait(*) | ty_fn(*) => {
                 self.search_for_some_kind_of_autorefd_method(
                     AutoPtr, autoderefs, [m_const, m_imm, m_mutbl],
@@ -788,7 +870,7 @@ impl LookupContext {
         -> Option<method_map_entry>
     {
         let relevant_candidates =
-            candidates.filter_to_vec(|c| self.is_relevant(self_ty, &c));
+            candidates.filter_to_vec(|c| self.is_relevant(self_ty, c));
 
         let relevant_candidates = self.merge_candidates(relevant_candidates);
 
@@ -812,18 +894,18 @@ impl LookupContext {
         let mut merged = ~[];
         let mut i = 0;
         while i < candidates.len() {
-            let candidate_a = candidates[i];
+            let candidate_a = /*bad*/copy candidates[i];
 
             let mut skip = false;
 
             let mut j = i + 1;
             while j < candidates.len() {
-                let candidate_b = candidates[j];
+                let candidate_b = /*bad*/copy candidates[j];
                 debug!("attempting to merge %? and %?",
                        candidate_a, candidate_b);
                 let candidates_same = match (&candidate_a.origin,
                                              &candidate_b.origin) {
-                    (&method_param(p1), &method_param(p2)) => {
+                    (&method_param(ref p1), &method_param(ref p2)) => {
                         let same_trait = p1.trait_id == p2.trait_id;
                         let same_method = p1.method_num == p2.method_num;
                         let same_param = p1.param_num == p2.param_num;
@@ -904,13 +986,16 @@ impl LookupContext {
 
         // Construct the full set of type parameters for the method,
         // which is equal to the class tps + the method tps.
-        let all_substs = {tps: vec::append(candidate.rcvr_substs.tps,
-                                           m_substs),
-                          ..candidate.rcvr_substs};
+        let all_substs = {
+            tps: vec::append(/*bad*/copy candidate.rcvr_substs.tps,
+                             m_substs),
+            ../*bad*/copy candidate.rcvr_substs
+        };
 
         self.fcx.write_ty_substs(self.callee_id, fty, all_substs);
         return {self_arg: {mode: ast::expl(candidate.self_mode),
                            ty: candidate.rcvr_ty},
+                explicit_self: candidate.explicit_self,
                 origin: candidate.origin};
     }
 
@@ -990,7 +1075,7 @@ impl LookupContext {
                                 trait_did: def_id,
                                 method_num: uint) -> ty::t {
             let trait_methods = ty::trait_methods(tcx, trait_did);
-            ty::mk_fn(tcx, trait_methods[method_num].fty)
+            ty::mk_fn(tcx, /*bad*/copy trait_methods[method_num].fty)
         }
     }
 
@@ -999,8 +1084,8 @@ impl LookupContext {
             method_static(impl_did) => {
                 self.report_static_candidate(idx, impl_did)
             }
-            method_param(mp) => {
-                self.report_param_candidate(idx, mp.trait_id)
+            method_param(ref mp) => {
+                self.report_param_candidate(idx, (*mp).trait_id)
             }
             method_trait(trait_did, _, _) | method_self(trait_did, _) => {
                 self.report_param_candidate(idx, trait_did)
@@ -1065,7 +1150,7 @@ impl LookupContext {
         ty::item_path_str(self.tcx(), did)
     }
 
-    fn bug(&self, s: ~str) -> ! {
+    fn bug(&self, +s: ~str) -> ! {
         self.tcx().sess.bug(s)
     }
 }
@@ -1073,9 +1158,9 @@ impl LookupContext {
 fn transform_self_type_for_method(tcx: ty::ctxt,
                                   self_region: Option<ty::Region>,
                                   impl_ty: ty::t,
-                                  self_type: ast::self_ty_)
-    -> ty::t
-{
+                                  self_type: ast::self_ty_,
+                                  flag: TransformTypeFlag)
+                               -> ty::t {
     match self_type {
       sty_static => {
         tcx.sess.bug(~"calling transform_self_type_for_method on \
@@ -1090,10 +1175,20 @@ fn transform_self_type_for_method(tcx: ty::ctxt,
                 { ty: impl_ty, mutbl: mutability })
       }
       sty_box(mutability) => {
-        mk_box(tcx, { ty: impl_ty, mutbl: mutability })
+        match flag {
+            TransformTypeNormally => {
+                mk_box(tcx, { ty: impl_ty, mutbl: mutability })
+            }
+            TransformTypeForObject => impl_ty
+        }
       }
       sty_uniq(mutability) => {
-        mk_uniq(tcx, { ty: impl_ty, mutbl: mutability })
+        match flag {
+            TransformTypeNormally => {
+                mk_uniq(tcx, { ty: impl_ty, mutbl: mutability })
+            }
+            TransformTypeForObject => impl_ty
+        }
       }
     }
 }

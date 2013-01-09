@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 Sendable hash maps.  Very much a work in progress.
@@ -35,6 +45,12 @@ pub trait SendMap<K:Eq Hash, V: Copy> {
 
 /// Open addressing with linear probing.
 pub mod linear {
+    use cmp;
+    use option;
+    use rand;
+    use uint;
+    use vec;
+
     const INITIAL_CAPACITY: uint = 32u; // 2^5
 
     struct Bucket<K:Eq Hash,V> {
@@ -157,6 +173,7 @@ pub mod linear {
             let mut old_buckets = vec::from_fn(new_capacity, |_i| None);
             self.buckets <-> old_buckets;
 
+            self.size = 0;
             for uint::range(0, old_capacity) |i| {
                 let mut bucket = None;
                 bucket <-> old_buckets[i];
@@ -418,11 +435,32 @@ pub mod linear {
             option::unwrap(move value)
         }
     }
+
+    impl<K:Hash IterBytes Eq, V: Eq> LinearMap<K, V>: cmp::Eq {
+        pure fn eq(&self, other: &LinearMap<K, V>) -> bool {
+            if self.len() != other.len() { return false; }
+
+            for self.each |key, value| {
+                match other.find_ref(key) {
+                    None => return false,
+                    Some(v) => if value != v { return false },
+                }
+            }
+
+            return true;
+        }
+
+        pure fn ne(&self, other: &LinearMap<K, V>) -> bool {
+            !self.eq(other)
+        }
+    }
 }
 
 #[test]
 pub mod test {
-    use linear::LinearMap;
+    use send_map::linear::LinearMap;
+    use send_map::linear;
+    use uint;
 
     #[test]
     pub fn inserts() {
@@ -527,5 +565,41 @@ pub mod test {
             None => fail,
             Some(v) => assert *v == 2
         }
+    }
+
+    #[test]
+    pub fn test_eq() {
+        let mut m1 = ~LinearMap();
+        m1.insert(1, 2);
+        m1.insert(2, 3);
+        m1.insert(3, 4);
+
+        let mut m2 = ~LinearMap();
+        m2.insert(1, 2);
+        m2.insert(2, 3);
+
+        assert m1 != m2;
+
+        m2.insert(3, 4);
+
+        assert m1 == m2;
+    }
+
+    #[test]
+    pub fn test_expand() {
+        let mut m = ~LinearMap();
+
+        assert m.len() == 0;
+        assert m.is_empty();
+
+        let mut i = 0u;
+        let old_resize_at = m.resize_at;
+        while old_resize_at == m.resize_at {
+            m.insert(i, i);
+            i += 1;
+        }
+
+        assert m.len() == i;
+        assert !m.is_empty();
     }
 }

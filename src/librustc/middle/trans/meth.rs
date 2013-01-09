@@ -1,22 +1,40 @@
-use libc::c_uint;
-use base::*;
-use common::*;
-use type_of::*;
-use build::*;
-use driver::session::{session, expect};
-use syntax::{ast, ast_map};
-use ast_map::{path, path_mod, path_name, node_id_to_str};
-use syntax::ast_util::local_def;
-use metadata::csearch;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use back::{link, abi};
+use driver;
+use lib::llvm::llvm::LLVMGetParam;
 use lib::llvm::llvm;
 use lib::llvm::{ValueRef, TypeRef};
-use lib::llvm::llvm::LLVMGetParam;
-use std::map::HashMap;
+use lib;
+use metadata::csearch;
+use middle::trans::base::*;
+use middle::trans::build::*;
+use middle::trans::callee::*;
+use middle::trans::callee;
+use middle::trans::common::*;
+use middle::trans::expr::{SaveIn, Ignore};
+use middle::trans::expr;
+use middle::trans::glue;
+use middle::trans::inline;
+use middle::trans::monomorphize;
+use middle::trans::type_of::*;
+use middle::typeck;
 use util::ppaux::{ty_to_str, tys_to_str};
-use callee::*;
+
+use core::libc::c_uint;
+use std::map::HashMap;
+use syntax::ast_map::{path, path_mod, path_name, node_id_to_str};
+use syntax::ast_util::local_def;
 use syntax::print::pprust::expr_to_str;
-use expr::{SaveIn, Ignore};
+use syntax::{ast, ast_map};
 
 fn macros() { include!("macros.rs"); } // FIXME(#3114): Macro import/export.
 
@@ -26,7 +44,7 @@ for non-monomorphized methods only.  Other methods will
 be generated once they are invoked with specific type parameters,
 see `trans::base::lval_static_fn()` or `trans::base::monomorphic_fn()`.
 */
-fn trans_impl(ccx: @crate_ctxt, path: path, name: ast::ident,
+fn trans_impl(ccx: @crate_ctxt, +path: path, name: ast::ident,
               methods: ~[@ast::method], tps: ~[ast::ty_param],
               self_ty: Option<ty::t>, id: ast::node_id) {
     let _icx = ccx.insn_ctxt("impl::trans_impl");
@@ -35,13 +53,14 @@ fn trans_impl(ccx: @crate_ctxt, path: path, name: ast::ident,
     for vec::each(methods) |method| {
         if method.tps.len() == 0u {
             let llfn = get_item_val(ccx, method.id);
-            let path = vec::append_one(sub_path, path_name(method.ident));
+            let path = vec::append_one(/*bad*/copy sub_path,
+                                       path_name(method.ident));
 
             let param_substs_opt;
             match self_ty {
                 None => param_substs_opt = None,
                 Some(self_ty) => {
-                    param_substs_opt = Some({
+                    param_substs_opt = Some(param_substs {
                         tys: ~[],
                         vtables: None,
                         bounds: @~[],
@@ -72,13 +91,12 @@ Translates a (possibly monomorphized) method body.
 - `impl_id`: the node ID of the impl this method is inside
 */
 fn trans_method(ccx: @crate_ctxt,
-                path: path,
+                +path: path,
                 method: &ast::method,
-                param_substs: Option<param_substs>,
+                +param_substs: Option<param_substs>,
                 base_self_ty: Option<ty::t>,
                 llfn: ValueRef,
                 impl_id: ast::def_id) {
-
     // figure out how self is being passed
     let self_arg = match method.self_ty.node {
       ast::sty_static => {
@@ -94,7 +112,7 @@ fn trans_method(ccx: @crate_ctxt,
         }
         let self_ty = match param_substs {
             None => self_ty,
-            Some({tys: ref tys, _}) => {
+            Some(param_substs {tys: ref tys, _}) => {
                 ty::subst_tps(ccx.tcx, *tys, None, self_ty)
             }
         };
@@ -202,7 +220,12 @@ fn trans_method_callee(bcx: block, callee_id: ast::node_id,
             }
         }
         typeck::method_trait(_, off, vstore) => {
-            trans_trait_callee(bcx, callee_id, off, self, vstore)
+            trans_trait_callee(bcx,
+                               callee_id,
+                               off,
+                               self,
+                               vstore,
+                               mentry.explicit_self)
         }
         typeck::method_self(*) => {
             fail ~"method_self should have been handled above"
@@ -266,7 +289,7 @@ fn trans_static_method_callee(bcx: block,
     let vtbls = resolve_vtables_in_fn_ctxt(
         bcx.fcx, ccx.maps.vtable_map.get(callee_id));
 
-    match vtbls[bound_index] {
+    match /*bad*/copy vtbls[bound_index] {
         typeck::vtable_static(impl_did, rcvr_substs, rcvr_origins) => {
 
             let mth_id = method_with_name(bcx.ccx(), impl_did, mname);
@@ -294,20 +317,53 @@ fn trans_static_method_callee(bcx: block,
 }
 
 fn method_from_methods(ms: ~[@ast::method], name: ast::ident)
-    -> ast::def_id {
-  local_def(option::get(vec::find(ms, |m| m.ident == name)).id)
+    -> Option<ast::def_id> {
+    ms.find(|m| m.ident == name).map(|m| local_def(m.id))
 }
 
 fn method_with_name(ccx: @crate_ctxt, impl_id: ast::def_id,
                     name: ast::ident) -> ast::def_id {
     if impl_id.crate == ast::local_crate {
         match ccx.tcx.items.get(impl_id.node) {
-          ast_map::node_item(@{node: ast::item_impl(_, _, _, ms), _}, _) => {
-            method_from_methods(ms, name)
+          ast_map::node_item(@{
+                node: ast::item_impl(_, _, _, ref ms),
+                _
+            }, _) => {
+            method_from_methods(/*bad*/copy *ms, name).get()
           }
-          ast_map::node_item(@{node:
-              ast::item_class(struct_def, _), _}, _) => {
-            method_from_methods(struct_def.methods, name)
+          _ => fail ~"method_with_name"
+        }
+    } else {
+        csearch::get_impl_method(ccx.sess.cstore, impl_id, name)
+    }
+}
+
+fn method_with_name_or_default(ccx: @crate_ctxt, impl_id: ast::def_id,
+                               name: ast::ident) -> ast::def_id {
+    if impl_id.crate == ast::local_crate {
+        match ccx.tcx.items.get(impl_id.node) {
+          ast_map::node_item(@{
+                node: ast::item_impl(_, _, _, ref ms), _
+          }, _) => {
+              let did = method_from_methods(/*bad*/copy *ms, name);
+              if did.is_some() {
+                  return did.get();
+              } else {
+                  // Look for a default method
+                  let pmm = ccx.tcx.provided_methods;
+                  match pmm.find(impl_id) {
+                      Some(pmis) => {
+                          for pmis.each |pmi| {
+                              if pmi.method_info.ident == name {
+                                  debug!("XXX %?", pmi.method_info.did);
+                                  return pmi.method_info.did;
+                              }
+                          }
+                          fail
+                      }
+                      None => fail
+                  }
+              }
           }
           _ => fail ~"method_with_name"
         }
@@ -318,10 +374,24 @@ fn method_with_name(ccx: @crate_ctxt, impl_id: ast::def_id,
 
 fn method_ty_param_count(ccx: @crate_ctxt, m_id: ast::def_id,
                          i_id: ast::def_id) -> uint {
+    debug!("method_ty_param_count: m_id: %?, i_id: %?", m_id, i_id);
     if m_id.crate == ast::local_crate {
-        match ccx.tcx.items.get(m_id.node) {
-          ast_map::node_method(m, _, _) => vec::len(m.tps),
-          _ => fail ~"method_ty_param_count"
+        match ccx.tcx.items.find(m_id.node) {
+            Some(ast_map::node_method(m, _, _)) => m.tps.len(),
+            None => {
+                match ccx.tcx.provided_method_sources.find(m_id) {
+                    Some(source) => {
+                        method_ty_param_count(
+                            ccx, source.method_id, source.impl_id)
+                    }
+                    None => fail
+                }
+            }
+            Some(ast_map::node_trait_method(@ast::provided(@ref m), _, _))
+                => {
+                m.tps.len()
+            }
+            copy e => fail fmt!("method_ty_param_count %?", e)
         }
     } else {
         csearch::get_type_param_count(ccx.sess.cstore, m_id) -
@@ -335,7 +405,7 @@ fn trans_monomorphized_callee(bcx: block,
                               mentry: typeck::method_map_entry,
                               trait_id: ast::def_id,
                               n_method: uint,
-                              vtbl: typeck::vtable_origin)
+                              +vtbl: typeck::vtable_origin)
     -> Callee
 {
     let _icx = bcx.insn_ctxt("impl::trans_monomorphized_callee");
@@ -343,7 +413,8 @@ fn trans_monomorphized_callee(bcx: block,
       typeck::vtable_static(impl_did, rcvr_substs, rcvr_origins) => {
           let ccx = bcx.ccx();
           let mname = ty::trait_methods(ccx.tcx, trait_id)[n_method].ident;
-          let mth_id = method_with_name(bcx.ccx(), impl_did, mname);
+          let mth_id = method_with_name_or_default(
+              bcx.ccx(), impl_did, mname);
 
           // obtain the `self` value:
           let Result {bcx, val: llself_val} =
@@ -378,7 +449,12 @@ fn trans_monomorphized_callee(bcx: block,
           }
       }
       typeck::vtable_trait(_, _) => {
-          trans_trait_callee(bcx, callee_id, n_method, base, ty::vstore_box)
+          trans_trait_callee(bcx,
+                             callee_id,
+                             n_method,
+                             base,
+                             ty::vstore_box,
+                             mentry.explicit_self)
       }
       typeck::vtable_param(*) => {
           fail ~"vtable_param left in monomorphized function's vtable substs";
@@ -391,7 +467,7 @@ fn combine_impl_and_methods_tps(bcx: block,
                                 mth_did: ast::def_id,
                                 impl_did: ast::def_id,
                                 callee_id: ast::node_id,
-                                rcvr_substs: ~[ty::t])
+                                +rcvr_substs: ~[ty::t])
     -> ~[ty::t]
 {
     /*!
@@ -414,12 +490,12 @@ fn combine_impl_and_methods_tps(bcx: block,
     let ccx = bcx.ccx();
     let n_m_tps = method_ty_param_count(ccx, mth_did, impl_did);
     let node_substs = node_id_type_params(bcx, callee_id);
+    debug!("rcvr_substs=%?", rcvr_substs.map(|t| bcx.ty_to_str(*t)));
     let ty_substs
         = vec::append(rcvr_substs,
                       vec::tailn(node_substs,
                                  node_substs.len() - n_m_tps));
     debug!("n_m_tps=%?", n_m_tps);
-    debug!("rcvr_substs=%?", rcvr_substs.map(|t| bcx.ty_to_str(*t)));
     debug!("node_substs=%?", node_substs.map(|t| bcx.ty_to_str(*t)));
     debug!("ty_substs=%?", ty_substs.map(|t| bcx.ty_to_str(*t)));
 
@@ -452,15 +528,7 @@ fn combine_impl_and_methods_origins(bcx: block,
     let m_boundss = vec::view(*r_m_bounds, n_r_m_tps - n_m_tps, n_r_m_tps);
 
     // Flatten out to find the number of vtables the method expects.
-    let m_vtables = m_boundss.foldl(0, |sum, m_bounds| {
-        m_bounds.foldl(*sum, |sum, m_bound| {
-            (*sum) + match (*m_bound) {
-                ty::bound_copy | ty::bound_owned |
-                ty::bound_send | ty::bound_const => 0,
-                ty::bound_trait(_) => 1
-            }
-        })
-    });
+    let m_vtables = ty::count_traits_and_supertraits(tcx, m_boundss);
 
     // Find the vtables we computed at type check time and monomorphize them
     let r_m_origins = match node_vtables(bcx, callee_id) {
@@ -472,7 +540,7 @@ fn combine_impl_and_methods_origins(bcx: block,
     let m_origins = vec::tailn(*r_m_origins, r_m_origins.len() - m_vtables);
 
     // Combine rcvr + method to find the final result:
-    @vec::append(*rcvr_origins, m_origins)
+    @vec::append(/*bad*/copy *rcvr_origins, m_origins)
 }
 
 
@@ -480,8 +548,9 @@ fn trans_trait_callee(bcx: block,
                       callee_id: ast::node_id,
                       n_method: uint,
                       self_expr: @ast::expr,
-                      vstore: ty::vstore)
-    -> Callee
+                      vstore: ty::vstore,
+                      explicit_self: ast::self_ty_)
+                   -> Callee
 {
     //!
     //
@@ -494,18 +563,32 @@ fn trans_trait_callee(bcx: block,
 
     let _icx = bcx.insn_ctxt("impl::trans_trait_callee");
     let mut bcx = bcx;
-    let self_datum = unpack_datum!(bcx, expr::trans_to_datum(bcx, self_expr));
+    let self_datum = unpack_datum!(bcx,
+        expr::trans_to_datum(bcx, self_expr));
     let llpair = self_datum.to_ref_llval(bcx);
+
+    let llpair = match explicit_self {
+        ast::sty_region(_) => Load(bcx, llpair),
+        ast::sty_static | ast::sty_by_ref | ast::sty_value |
+        ast::sty_box(_) | ast::sty_uniq(_) => llpair
+    };
+
     let callee_ty = node_id_type(bcx, callee_id);
-    trans_trait_callee_from_llval(bcx, callee_ty, n_method, llpair, vstore)
+    trans_trait_callee_from_llval(bcx,
+                                  callee_ty,
+                                  n_method,
+                                  llpair,
+                                  vstore,
+                                  explicit_self)
 }
 
 fn trans_trait_callee_from_llval(bcx: block,
                                  callee_ty: ty::t,
                                  n_method: uint,
                                  llpair: ValueRef,
-                                 vstore: ty::vstore)
-    -> Callee
+                                 vstore: ty::vstore,
+                                 explicit_self: ast::self_ty_)
+                              -> Callee
 {
     //!
     //
@@ -517,6 +600,8 @@ fn trans_trait_callee_from_llval(bcx: block,
     let mut bcx = bcx;
 
     // Load the vtable from the @Trait pair
+    debug!("(translating trait callee) loading vtable from pair %s",
+           val_str(bcx.ccx().tn, llpair));
     let llvtable = Load(bcx,
                       PointerCast(bcx,
                                   GEPi(bcx, llpair, [0u, 0u]),
@@ -524,21 +609,92 @@ fn trans_trait_callee_from_llval(bcx: block,
 
     // Load the box from the @Trait pair and GEP over the box header if
     // necessary:
-    let llself;
+    let mut llself;
+    debug!("(translating trait callee) loading second index from pair");
     let llbox = Load(bcx, GEPi(bcx, llpair, [0u, 1u]));
-    match vstore {
-        ty::vstore_box | ty::vstore_uniq => {
-            llself = GEPi(bcx, llbox, [0u, abi::box_field_body]);
+
+    // Munge `llself` appropriately for the type of `self` in the method.
+    let self_mode;
+    match explicit_self {
+        ast::sty_static => {
+            bcx.tcx().sess.bug(~"shouldn't see static method here");
         }
-        ty::vstore_slice(_) => {
-            llself = llbox;
+        ast::sty_by_ref => {
+            // We need to pass a pointer to a pointer to the payload.
+            match vstore {
+                ty::vstore_box | ty::vstore_uniq => {
+                    llself = GEPi(bcx, llbox, [0u, abi::box_field_body]);
+                }
+                ty::vstore_slice(_) => {
+                    llself = llbox;
+                }
+                ty::vstore_fixed(*) => {
+                    bcx.tcx().sess.bug(~"vstore_fixed trait");
+                }
+            }
+
+            self_mode = ast::by_ref;
         }
-        ty::vstore_fixed(*) => {
-            bcx.tcx().sess.bug(~"vstore_fixed trait");
+        ast::sty_value => {
+            bcx.tcx().sess.bug(~"methods with by-value self should not be \
+                               called on objects");
+        }
+        ast::sty_region(_) => {
+            // As before, we need to pass a pointer to a pointer to the
+            // payload.
+            match vstore {
+                ty::vstore_box | ty::vstore_uniq => {
+                    llself = GEPi(bcx, llbox, [0u, abi::box_field_body]);
+                }
+                ty::vstore_slice(_) => {
+                    llself = llbox;
+                }
+                ty::vstore_fixed(*) => {
+                    bcx.tcx().sess.bug(~"vstore_fixed trait");
+                }
+            }
+
+            let llscratch = alloca(bcx, val_ty(llself));
+            Store(bcx, llself, llscratch);
+            llself = llscratch;
+
+            self_mode = ast::by_ref;
+        }
+        ast::sty_box(_) => {
+            // Bump the reference count on the box.
+            debug!("(translating trait callee) callee type is `%s`",
+                   bcx.ty_to_str(callee_ty));
+            bcx = glue::take_ty(bcx, llbox, callee_ty);
+
+            // Pass a pointer to the box.
+            match vstore {
+                ty::vstore_box => llself = llbox,
+                _ => bcx.tcx().sess.bug(~"@self receiver with non-@Trait")
+            }
+
+            let llscratch = alloca(bcx, val_ty(llself));
+            Store(bcx, llself, llscratch);
+            llself = llscratch;
+
+            self_mode = ast::by_ref;
+        }
+        ast::sty_uniq(_) => {
+            // Pass the unique pointer.
+            match vstore {
+                ty::vstore_uniq => llself = llbox,
+                _ => bcx.tcx().sess.bug(~"~self receiver with non-~Trait")
+            }
+
+            let llscratch = alloca(bcx, val_ty(llself));
+            Store(bcx, llself, llscratch);
+            llself = llscratch;
+
+            self_mode = ast::by_ref;
         }
     }
 
     // Load the function from the vtable and cast it to the expected type.
+    debug!("(translating trait callee) loading method");
     let llcallee_ty = type_of::type_of_fn_from_ty(ccx, callee_ty);
     let mptr = Load(bcx, GEPi(bcx, llvtable, [0u, n_method]));
     let mptr = PointerCast(bcx, mptr, T_ptr(llcallee_ty));
@@ -549,13 +705,13 @@ fn trans_trait_callee_from_llval(bcx: block,
             llfn: mptr,
             llself: llself,
             self_ty: ty::mk_opaque_box(bcx.tcx()),
-            self_mode: ast::by_ref, // XXX: is this bogosity?
+            self_mode: self_mode,
             /* XXX: Some(llbox) */
         })
     };
 }
 
-fn vtable_id(ccx: @crate_ctxt, origin: typeck::vtable_origin) -> mono_id {
+fn vtable_id(ccx: @crate_ctxt, +origin: typeck::vtable_origin) -> mono_id {
     match origin {
         typeck::vtable_static(impl_id, substs, sub_vtables) => {
             monomorphize::make_mono_id(
@@ -571,18 +727,20 @@ fn vtable_id(ccx: @crate_ctxt, origin: typeck::vtable_origin) -> mono_id {
                 None)
         }
         typeck::vtable_trait(trait_id, substs) => {
-            @{def: trait_id,
-              params: vec::map(substs, |t| mono_precise(*t, None)),
-              impl_did_opt: None}
+            @mono_id_ {
+                def: trait_id,
+                params: vec::map(substs, |t| mono_precise(*t, None)),
+                impl_did_opt: None
+            }
         }
         // can't this be checked at the callee?
         _ => fail ~"vtable_id"
     }
 }
 
-fn get_vtable(ccx: @crate_ctxt, origin: typeck::vtable_origin)
-    -> ValueRef {
-    let hash_id = vtable_id(ccx, origin);
+fn get_vtable(ccx: @crate_ctxt, +origin: typeck::vtable_origin) -> ValueRef {
+    // XXX: Bad copy.
+    let hash_id = vtable_id(ccx, copy origin);
     match ccx.vtables.find(hash_id) {
       Some(val) => val,
       None => match origin {
@@ -622,8 +780,12 @@ fn make_impl_vtable(ccx: @crate_ctxt, impl_id: ast::def_id, substs: ~[ty::t],
     make_vtable(ccx, vec::map(*ty::trait_methods(tcx, trt_id), |im| {
         let fty = ty::subst_tps(tcx, substs, None, ty::mk_fn(tcx, im.fty));
         if (*im.tps).len() > 0u || ty::type_has_self(fty) {
+            debug!("(making impl vtable) method has self or type params: %s",
+                   tcx.sess.str_of(im.ident));
             C_null(T_ptr(T_nil()))
         } else {
+            debug!("(making impl vtable) adding method to vtable: %s",
+                   tcx.sess.str_of(im.ident));
             let mut m_id = method_with_name(ccx, impl_id, im.ident);
             if has_tps {
                 // If the method is in another crate, need to make an inlined
@@ -711,7 +873,7 @@ fn trans_trait_cast(bcx: block,
     }
 
     // Store the vtable into the pair or triple.
-    let orig = ccx.maps.vtable_map.get(id)[0];
+    let orig = /*bad*/copy ccx.maps.vtable_map.get(id)[0];
     let orig = resolve_vtable_in_fn_ctxt(bcx.fcx, orig);
     let vtable = get_vtable(bcx.ccx(), orig);
     Store(bcx, vtable, PointerCast(bcx,

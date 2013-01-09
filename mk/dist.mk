@@ -15,23 +15,27 @@ endif
 PKG_GITMODULES := $(S)src/libuv $(S)src/llvm
 
 PKG_FILES := \
-    $(S)LICENSE.txt $(S)README.md              \
+    $(S)COPYRIGHT                              \
+    $(S)LICENSE-APACHE                         \
+    $(S)LICENSE-MIT                            \
+    $(S)README.md                              \
     $(S)configure $(S)Makefile.in              \
     $(S)man                                    \
     $(S)doc                                    \
     $(addprefix $(S)src/,                      \
       README.txt                               \
-      cargo                                    \
-      rusti                                    \
-      rustc                                    \
+      driver                                   \
+      libcargo                                 \
+      librusti                                 \
+      librustc                                 \
       compiletest                              \
       etc                                      \
-      fuzzer                                   \
+      libfuzzer                                \
       libcore                                  \
       libsyntax                                \
       libstd                                   \
       rt                                       \
-      rustdoc                                  \
+      librustdoc                               \
       rustllvm                                 \
       snapshots.txt                            \
       test)                                    \
@@ -42,8 +46,8 @@ PKG_FILES := \
 UNROOTED_PKG_FILES := $(patsubst $(S)%,./%,$(PKG_FILES))
 
 ifdef CFG_ISCC
-LICENSE.txt: $(S)LICENSE.txt
-	cp $< $@
+LICENSE.txt: $(S)COPYRIGHT $(S)LICENSE-APACHE $(S)LICENSE-MIT
+	cat $^ > $@
 
 %.iss: $(S)src/etc/pkg/%.iss
 	cp $< $@

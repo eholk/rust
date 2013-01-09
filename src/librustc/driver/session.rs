@@ -1,14 +1,32 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-use syntax::{ast, codemap};
-use syntax::ast::node_id;
-use codemap::span;
-use syntax::ast::{int_ty, uint_ty, float_ty};
-use syntax::parse::parse_sess;
-use metadata::filesearch;
-use back::target_strs;
+
 use back::link;
+use back::target_strs;
+use back;
+use driver;
+use driver::session;
+use metadata::filesearch;
+use metadata;
 use middle::lint;
 
+use core::cmp;
+use core::option;
+use syntax::ast::node_id;
+use syntax::ast::{int_ty, uint_ty, float_ty};
+use syntax::codemap::span;
+use syntax::diagnostic;
+use syntax::parse::parse_sess;
+use syntax::{ast, codemap};
+use syntax;
 
 enum os { os_win32, os_macos, os_linux, os_freebsd, }
 
@@ -55,7 +73,8 @@ const debug_llvm: uint = 1 << 13;
 const count_type_sizes: uint = 1 << 14;
 const meta_stats: uint = 1 << 15;
 const no_opt: uint = 1 << 16;
-const ptx: uint = 1 << 17;
+const no_monomorphic_collapse: uint = 1 << 17;
+const ptx: uint = 1 << 18;
 
 fn debugging_opts_map() -> ~[(~str, ~str, uint)] {
     ~[(~"verbose", ~"in general, enable more debug printouts", verbose),
@@ -81,7 +100,9 @@ fn debugging_opts_map() -> ~[(~str, ~str, uint)] {
       count_type_sizes),
      (~"meta-stats", ~"gather metadata statistics", meta_stats),
      (~"no-opt", ~"do not optimize, even if -O is passed", no_opt),
-     (~"ptx", ~"generate PTX code", ptx)
+     (~"ptx", ~"generate PTX code", ptx),
+     (~"no-monomorphic-collapse", ~"do not collapse template instantiations",
+      no_monomorphic_collapse),
     ]
 }
 
@@ -189,8 +210,7 @@ impl Session {
     fn unimpl(msg: ~str) -> ! {
         self.span_diagnostic.handler().unimpl(msg)
     }
-    fn span_lint_level(level: lint::level,
-                       sp: span, msg: ~str) {
+    fn span_lint_level(level: lint::level, sp: span, +msg: ~str) {
         match level {
           lint::allow => { },
           lint::warn => self.span_warn(sp, msg),
@@ -200,8 +220,10 @@ impl Session {
         }
     }
     fn span_lint(lint_mode: lint::lint,
-                 expr_id: ast::node_id, item_id: ast::node_id,
-                 span: span, msg: ~str) {
+                 expr_id: ast::node_id,
+                 item_id: ast::node_id,
+                 span: span,
+                 +msg: ~str) {
         let level = lint::get_lint_settings_level(
             self.lint_settings, lint_mode, expr_id, item_id);
         self.span_lint_level(level, span, msg);
@@ -234,11 +256,14 @@ impl Session {
     fn borrowck_stats() -> bool { self.debugging_opt(borrowck_stats) }
     fn borrowck_note_pure() -> bool { self.debugging_opt(borrowck_note_pure) }
     fn borrowck_note_loan() -> bool { self.debugging_opt(borrowck_note_loan) }
+    fn no_monomorphic_collapse() -> bool {
+        self.debugging_opt(no_monomorphic_collapse)
+    }
 
     fn str_of(id: ast::ident) -> ~str {
-        *self.parse_sess.interner.get(id)
+        /*bad*/copy *self.parse_sess.interner.get(id)
     }
-    fn ident_of(st: ~str) -> ast::ident {
+    fn ident_of(+st: ~str) -> ast::ident {
         self.parse_sess.interner.intern(@st)
     }
     fn intr() -> @syntax::parse::token::ident_interner {
@@ -310,9 +335,10 @@ fn sess_os_to_meta_os(os: os) -> metadata::loader::os {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+    use syntax::ast;
     use syntax::ast_util;
 
-    fn make_crate_type_attr(t: ~str) -> ast::attribute {
+    fn make_crate_type_attr(+t: ~str) -> ast::attribute {
         ast_util::respan(ast_util::dummy_sp(), {
             style: ast::attr_outer,
             value: ast_util::respan(ast_util::dummy_sp(),

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #[legacy_modes];
 
 /*!
@@ -15,9 +25,9 @@ use std::map::HashMap;
 use std::deque;
 use std::deque::Deque;
 use std::par;
-use io::WriterUtil;
-use comm::*;
-use int::abs;
+use core::io::WriterUtil;
+use core::oldcomm::*;
+use core::int::abs;
 
 type node_id = i64;
 type graph = ~[~[node_id]];
@@ -178,7 +188,7 @@ fn bfs2(graph: graph, key: node_id) -> bfs_result {
               white => {
                 let i = i as node_id;
 
-                let neighbors = graph[i];
+                let neighbors = copy graph[i];
 
                 let mut color = white;
 
@@ -259,7 +269,7 @@ fn pbfs(&&graph: arc::ARC<graph>, key: node_id) -> bfs_result {
                   white => {
                     let i = i as node_id;
 
-                    let neighbors = graph[i];
+                    let neighbors = copy graph[i];
 
                     let mut color = white;
 
@@ -368,7 +378,7 @@ fn validate(edges: ~[(node_id, node_id)],
 
     log(info, ~"Verifying tree and graph edges...");
 
-    let status = do par::alli(tree) |u, v| {
+    let status = do par::alli(tree) |u, v, copy edges| {
         let u = u as node_id;
         if *v == -1i64 || u == root {
             true
@@ -407,7 +417,7 @@ fn main() {
                                  vec::len(edges), stop - start));
 
     let start = time::precise_time_s();
-    let graph = make_graph(1 << scale, edges);
+    let graph = make_graph(1 << scale, copy edges);
     let stop = time::precise_time_s();
 
     let mut total_edges = 0;
@@ -428,7 +438,7 @@ fn main() {
 
         if do_sequential {
             let start = time::precise_time_s();
-            let bfs_tree = bfs(graph, *root);
+            let bfs_tree = bfs(copy graph, *root);
             let stop = time::precise_time_s();
             
             //total_seq += stop - start;
@@ -439,7 +449,7 @@ fn main() {
             
             if do_validate {
                 let start = time::precise_time_s();
-                assert(validate(edges, *root, bfs_tree));
+                assert(validate(copy edges, *root, bfs_tree));
                 let stop = time::precise_time_s();
                 
                 io::stdout().write_line(
@@ -448,7 +458,7 @@ fn main() {
             }
             
             let start = time::precise_time_s();
-            let bfs_tree = bfs2(graph, *root);
+            let bfs_tree = bfs2(copy graph, *root);
             let stop = time::precise_time_s();
             
             total_seq += stop - start;
@@ -459,7 +469,7 @@ fn main() {
             
             if do_validate {
                 let start = time::precise_time_s();
-                assert(validate(edges, *root, bfs_tree));
+                assert(validate(copy edges, *root, bfs_tree));
                 let stop = time::precise_time_s();
                 
                 io::stdout().write_line(
@@ -479,7 +489,7 @@ fn main() {
 
         if do_validate {
             let start = time::precise_time_s();
-            assert(validate(edges, *root, bfs_tree));
+            assert(validate(copy edges, *root, bfs_tree));
             let stop = time::precise_time_s();
             
             io::stdout().write_line(fmt!("Validation completed in %? seconds.",

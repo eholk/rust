@@ -1,6 +1,22 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Records the full path to items
 
+use astsrv;
 use doc::ItemUtils;
+use doc;
+use extract;
+use fold::Fold;
+use fold;
+
 use syntax::ast;
 
 pub fn mk_pass() -> Pass {
@@ -25,12 +41,12 @@ fn run(srv: astsrv::Srv, +doc: doc::Doc) -> doc::Doc {
         srv: srv,
         mut path: ~[]
     };
-    let fold = fold::Fold({
+    let fold = Fold {
         fold_item: fold_item,
         fold_mod: fold_mod,
         fold_nmod: fold_nmod,
-        .. *fold::default_any_fold(move ctxt)
-    });
+        .. fold::default_any_fold(move ctxt)
+    };
     (fold.fold_doc)(&fold, doc)
 }
 

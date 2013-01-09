@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*! Implementation of proto! extension.
 
 This is frequently called the pipe compiler. It handles code such as...
@@ -33,15 +43,15 @@ FIXME (#3072) - This is still incomplete.
 
 */
 
-use codemap::span;
-use ext::base::ext_ctxt;
+use ast;
 use ast::tt_delim;
+use codemap::span;
+use ext::base;
+use ext::base::ext_ctxt;
+use ext::pipes::parse_proto::proto_parser;
+use ext::pipes::proto::{visit, protocol};
 use parse::lexer::{new_tt_reader, reader};
 use parse::parser::Parser;
-
-use pipes::parse_proto::proto_parser;
-
-use pipes::proto::{visit, protocol};
 
 #[legacy_exports]
 mod ast_builder;

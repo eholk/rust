@@ -1,6 +1,30 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! The main parser interface
 
 #[legacy_exports];
+
+use ast::node_id;
+use ast;
+use codemap::{span, CodeMap, FileMap, CharPos, BytePos};
+use codemap;
+use diagnostic::{span_handler, mk_span_handler, mk_handler, emitter};
+use parse::attr::parser_attr;
+use parse::lexer::{reader, string_reader};
+use parse::parser::Parser;
+use parse::token::{ident_interner, mk_ident_interner};
+use util::interner;
+
+use core::io;
+use core::result;
 
 export parser;
 export common;
@@ -10,6 +34,7 @@ export comments;
 export prec;
 export classify;
 export attr;
+export obsolete;
 
 export parse_sess;
 export new_parse_sess, new_parse_sess_special_handler;
@@ -24,15 +49,6 @@ export parse_expr_from_source_str, parse_item_from_source_str;
 export parse_stmt_from_source_str;
 export parse_tts_from_source_str;
 export parse_from_source_str;
-
-use parser::Parser;
-use attr::parser_attr;
-use ast::node_id;
-use util::interner;
-use diagnostic::{span_handler, mk_span_handler, mk_handler, emitter};
-use lexer::{reader, string_reader};
-use parse::token::{ident_interner, mk_ident_interner};
-use codemap::{span, CodeMap, FileMap, CharPos, BytePos};
 
 
 #[legacy_exports]

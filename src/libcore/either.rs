@@ -1,13 +1,27 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
 //! A type that represents one of two alternatives
 
+use cmp;
 use cmp::Eq;
+use result;
 use result::Result;
+use vec;
 
 /// The either type
+#[deriving_eq]
 pub enum Either<T, U> {
     Left(T),
     Right(U)
@@ -55,8 +69,7 @@ pub fn rights<T, U: Copy>(eithers: &[Either<T, U>]) -> ~[U] {
     }
 }
 
-// XXX bad copies. take arg by val
-pub fn partition<T: Copy, U: Copy>(eithers: &[Either<T, U>])
+pub fn partition<T, U>(eithers: ~[Either<T, U>])
     -> (~[T], ~[U]) {
     /*!
      * Extracts from a vector of either all the left values and right values
@@ -67,27 +80,25 @@ pub fn partition<T: Copy, U: Copy>(eithers: &[Either<T, U>])
 
     let mut lefts: ~[T] = ~[];
     let mut rights: ~[U] = ~[];
-    for vec::each(eithers) |elt| {
-        match *elt {
-          Left(copy l) => lefts.push(l),
-          Right(copy r) => rights.push(r)
+    do vec::consume(eithers) |_i, elt| {
+        match elt {
+          Left(l) => lefts.push(l),
+          Right(r) => rights.push(r)
         }
     }
     return (move lefts, move rights);
 }
 
-// XXX bad copies
-pub pure fn flip<T: Copy, U: Copy>(eith: &Either<T, U>) -> Either<U, T> {
+pub pure fn flip<T, U>(eith: Either<T, U>) -> Either<U, T> {
     //! Flips between left and right of a given either
 
-    match *eith {
-      Right(copy r) => Left(r),
-      Left(copy l) => Right(l)
+    match eith {
+      Right(r) => Left(r),
+      Left(l) => Right(l)
     }
 }
 
-// XXX bad copies
-pub pure fn to_result<T: Copy, U: Copy>(eith: &Either<T, U>)
+pub pure fn to_result<T, U>(eith: Either<T, U>)
     -> Result<U, T> {
     /*!
      * Converts either::t to a result::t
@@ -96,9 +107,9 @@ pub pure fn to_result<T: Copy, U: Copy>(eith: &Either<T, U>)
      * an ok result, and the "left" choice a fail
      */
 
-    match *eith {
-      Right(copy r) => result::Ok(r),
-      Left(copy l) => result::Err(l)
+    match eith {
+      Right(r) => result::Ok(r),
+      Left(l) => result::Err(l)
     }
 }
 
@@ -114,7 +125,6 @@ pub pure fn is_right<T, U>(eith: &Either<T, U>) -> bool {
     match *eith { Right(_) => true, _ => false }
 }
 
-// tjc: fix the next two after a snapshot
 pub pure fn unwrap_left<T,U>(eith: Either<T,U>) -> T {
     //! Retrieves the value in the left branch. Fails if the either is Right.
 
@@ -131,24 +141,12 @@ pub pure fn unwrap_right<T,U>(eith: Either<T,U>) -> U {
     }
 }
 
-impl<T:Eq,U:Eq> Either<T,U> : Eq {
-    pure fn eq(&self, other: &Either<T,U>) -> bool {
-        match (*self) {
-            Left(ref a) => {
-                match (*other) {
-                    Left(ref b) => (*a).eq(b),
-                    Right(_) => false
-                }
-            }
-            Right(ref a) => {
-                match (*other) {
-                    Left(_) => false,
-                    Right(ref b) => (*a).eq(b)
-                }
-            }
-        }
-    }
-    pure fn ne(&self, other: &Either<T,U>) -> bool { !(*self).eq(other) }
+impl<T, U> Either<T, U> {
+    #[inline(always)]
+    fn unwrap_left(self) -> T { unwrap_left(self) }
+
+    #[inline(always)]
+    fn unwrap_right(self) -> U { unwrap_right(self) }
 }
 
 #[test]

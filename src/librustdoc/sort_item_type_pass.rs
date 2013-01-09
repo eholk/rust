@@ -1,6 +1,20 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Sorts items by type
 
+use astsrv;
 use doc::ItemUtils;
+use doc;
+use extract;
+use sort_pass;
 
 pub fn mk_pass() -> Pass {
     pure fn by_score(item1: &doc::ItemTag, item2: &doc::ItemTag) -> bool {
@@ -39,7 +53,7 @@ fn test() {
          struct istruct { f: () }";
     do astsrv::from_str(source) |srv| {
         let doc = extract::from_srv(srv, ~"");
-        let doc = mk_pass().f(srv, doc);
+        let doc = (mk_pass().f)(srv, doc);
         assert doc.cratemod().items[0].name() == ~"iconst";
         assert doc.cratemod().items[1].name() == ~"itype";
         assert doc.cratemod().items[2].name() == ~"ienum";

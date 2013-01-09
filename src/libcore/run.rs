@@ -1,11 +1,30 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
 //! Process spawning
-use option::{Some, None};
-use libc::{pid_t, c_void, c_int};
+use io;
 use io::ReaderUtil;
+use libc;
+use libc::{pid_t, c_void, c_int};
+use oldcomm;
+use option::{Some, None};
+use os;
+use ptr;
+use run;
+use str;
+use task;
+use vec;
 
 #[abi = "cdecl"]
 extern mod rustrt {
@@ -121,10 +140,10 @@ fn with_envp<T>(env: &Option<~[(~str,~str)]>,
     // \0 to terminate.
     unsafe {
         match *env {
-          Some(es) if !vec::is_empty(es) => {
+          Some(ref es) if !vec::is_empty(*es) => {
             let mut blk : ~[u8] = ~[];
-            for vec::each(es) |e| {
-                let (k,v) = *e;
+            for vec::each(*es) |e| {
+                let (k,v) = copy *e;
                 let t = fmt!("%s=%s", k, v);
                 let mut v : ~[u8] = ::cast::reinterpret_cast(&t);
                 blk += v;
@@ -297,22 +316,22 @@ pub fn program_output(prog: &str, args: &[~str]) ->
     // in parallel so we don't deadlock while blocking on one
     // or the other. FIXME (#2625): Surely there's a much more
     // clever way to do this.
-    let p = comm::Port();
-    let ch = comm::Chan(&p);
+    let p = oldcomm::Port();
+    let ch = oldcomm::Chan(&p);
     do task::spawn_sched(task::SingleThreaded) {
         let errput = readclose(pipe_err.in);
-        comm::send(ch, (2, move errput));
+        oldcomm::send(ch, (2, move errput));
     };
     do task::spawn_sched(task::SingleThreaded) {
         let output = readclose(pipe_out.in);
-        comm::send(ch, (1, move output));
+        oldcomm::send(ch, (1, move output));
     };
     let status = run::waitpid(pid);
     let mut errs = ~"";
     let mut outs = ~"";
     let mut count = 2;
     while count > 0 {
-        let stream = comm::recv(p);
+        let stream = oldcomm::recv(p);
         match stream {
             (1, copy s) => {
                 outs = move s;
@@ -399,6 +418,8 @@ pub fn waitpid(pid: pid_t) -> int {
 #[cfg(test)]
 mod tests {
     use io::WriterUtil;
+    use os;
+    use run;
 
     // Regression test for memory leaks
     #[ignore(cfg(windows))] // FIXME (#2626)
@@ -430,8 +451,8 @@ mod tests {
         readclose(pipe_err.in);
         os::waitpid(pid);
 
-        log(debug, expected);
-        log(debug, actual);
+        log(debug, copy expected);
+        log(debug, copy actual);
         assert (expected == actual);
     }
 

@@ -1,5 +1,19 @@
-use io::WriterUtil;
-use dvec::DVec;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use core::cmp;
+use core::dvec::DVec;
+use core::io::WriterUtil;
+use core::io;
+use core::str;
+use core::vec;
 
 /*
  * This pretty-printer is a direct reimplementation of Philip Karlton's
@@ -144,8 +158,7 @@ fn mk_printer(out: io::Writer, linewidth: uint) -> printer {
                mut top: 0,
                mut bottom: 0,
                print_stack: DVec(),
-               mut pending_indentation: 0,
-               mut token_tree_last_was_ident: false})
+               mut pending_indentation: 0 })
 }
 
 
@@ -251,7 +264,6 @@ type printer_ = {
     print_stack: DVec<print_stack_elt>,
     // buffered indentation to avoid writing trailing whitespace
     mut pending_indentation: int,
-    mut token_tree_last_was_ident: bool
 };
 
 enum printer {
@@ -451,7 +463,11 @@ impl printer {
     fn print(x: token, L: int) {
         debug!("print %s %d (remaining line space=%d)", tok_str(x), L,
                self.space);
-        log(debug, buf_str(self.token, self.size, self.left, self.right, 6u));
+        log(debug, buf_str(copy self.token,
+                           copy self.size,
+                           self.left,
+                           self.right,
+                           6u));
         match x {
           BEGIN(b) => {
             if L > self.space {

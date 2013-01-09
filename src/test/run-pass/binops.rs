@@ -1,7 +1,14 @@
-// Binop corner cases
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-extern mod std;
-use cast::reinterpret_cast;
+// Binop corner cases
 
 fn test_nil() {
     assert (() == ());
@@ -56,9 +63,9 @@ fn test_box() {
 }
 
 fn test_ptr() unsafe {
-    let p1: *u8 = cast::reinterpret_cast(&0);
-    let p2: *u8 = cast::reinterpret_cast(&0);
-    let p3: *u8 = cast::reinterpret_cast(&1);
+    let p1: *u8 = ::core::cast::reinterpret_cast(&0);
+    let p2: *u8 = ::core::cast::reinterpret_cast(&0);
+    let p3: *u8 = ::core::cast::reinterpret_cast(&1);
 
     assert p1 == p2;
     assert p1 != p3;
@@ -103,8 +110,8 @@ fn test_class() {
   
   unsafe {
   error!("q = %x, r = %x",
-         (cast::reinterpret_cast::<*p, uint>(&ptr::addr_of(&q))),
-         (cast::reinterpret_cast::<*p, uint>(&ptr::addr_of(&r))));
+         (::core::cast::reinterpret_cast::<*p, uint>(&ptr::addr_of(&q))),
+         (::core::cast::reinterpret_cast::<*p, uint>(&ptr::addr_of(&r))));
   }
   assert(q == r);
   r.y = 17;

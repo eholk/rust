@@ -1,8 +1,25 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use driver::session::Session;
+use middle::resolve;
+use middle::ty;
+use middle::typeck;
+use util::ppaux;
+
+use core::dvec::DVec;
+use core::option;
+use std::map::HashMap;
 use syntax::ast::*;
 use syntax::{visit, ast_util, ast_map};
-use driver::session::Session;
-use std::map::HashMap;
-use dvec::DVec;
 
 fn check_crate(sess: Session, crate: @crate, ast_map: ast_map::map,
                def_map: resolve::DefMap,
@@ -25,8 +42,8 @@ fn check_item(sess: Session, ast_map: ast_map::map,
         (v.visit_expr)(ex, true, v);
         check_item_recursion(sess, ast_map, def_map, it);
       }
-      item_enum(enum_definition, _) => {
-        for enum_definition.variants.each |var| {
+      item_enum(ref enum_definition, _) => {
+        for (*enum_definition).variants.each |var| {
             do option::iter(&var.node.disr_expr) |ex| {
                 (v.visit_expr)(*ex, true, v);
             }
@@ -78,7 +95,7 @@ fn check_expr(sess: Session, def_map: resolve::DefMap,
             let ety = ty::expr_ty(tcx, e);
             if !ty::type_is_numeric(ety) {
                 sess.span_err(e.span, ~"can not cast to `" +
-                              util::ppaux::ty_to_str(tcx, ety) +
+                              ppaux::ty_to_str(tcx, ety) +
                               ~"` in a constant expression");
             }
           }
@@ -94,19 +111,37 @@ fn check_expr(sess: Session, def_map: resolve::DefMap,
             }
             match def_map.find(e.id) {
               Some(def_const(def_id)) |
-                Some(def_fn(def_id, _)) => {
+                Some(def_fn(def_id, _)) |
+                Some(def_variant(_, def_id)) |
+                Some(def_struct(def_id)) => {
                 if !ast_util::is_local(def_id) {
                     sess.span_err(
                         e.span, ~"paths in constants may only refer to \
-                                 crate-local constants or functions");
+                                 crate-local constants, functions, or \
+                                 structs");
                 }
               }
-              _ => {
+              Some(def) => {
+                debug!("(checking const) found bad def: %?", def);
                 sess.span_err(
                     e.span,
-                    ~"paths in constants may only refer to \
-                      constants or functions");
+                    fmt!("paths in constants may only refer to \
+                          constants or functions"));
               }
+              None => {
+                sess.span_bug(e.span, ~"unbound path in const?!");
+              }
+            }
+          }
+          expr_call(callee, _, false) => {
+            match def_map.find(callee.id) {
+                Some(def_struct(*)) => {}    // OK.
+                _ => {
+                    sess.span_err(
+                        e.span,
+                        ~"function calls in constants are limited to \
+                          structure constructors");
+                }
             }
           }
           expr_paren(e) => { check_expr(sess, def_map, method_map,

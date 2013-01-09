@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 // tjc: Re-forbid deprecated modes once a snapshot fixes the
 // function problem
@@ -5,8 +15,17 @@
 
 #[doc(hidden)];
 
-use task::TaskBuilder;
-use task::atomically;
+use cast;
+use iter;
+use libc;
+use oldcomm;
+use option;
+use pipes;
+use ptr;
+use result;
+use task;
+use task::{TaskBuilder, atomically};
+use uint;
 
 extern mod rustrt {
     #[legacy_exports];
@@ -42,11 +61,11 @@ fn compare_and_swap(address: &mut int, oldval: int, newval: int) -> bool {
  * or, if no channel exists creates and installs a new channel and sets up a
  * new task to receive from it.
  */
-pub unsafe fn chan_from_global_ptr<T: Send>(
+pub unsafe fn chan_from_global_ptr<T: Owned>(
     global: GlobalPtr,
     task_fn: fn() -> task::TaskBuilder,
-    f: fn~(comm::Port<T>)
-) -> comm::Chan<T> {
+    f: fn~(oldcomm::Port<T>)
+) -> oldcomm::Chan<T> {
 
     enum Msg {
         Proceed,
@@ -60,15 +79,21 @@ pub unsafe fn chan_from_global_ptr<T: Send>(
         log(debug,~"is probably zero...");
         // There's no global channel. We must make it
 
-        let (setup_po, setup_ch) = do task_fn().spawn_conversation
-            |move f, setup_po, setup_ch| {
-            let po = comm::Port::<T>();
-            let ch = comm::Chan(&po);
-            comm::send(setup_ch, ch);
+        let (setup1_po, setup1_ch) = pipes::stream();
+        let (setup2_po, setup2_ch) = pipes::stream();
+
+        // XXX: Ugly type inference hints
+        let setup1_po: pipes::Port<oldcomm::Chan<T>> = setup1_po;
+        let setup2_po: pipes::Port<Msg> = setup2_po;
+
+        do task_fn().spawn |move f, move setup1_ch, move setup2_po| {
+            let po = oldcomm::Port::<T>();
+            let ch = oldcomm::Chan(&po);
+            setup1_ch.send(ch);
 
             // Wait to hear if we are the official instance of
             // this global task
-            match comm::recv::<Msg>(setup_po) {
+            match setup2_po.recv() {
               Proceed => f(move po),
               Abort => ()
             }
@@ -76,7 +101,7 @@ pub unsafe fn chan_from_global_ptr<T: Send>(
 
         log(debug,~"before setup recv..");
         // This is the proposed global channel
-        let ch = comm::recv(setup_po);
+        let ch = setup1_po.recv();
         // 0 is our sentinal value. It is not a valid channel
         assert *ch != 0;
 
@@ -89,11 +114,11 @@ pub unsafe fn chan_from_global_ptr<T: Send>(
 
         if swapped {
             // Success!
-            comm::send(setup_ch, Proceed);
+            setup2_ch.send(Proceed);
             ch
         } else {
             // Somebody else got in before we did
-            comm::send(setup_ch, Abort);
+            setup2_ch.send(Abort);
             cast::reinterpret_cast(&*global)
         }
     } else {
@@ -114,29 +139,29 @@ pub fn test_from_global_chan1() {
     // Create the global channel, attached to a new task
     let ch = unsafe {
         do chan_from_global_ptr(globchanp, task::task) |po| {
-            let ch = comm::recv(po);
-            comm::send(ch, true);
-            let ch = comm::recv(po);
-            comm::send(ch, true);
+            let ch = oldcomm::recv(po);
+            oldcomm::send(ch, true);
+            let ch = oldcomm::recv(po);
+            oldcomm::send(ch, true);
         }
     };
     // Talk to it
-    let po = comm::Port();
-    comm::send(ch, comm::Chan(&po));
-    assert comm::recv(po) == true;
+    let po = oldcomm::Port();
+    oldcomm::send(ch, oldcomm::Chan(&po));
+    assert oldcomm::recv(po) == true;
 
     // This one just reuses the previous channel
     let ch = unsafe {
         do chan_from_global_ptr(globchanp, task::task) |po| {
-            let ch = comm::recv(po);
-            comm::send(ch, false);
+            let ch = oldcomm::recv(po);
+            oldcomm::send(ch, false);
         }
     };
 
     // Talk to the original global task
-    let po = comm::Port();
-    comm::send(ch, comm::Chan(&po));
-    assert comm::recv(po) == true;
+    let po = oldcomm::Port();
+    oldcomm::send(ch, oldcomm::Chan(&po));
+    assert oldcomm::recv(po) == true;
 }
 
 #[test]
@@ -147,8 +172,8 @@ pub fn test_from_global_chan2() {
         let globchan = 0;
         let globchanp = ptr::addr_of(&globchan);
 
-        let resultpo = comm::Port();
-        let resultch = comm::Chan(&resultpo);
+        let resultpo = oldcomm::Port();
+        let resultch = oldcomm::Chan(&resultpo);
 
         // Spawn a bunch of tasks that all want to compete to
         // create the global channel
@@ -159,23 +184,23 @@ pub fn test_from_global_chan2() {
                         globchanp, task::task) |po| {
 
                         for uint::range(0, 10) |_j| {
-                            let ch = comm::recv(po);
-                            comm::send(ch, {i});
+                            let ch = oldcomm::recv(po);
+                            oldcomm::send(ch, {i});
                         }
                     }
                 };
-                let po = comm::Port();
-                comm::send(ch, comm::Chan(&po));
+                let po = oldcomm::Port();
+                oldcomm::send(ch, oldcomm::Chan(&po));
                 // We are The winner if our version of the
                 // task was installed
-                let winner = comm::recv(po);
-                comm::send(resultch, winner == i);
+                let winner = oldcomm::recv(po);
+                oldcomm::send(resultch, winner == i);
             }
         }
         // There should be only one winner
         let mut winners = 0u;
         for uint::range(0u, 10u) |_i| {
-            let res = comm::recv(resultpo);
+            let res = oldcomm::recv(resultpo);
             if res { winners += 1u };
         }
         assert winners == 1u;
@@ -201,9 +226,9 @@ pub fn test_from_global_chan2() {
  * * Weak tasks must not be supervised. A supervised task keeps
  *   a reference to its parent, so the parent will not die.
  */
-pub unsafe fn weaken_task(f: fn(comm::Port<()>)) {
-    let po = comm::Port();
-    let ch = comm::Chan(&po);
+pub unsafe fn weaken_task(f: fn(oldcomm::Port<()>)) {
+    let po = oldcomm::Port();
+    let ch = oldcomm::Chan(&po);
     unsafe {
         rustrt::rust_task_weaken(cast::reinterpret_cast(&ch));
     }
@@ -211,13 +236,13 @@ pub unsafe fn weaken_task(f: fn(comm::Port<()>)) {
     f(po);
 
     struct Unweaken {
-      ch: comm::Chan<()>,
+      ch: oldcomm::Chan<()>,
       drop unsafe {
         rustrt::rust_task_unweaken(cast::reinterpret_cast(&self.ch));
       }
     }
 
-    fn Unweaken(ch: comm::Chan<()>) -> Unweaken {
+    fn Unweaken(ch: oldcomm::Chan<()>) -> Unweaken {
         Unweaken {
             ch: ch
         }
@@ -239,7 +264,7 @@ pub fn test_weaken_task_wait() {
     do task::spawn_unlinked {
         unsafe {
             do weaken_task |po| {
-                comm::recv(po);
+                oldcomm::recv(po);
             }
         }
     }
@@ -259,7 +284,7 @@ pub fn test_weaken_task_stress() {
             unsafe {
                 do weaken_task |po| {
                     // Wait for it to tell us to die
-                    comm::recv(po);
+                    oldcomm::recv(po);
                 }
             }
         }
@@ -340,7 +365,7 @@ fn ArcDestruct<T>(data: *libc::c_void) -> ArcDestruct<T> {
     }
 }
 
-pub unsafe fn unwrap_shared_mutable_state<T: Send>(rc: SharedMutableState<T>)
+pub unsafe fn unwrap_shared_mutable_state<T: Owned>(rc: SharedMutableState<T>)
         -> T {
     struct DeathThroes<T> {
         mut ptr:      Option<~ArcData<T>>,
@@ -411,9 +436,9 @@ pub unsafe fn unwrap_shared_mutable_state<T: Send>(rc: SharedMutableState<T>)
  * Data races between tasks can result in crashes and, with sufficient
  * cleverness, arbitrary type coercion.
  */
-pub type SharedMutableState<T: Send> = ArcDestruct<T>;
+pub type SharedMutableState<T: Owned> = ArcDestruct<T>;
 
-pub unsafe fn shared_mutable_state<T: Send>(data: T) ->
+pub unsafe fn shared_mutable_state<T: Owned>(data: T) ->
         SharedMutableState<T> {
     let data = ~ArcData { count: 1, unwrapper: 0, data: Some(move data) };
     unsafe {
@@ -423,7 +448,7 @@ pub unsafe fn shared_mutable_state<T: Send>(data: T) ->
 }
 
 #[inline(always)]
-pub unsafe fn get_shared_mutable_state<T: Send>(rc: &a/SharedMutableState<T>)
+pub unsafe fn get_shared_mutable_state<T: Owned>(rc: &a/SharedMutableState<T>)
         -> &a/mut T {
     unsafe {
         let ptr: ~ArcData<T> = cast::reinterpret_cast(&(*rc).data);
@@ -435,7 +460,7 @@ pub unsafe fn get_shared_mutable_state<T: Send>(rc: &a/SharedMutableState<T>)
     }
 }
 #[inline(always)]
-pub unsafe fn get_shared_immutable_state<T: Send>(
+pub unsafe fn get_shared_immutable_state<T: Owned>(
         rc: &a/SharedMutableState<T>) -> &a/T {
     unsafe {
         let ptr: ~ArcData<T> = cast::reinterpret_cast(&(*rc).data);
@@ -447,7 +472,7 @@ pub unsafe fn get_shared_immutable_state<T: Send>(
     }
 }
 
-pub unsafe fn clone_shared_mutable_state<T: Send>(rc: &SharedMutableState<T>)
+pub unsafe fn clone_shared_mutable_state<T: Owned>(rc: &SharedMutableState<T>)
         -> SharedMutableState<T> {
     unsafe {
         let ptr: ~ArcData<T> = cast::reinterpret_cast(&(*rc).data);
@@ -496,27 +521,27 @@ impl LittleLock {
     }
 }
 
-struct ExData<T: Send> { lock: LittleLock, mut failed: bool, mut data: T, }
+struct ExData<T: Owned> { lock: LittleLock, mut failed: bool, mut data: T, }
 /**
  * An arc over mutable data that is protected by a lock. For library use only.
  */
-pub struct Exclusive<T: Send> { x: SharedMutableState<ExData<T>> }
+pub struct Exclusive<T: Owned> { x: SharedMutableState<ExData<T>> }
 
-pub fn exclusive<T:Send >(user_data: T) -> Exclusive<T> {
+pub fn exclusive<T:Owned >(user_data: T) -> Exclusive<T> {
     let data = ExData {
         lock: LittleLock(), mut failed: false, mut data: move user_data
     };
     Exclusive { x: unsafe { shared_mutable_state(move data) } }
 }
 
-impl<T: Send> Exclusive<T>: Clone {
+impl<T: Owned> Exclusive<T>: Clone {
     // Duplicate an exclusive ARC, as std::arc::clone.
     fn clone(&self) -> Exclusive<T> {
         Exclusive { x: unsafe { clone_shared_mutable_state(&self.x) } }
     }
 }
 
-impl<T: Send> Exclusive<T> {
+impl<T: Owned> Exclusive<T> {
     // Exactly like std::arc::mutex_arc,access(), but with the little_lock
     // instead of a proper mutex. Same reason for being unsafe.
     //
@@ -546,7 +571,7 @@ impl<T: Send> Exclusive<T> {
 }
 
 // FIXME(#3724) make this a by-move method on the exclusive
-pub fn unwrap_exclusive<T: Send>(arc: Exclusive<T>) -> T {
+pub fn unwrap_exclusive<T: Owned>(arc: Exclusive<T>) -> T {
     let Exclusive { x: x } = move arc;
     let inner = unsafe { unwrap_shared_mutable_state(move x) };
     let ExData { data: data, _ } = move inner;
@@ -555,6 +580,12 @@ pub fn unwrap_exclusive<T: Send>(arc: Exclusive<T>) -> T {
 
 #[cfg(test)]
 pub mod tests {
+    use option;
+    use pipes;
+    use result;
+    use task;
+    use uint;
+
     #[test]
     pub fn exclusive_arc() {
         let mut futures = ~[];
@@ -566,7 +597,7 @@ pub mod tests {
 
         for uint::range(0, num_tasks) |_i| {
             let total = total.clone();
-            let (chan, port) = pipes::stream();
+            let (port, chan) = pipes::stream();
             futures.push(move port);
 
             do task::spawn |move total, move chan| {

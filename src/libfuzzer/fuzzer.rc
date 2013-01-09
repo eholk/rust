@@ -1,7 +1,17 @@
 // -*- rust -*-
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 
 #[link(name = "fuzzer",
-       vers = "0.5",
+       vers = "0.6",
        uuid = "d6418797-2736-4833-bd82-d3c684b7c1b0",
        url = "https://github.com/mozilla/rust/tree/master/src/libfuzzer")];
 
@@ -18,9 +28,9 @@
 #[allow(deprecated_mode)];
 #[allow(deprecated_pattern)];
 
-extern mod core(vers = "0.5");
-extern mod std(vers = "0.5");
-extern mod syntax(vers = "0.5");
+extern mod core(vers = "0.6");
+extern mod std(vers = "0.6");
+extern mod syntax(vers = "0.6");
 
 use core::*;
 

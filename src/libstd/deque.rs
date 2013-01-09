@@ -1,10 +1,22 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! A deque. Untested as of yet. Likely buggy
 #[forbid(deprecated_mode)];
 #[forbid(non_camel_case_types)];
 
-use option::{Some, None};
-use dvec::DVec;
-use core::cmp::{Eq};
+use core::cmp::Eq;
+use core::dvec::DVec;
+use core::dvec;
+use core::uint;
+use core::vec;
 
 pub trait Deque<T> {
     fn size() -> uint;
@@ -119,6 +131,8 @@ pub fn create<T: Copy>() -> Deque<T> {
 
 #[cfg(test)]
 mod tests {
+    use deque;
+
     #[test]
     fn test_simple() {
         let d: deque::Deque<int> = deque::create::<int>();
@@ -200,7 +214,7 @@ mod tests {
         assert (deq.get(3) == d);
     }
 
-    fn test_parameterized<T: Copy Eq Owned>(a: T, b: T, c: T, d: T) {
+    fn test_parameterized<T: Copy Eq Durable>(a: T, b: T, c: T, d: T) {
         let deq: deque::Deque<T> = deque::create::<T>();
         assert (deq.size() == 0u);
         deq.add_front(a);

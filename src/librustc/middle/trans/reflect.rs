@@ -1,16 +1,32 @@
-use std::map::HashMap;
-use lib::llvm::{TypeRef, ValueRef};
-use syntax::ast;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 use back::abi;
-use common::*;
-use build::*;
-use base::*;
-use type_of::*;
-use ast::def_id;
+use lib::llvm::{TypeRef, ValueRef};
+use middle::trans::base::*;
+use middle::trans::build::*;
+use middle::trans::callee::{ArgVals, DontAutorefArg};
+use middle::trans::callee;
+use middle::trans::common::*;
+use middle::trans::datum::*;
+use middle::trans::expr::SaveIn;
+use middle::trans::glue;
+use middle::trans::meth;
+use middle::trans::shape;
+use middle::trans::type_of::*;
 use util::ppaux::ty_to_str;
-use datum::*;
-use callee::{ArgVals, DontAutorefArg};
-use expr::SaveIn;
+
+use std::map::HashMap;
+use syntax::ast::def_id;
+use syntax::ast;
 
 enum reflector = {
     visitor_val: ValueRef,
@@ -30,9 +46,18 @@ impl reflector {
         C_int(self.bcx.ccx(), i)
     }
 
-    fn c_slice(s: ~str) -> ValueRef {
-        let ss = C_estr_slice(self.bcx.ccx(), s);
-        do_spill_noroot(self.bcx, ss)
+    fn c_slice(+s: ~str) -> ValueRef {
+        // We're careful to not use first class aggregates here because that
+        // will kick us off fast isel. (Issue #4352.)
+        let bcx = self.bcx;
+        let str_vstore = ty::vstore_slice(ty::re_static);
+        let str_ty = ty::mk_estr(bcx.tcx(), str_vstore);
+        let scratch = scratch_datum(bcx, str_ty, false);
+        let len = C_uint(bcx.ccx(), s.len() + 1);
+        let c_str = PointerCast(bcx, C_cstr(bcx.ccx(), s), T_ptr(T_i8()));
+        Store(bcx, c_str, GEPi(bcx, scratch.val, [ 0, 0 ]));
+        Store(bcx, len, GEPi(bcx, scratch.val, [ 0, 1 ]));
+        scratch.val
     }
 
     fn c_size_and_align(t: ty::t) -> ~[ValueRef] {
@@ -57,10 +82,13 @@ impl reflector {
 
     fn visit(ty_name: ~str, args: ~[ValueRef]) {
         let tcx = self.bcx.tcx();
-        let mth_idx = option::get(ty::method_idx(
+        let mth_idx = ty::method_idx(
             tcx.sess.ident_of(~"visit_" + ty_name),
-            *self.visitor_methods));
-        let mth_ty = ty::mk_fn(tcx, self.visitor_methods[mth_idx].fty);
+            *self.visitor_methods).expect(fmt!("Couldn't find visit method \
+                                                for %s", ty_name));
+        let mth_ty = ty::mk_fn(
+            tcx,
+            /*bad*/copy self.visitor_methods[mth_idx].fty);
         let v = self.visitor_val;
         debug!("passing %u args:", vec::len(args));
         let bcx = self.bcx;
@@ -72,9 +100,12 @@ impl reflector {
         // XXX: Should not be vstore_box!
         let bcx = callee::trans_call_inner(
             self.bcx, None, mth_ty, bool_ty,
-            |bcx| meth::trans_trait_callee_from_llval(bcx, mth_ty,
-                                                      mth_idx, v,
-                                                      ty::vstore_box),
+            |bcx| meth::trans_trait_callee_from_llval(bcx,
+                                                      mth_ty,
+                                                      mth_idx,
+                                                      v,
+                                                      ty::vstore_box,
+                                                      ast::sty_by_ref),
             ArgVals(args), SaveIn(scratch.val), DontAutorefArg);
         let result = scratch.to_value_llval(bcx);
         let next_bcx = sub_block(bcx, ~"next");
@@ -82,16 +113,17 @@ impl reflector {
         self.bcx = next_bcx
     }
 
-    fn bracketed(bracket_name: ~str, extra: ~[ValueRef],
+    fn bracketed(bracket_name: ~str, +extra: ~[ValueRef],
                  inner: fn()) {
-        self.visit(~"enter_" + bracket_name, extra);
+        // XXX: Bad copy.
+        self.visit(~"enter_" + bracket_name, copy extra);
         inner();
         self.visit(~"leave_" + bracket_name, extra);
     }
 
     fn vstore_name_and_extra(t: ty::t,
                              vstore: ty::vstore,
-                             f: fn(~str,~[ValueRef])) {
+                             f: fn(+s: ~str,+v: ~[ValueRef])) {
         match vstore {
           ty::vstore_fixed(n) => {
             let extra = vec::append(~[self.c_uint(n)],
@@ -104,7 +136,7 @@ impl reflector {
         }
     }
 
-    fn leaf(name: ~str) {
+    fn leaf(+name: ~str) {
         self.visit(name, ~[]);
     }
 
@@ -115,7 +147,7 @@ impl reflector {
         debug!("reflect::visit_ty %s",
                ty_to_str(bcx.ccx().tcx, t));
 
-        match ty::get(t).sty {
+        match /*bad*/copy ty::get(t).sty {
           ty::ty_bot => self.leaf(~"bot"),
           ty::ty_nil => self.leaf(~"nil"),
           ty::ty_bool => self.leaf(~"bool"),
@@ -191,11 +223,12 @@ impl reflector {
               ast::noreturn => 0u,
               ast::return_val => 1u
             };
+            // XXX: Must we allocate here?
             let extra = ~[self.c_uint(pureval),
                           self.c_uint(protoval),
                           self.c_uint(vec::len(fty.sig.inputs)),
                           self.c_uint(retval)];
-            self.visit(~"enter_fn", extra);
+            self.visit(~"enter_fn", copy extra);    // XXX: Bad copy.
             for fty.sig.inputs.eachi |i, arg| {
                 let modeval = match arg.mode {
                   ast::infer(_) => 0u,
@@ -217,12 +250,12 @@ impl reflector {
             self.visit(~"leave_fn", extra);
           }
 
-          ty::ty_class(did, ref substs) => {
+          ty::ty_struct(did, ref substs) => {
             let bcx = self.bcx;
             let tcx = bcx.ccx().tcx;
-            let fields = ty::class_items_as_fields(tcx, did, substs);
+            let fields = ty::struct_fields(tcx, did, substs);
 
-            do self.bracketed(~"class", ~[self.c_uint(vec::len(fields))]
+            do self.bracketed(~"class", ~[self.c_uint(fields.len())]
                               + self.c_size_and_align(t)) {
                 for fields.eachi |i, field| {
                     self.visit(~"class_field",

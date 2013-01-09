@@ -1,9 +1,28 @@
-use util::interner;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use ast;
+use ast_util;
+use parse::token;
 use util::interner::Interner;
+use util::interner;
+
+use core::cast;
+use core::char;
+use core::cmp;
+use core::str;
+use core::task;
 use std::map::HashMap;
 
-#[auto_serialize]
-#[auto_deserialize]
+#[auto_encode]
+#[auto_decode]
 enum binop {
     PLUS,
     MINUS,
@@ -17,8 +36,8 @@ enum binop {
     SHR,
 }
 
-#[auto_serialize]
-#[auto_deserialize]
+#[auto_encode]
+#[auto_decode]
 enum Token {
     /* Expression-operator symbols. */
     EQ,
@@ -39,7 +58,6 @@ enum Token {
     AT,
     DOT,
     DOTDOT,
-    ELLIPSIS,
     COMMA,
     SEMI,
     COLON,
@@ -76,8 +94,8 @@ enum Token {
     EOF,
 }
 
-#[auto_serialize]
-#[auto_deserialize]
+#[auto_encode]
+#[auto_decode]
 /// For interpolation during macro expansion.
 enum nonterminal {
     nt_item(@ast::item),
@@ -127,7 +145,6 @@ fn to_str(in: @ident_interner, t: Token) -> ~str {
       AT => ~"@",
       DOT => ~".",
       DOTDOT => ~"..",
-      ELLIPSIS => ~"...",
       COMMA => ~",",
       SEMI => ~";",
       COLON => ~":",
@@ -180,9 +197,9 @@ fn to_str(in: @ident_interner, t: Token) -> ~str {
       /* Other */
       DOC_COMMENT(s) => *in.get(s),
       EOF => ~"<eof>",
-      INTERPOLATED(nt) => {
+      INTERPOLATED(ref nt) => {
         ~"an interpolated " +
-            match nt {
+            match (*nt) {
               nt_item(*) => ~"item",
               nt_block(*) => ~"block",
               nt_stmt(*) => ~"statement",
@@ -324,7 +341,7 @@ mod special_idents {
 }
 
 struct ident_interner {
-    priv interner: util::interner::Interner<@~str>,
+    priv interner: Interner<@~str>,
 }
 
 impl ident_interner {
@@ -343,7 +360,7 @@ impl ident_interner {
 }
 
 /* Key for thread-local data for sneaking interner information to the
- * serializer/deserializer. It sounds like a hack because it is one.
+ * encoder/decoder. It sounds like a hack because it is one.
  * Bonus ultra-hack: functions as keys don't work across crates,
  * so we have to use a unique number. See taskgroup_key! in task.rs
  * for another case of this. */
@@ -565,12 +582,6 @@ impl Token : cmp::Eq {
             DOTDOT => {
                 match (*other) {
                     DOTDOT => true,
-                    _ => false
-                }
-            }
-            ELLIPSIS => {
-                match (*other) {
-                    ELLIPSIS => true,
                     _ => false
                 }
             }

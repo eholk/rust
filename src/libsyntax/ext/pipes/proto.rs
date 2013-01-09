@@ -1,7 +1,19 @@
-use to_str::ToStr;
-use dvec::DVec;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-use ast_builder::{path, append_types};
+use ast;
+use ext::pipes::ast_builder::{path, append_types};
+
+use core::cmp;
+use core::dvec::DVec;
+use core::to_str::ToStr;
 
 enum direction { send, recv }
 
@@ -45,7 +57,7 @@ enum message {
 impl message {
     fn name() -> ~str {
         match self {
-          message(id, _, _, _, _) => id
+          message(ref id, _, _, _, _) => (*id)
         }
     }
 
@@ -103,8 +115,8 @@ impl state {
     fn reachable(f: fn(state) -> bool) {
         for self.messages.each |m| {
             match *m {
-              message(_, _, _, _, Some({state: id, _})) => {
-                let state = self.proto.get_state(id);
+              message(_, _, _, _, Some({state: ref id, _})) => {
+                let state = self.proto.get_state((*id));
                 if !f(state) { break }
               }
               _ => ()
@@ -208,8 +220,8 @@ fn visit<Tproto, Tstate, Tmessage, V: visitor<Tproto, Tstate, Tmessage>>(
     proto: protocol, visitor: V) -> Tproto {
 
     // the copy keywords prevent recursive use of dvec
-    let states = do (copy proto.states).map_to_vec |s| {
-        let messages = do (copy s.messages).map_to_vec |m| {
+    let states = do (copy proto.states).map_to_vec |&s| {
+        let messages = do (copy s.messages).map_to_vec |&m| {
             let message(name, span, tys, this, next) = m;
             visitor.visit_message(name, span, tys, this, next)
         };

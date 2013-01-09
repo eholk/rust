@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #[doc(hidden)];
 
 // Support code for rustc's built in test runner generator. Currently,
@@ -7,18 +17,28 @@
 
 #[forbid(deprecated_mode)];
 
+use getopts;
+use sort;
+use term;
+
 use core::cmp::Eq;
-use either::Either;
-use result::{Ok, Err};
-use io::WriterUtil;
-use libc::size_t;
-use task::TaskBuilder;
-use comm = core::comm;
+use core::either::Either;
+use core::either;
+use core::io::WriterUtil;
+use core::io;
+use core::libc::size_t;
+use core::oldcomm;
+use core::option;
+use core::result;
+use core::str;
+use core::task::TaskBuilder;
+use core::task;
+use core::vec;
 
 #[abi = "cdecl"]
 extern mod rustrt {
     #[legacy_exports];
-    fn rust_sched_threads() -> libc::size_t;
+    fn rust_sched_threads() -> size_t;
 }
 
 // The name of a test. By convention this follows the rules for rust
@@ -82,14 +102,8 @@ fn parse_opts(args: &[~str]) -> OptRes {
     return either::Left(test_opts);
 }
 
+#[deriving_eq]
 pub enum TestResult { TrOk, TrFailed, TrIgnored, }
-
-impl TestResult : Eq {
-    pure fn eq(&self, other: &TestResult) -> bool {
-        ((*self) as uint) == ((*other) as uint)
-    }
-    pure fn ne(&self, other: &TestResult) -> bool { !(*self).eq(other) }
-}
 
 type ConsoleTestState =
     @{out: io::Writer,
@@ -285,8 +299,8 @@ fn run_tests(opts: &TestOpts, tests: &[TestDesc],
     let mut wait_idx = 0;
     let mut done_idx = 0;
 
-    let p = core::comm::Port();
-    let ch = core::comm::Chan(&p);
+    let p = oldcomm::Port();
+    let ch = oldcomm::Chan(&p);
 
     while done_idx < total {
         while wait_idx < concurrency && run_idx < total {
@@ -302,7 +316,7 @@ fn run_tests(opts: &TestOpts, tests: &[TestDesc],
             run_idx += 1;
         }
 
-        let (test, result) = core::comm::recv(p);
+        let (test, result) = oldcomm::recv(p);
         if concurrency != 1 {
             callback(TeWait(copy test));
         }
@@ -379,9 +393,9 @@ fn filter_tests(opts: &TestOpts,
 
 type TestFuture = {test: TestDesc, wait: fn@() -> TestResult};
 
-fn run_test(test: TestDesc, monitor_ch: comm::Chan<MonitorMsg>) {
+fn run_test(test: TestDesc, monitor_ch: oldcomm::Chan<MonitorMsg>) {
     if test.ignore {
-        core::comm::send(monitor_ch, (copy test, TrIgnored));
+        oldcomm::send(monitor_ch, (copy test, TrIgnored));
         return;
     }
 
@@ -393,7 +407,7 @@ fn run_test(test: TestDesc, monitor_ch: comm::Chan<MonitorMsg>) {
         }).spawn(move testfn);
         let task_result = option::unwrap(move result_future).recv();
         let test_result = calc_result(&test, task_result == task::Success);
-        comm::send(monitor_ch, (copy test, test_result));
+        oldcomm::send(monitor_ch, (copy test, test_result));
     };
 }
 
@@ -411,6 +425,11 @@ fn calc_result(test: &TestDesc, task_succeeded: bool) -> TestResult {
 mod tests {
     #[legacy_exports];
 
+    use core::either;
+    use core::oldcomm;
+    use core::option;
+    use core::vec;
+
     #[test]
     fn do_not_run_ignored_tests() {
         fn f() { fail; }
@@ -420,10 +439,10 @@ mod tests {
             ignore: true,
             should_fail: false
         };
-        let p = core::comm::Port();
-        let ch = core::comm::Chan(&p);
+        let p = oldcomm::Port();
+        let ch = oldcomm::Chan(&p);
         run_test(desc, ch);
-        let (_, res) = core::comm::recv(p);
+        let (_, res) = oldcomm::recv(p);
         assert res != TrOk;
     }
 
@@ -436,10 +455,10 @@ mod tests {
             ignore: true,
             should_fail: false
         };
-        let p = core::comm::Port();
-        let ch = core::comm::Chan(&p);
+        let p = oldcomm::Port();
+        let ch = oldcomm::Chan(&p);
         run_test(desc, ch);
-        let (_, res) = core::comm::recv(p);
+        let (_, res) = oldcomm::recv(p);
         assert res == TrIgnored;
     }
 
@@ -453,10 +472,10 @@ mod tests {
             ignore: false,
             should_fail: true
         };
-        let p = core::comm::Port();
-        let ch = core::comm::Chan(&p);
+        let p = oldcomm::Port();
+        let ch = oldcomm::Chan(&p);
         run_test(desc, ch);
-        let (_, res) = core::comm::recv(p);
+        let (_, res) = oldcomm::recv(p);
         assert res == TrOk;
     }
 
@@ -469,10 +488,10 @@ mod tests {
             ignore: false,
             should_fail: true
         };
-        let p = core::comm::Port();
-        let ch = core::comm::Chan(&p);
+        let p = oldcomm::Port();
+        let ch = oldcomm::Chan(&p);
         run_test(desc, ch);
-        let (_, res) = core::comm::recv(p);
+        let (_, res) = oldcomm::recv(p);
         assert res == TrFailed;
     }
 

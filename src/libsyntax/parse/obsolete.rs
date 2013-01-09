@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 Support for parsing unsupported, old syntaxes, for the
 purpose of reporting errors. Parsing of these syntaxes
@@ -7,10 +17,17 @@ Obsolete syntax that becomes too hard to parse can be
 removed.
 */
 
-use codemap::span;
 use ast::{expr, expr_lit, lit_nil};
+use ast;
 use ast_util::{respan};
-use token::Token;
+use codemap::span;
+use parse::token::Token;
+use parse::token;
+
+use core::cmp;
+use core::option;
+use core::str;
+use core::to_bytes;
 
 /// The specific types of unsupported syntax
 pub enum ObsoleteSyntax {
@@ -36,15 +53,6 @@ impl ObsoleteSyntax : cmp::Eq {
     }
 }
 
-#[cfg(stage0)]
-impl ObsoleteSyntax: to_bytes::IterBytes {
-    #[inline(always)]
-    pure fn iter_bytes(+lsb0: bool, f: to_bytes::Cb) {
-        (self as uint).iter_bytes(lsb0, f);
-    }
-}
-#[cfg(stage1)]
-#[cfg(stage2)]
 impl ObsoleteSyntax: to_bytes::IterBytes {
     #[inline(always)]
     pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {

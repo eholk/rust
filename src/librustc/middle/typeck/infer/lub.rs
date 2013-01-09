@@ -1,6 +1,21 @@
-use combine::*;
-use lattice::*;
-use to_str::ToStr;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::ty;
+use middle::typeck::infer::combine::*;
+use middle::typeck::infer::lattice::*;
+use middle::typeck::infer::sub::Sub;
+use middle::typeck::infer::to_str::ToStr;
+
+use std::list;
 use syntax::ast::{Many, Once};
 
 fn macros() { include!("macros.rs"); } // FIXME(#3114): Macro import/export.

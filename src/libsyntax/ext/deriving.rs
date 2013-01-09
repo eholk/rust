@@ -1,16 +1,30 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /// The compiler code necessary to implement the #[deriving_eq] and
 /// #[deriving_iter_bytes] extensions.
 
 use ast::{Ty, and, bind_by_ref, binop, deref, enum_def, enum_variant_kind};
-use ast::{expr, expr_match, ident, item, item_, item_class, item_enum};
+use ast::{expr, expr_match, ident, item, item_, item_struct, item_enum};
 use ast::{item_impl, m_imm, meta_item, method, named_field, or, pat};
 use ast::{pat_ident, pat_wild, public, pure_fn, re_anon, stmt, struct_def};
 use ast::{struct_variant_kind, sty_by_ref, sty_region, tuple_variant_kind};
 use ast::{ty_nil, ty_param, ty_param_bound, ty_path, ty_rptr, unnamed_field};
 use ast::{variant};
-use base::ext_ctxt;
+use ext::base::ext_ctxt;
+use ext::build;
 use codemap::span;
 use parse::token::special_idents::clownshoes_extensions;
+
+use core::dvec;
+use core::uint;
 
 enum Junction {
     Conjunction,
@@ -73,7 +87,7 @@ fn expand_deriving(cx: ext_ctxt,
     for in_items.each |item| {
         result.push(copy *item);
         match item.node {
-            item_class(struct_def, copy ty_params) => {
+            item_struct(struct_def, copy ty_params) => {
                 result.push(expand_deriving_struct_def(cx,
                                                        span,
                                                        struct_def,
@@ -192,7 +206,9 @@ fn create_derived_impl(cx: ext_ctxt,
     // Create the type parameters.
     let impl_ty_params = dvec::DVec();
     for ty_params.each |ty_param| {
-        let bound = build::mk_ty_path(cx, span, trait_path.map(|x| *x));
+        let bound = build::mk_ty_path_global(cx,
+                                             span,
+                                             trait_path.map(|x| *x));
         let bounds = @~[ ty_param_bound(bound) ];
         let impl_ty_param = build::mk_ty_param(cx, ty_param.ident, bounds);
         impl_ty_params.push(move impl_ty_param);
@@ -202,7 +218,7 @@ fn create_derived_impl(cx: ext_ctxt,
     // Create the reference to the trait.
     let trait_path = {
         span: span,
-        global: false,
+        global: true,
         idents: trait_path.map(|x| *x),
         rp: None,
         types: ~[]
@@ -210,8 +226,7 @@ fn create_derived_impl(cx: ext_ctxt,
     let trait_path = @move trait_path;
     let trait_ref = {
         path: trait_path,
-        ref_id: cx.next_id(),
-        impl_id: cx.next_id(),
+        ref_id: cx.next_id()
     };
     let trait_ref = @move trait_ref;
 
@@ -309,6 +324,26 @@ fn create_iter_bytes_method(cx: ext_ctxt,
     }
 }
 
+fn create_subpatterns(cx: ext_ctxt,
+                      span: span,
+                      prefix: ~str,
+                      n: uint)
+                   -> ~[@pat] {
+    let subpats = dvec::DVec();
+    for uint::range(0, n) |_i| {
+        // Create the subidentifier.
+        let index = subpats.len().to_str();
+        let ident = cx.ident_of(prefix + index);
+
+        // Create the subpattern.
+        let subpath = build::mk_raw_path(span, ~[ ident ]);
+        let subpat = pat_ident(bind_by_ref(m_imm), subpath, None);
+        let subpat = build::mk_pat(cx, span, move subpat);
+        subpats.push(subpat);
+    }
+    return dvec::unwrap(move subpats);
+}
+
 fn create_enum_variant_pattern(cx: ext_ctxt,
                                span: span,
                                variant: &variant,
@@ -321,25 +356,37 @@ fn create_enum_variant_pattern(cx: ext_ctxt,
                 return build::mk_pat_ident(cx, span, variant_ident);
             }
 
-            let subpats = dvec::DVec();
-            for variant_args.each |_variant_arg| {
-                // Create the subidentifier.
-                let index = subpats.len().to_str();
-                let ident = cx.ident_of(prefix + index);
-
-                // Create the subpattern.
-                let subpath = build::mk_raw_path(span, ~[ ident ]);
-                let subpat = pat_ident(bind_by_ref(m_imm), subpath, None);
-                let subpat = build::mk_pat(cx, span, move subpat);
-                subpats.push(subpat);
-            }
-
             let matching_path = build::mk_raw_path(span, ~[ variant_ident ]);
-            let subpats = dvec::unwrap(move subpats);
+            let subpats = create_subpatterns(cx,
+                                             span,
+                                             prefix,
+                                             variant_args.len());
+
             return build::mk_pat_enum(cx, span, matching_path, move subpats);
         }
-        struct_variant_kind(*) => {
-            cx.span_unimpl(span, ~"struct variants for `deriving`");
+        struct_variant_kind(struct_def) => {
+            let matching_path = build::mk_raw_path(span, ~[ variant_ident ]);
+            let subpats = create_subpatterns(cx,
+                                             span,
+                                             prefix,
+                                             struct_def.fields.len());
+
+            let field_pats = dvec::DVec();
+            for struct_def.fields.eachi |i, struct_field| {
+                let ident = match struct_field.node.kind {
+                    named_field(ident, _, _) => ident,
+                    unnamed_field => {
+                        cx.span_bug(span, ~"unexpected unnamed field");
+                    }
+                };
+                field_pats.push({ ident: ident, pat: subpats[i] });
+            }
+            let field_pats = dvec::unwrap(move field_pats);
+
+            return build::mk_pat_struct(cx,
+                                        span,
+                                        matching_path,
+                                        move field_pats);
         }
         enum_variant_kind(*) => {
             cx.span_unimpl(span, ~"enum variants for `deriving`");
@@ -689,26 +736,31 @@ fn expand_deriving_eq_enum_method(cx: ext_ctxt,
         };
         other_arms.push(move matching_arm);
 
-        // Create the nonmatching pattern.
-        let nonmatching_pat = @{
-            id: cx.next_id(),
-            node: pat_wild,
-            span: span
-        };
+        // Maybe generate a non-matching case. If there is only one
+        // variant then there will always be a match.
+        if enum_definition.variants.len() > 1 {
+            // Create the nonmatching pattern.
+            let nonmatching_pat = @{
+                id: cx.next_id(),
+                node: pat_wild,
+                span: span
+            };
 
-        // Create the nonmatching pattern body.
-        let nonmatching_expr = build::mk_bool(cx, span, !is_eq);
-        let nonmatching_body_block = build::mk_simple_block(cx,
-                                                            span,
-                                                            nonmatching_expr);
+            // Create the nonmatching pattern body.
+            let nonmatching_expr = build::mk_bool(cx, span, !is_eq);
+            let nonmatching_body_block =
+                build::mk_simple_block(cx,
+                                       span,
+                                       nonmatching_expr);
 
-        // Create the nonmatching arm.
-        let nonmatching_arm = {
-            pats: ~[ nonmatching_pat ],
-            guard: None,
-            body: move nonmatching_body_block
-        };
-        other_arms.push(move nonmatching_arm);
+            // Create the nonmatching arm.
+            let nonmatching_arm = {
+                pats: ~[ nonmatching_pat ],
+                guard: None,
+                body: move nonmatching_body_block
+            };
+            other_arms.push(move nonmatching_arm);
+        }
 
         // Create the self pattern.
         let self_pat = create_enum_variant_pattern(cx,

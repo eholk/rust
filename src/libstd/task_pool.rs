@@ -1,8 +1,22 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /// A task pool abstraction. Useful for achieving predictable CPU
 /// parallelism.
 
-use pipes::{Chan, Port};
-use task::{SchedMode, SingleThreaded};
+use core::io;
+use core::pipes::{Chan, Port};
+use core::pipes;
+use core::task::{SchedMode, SingleThreaded};
+use core::task;
+use core::vec;
 
 enum Msg<T> {
     Execute(~fn(&T)),
@@ -32,7 +46,7 @@ pub impl<T> TaskPool<T> {
         assert n_tasks >= 1;
 
         let channels = do vec::from_fn(n_tasks) |i| {
-            let (chan, port) = pipes::stream::<Msg<T>>();
+            let (port, chan) = pipes::stream::<Msg<T>>();
             let init_fn = init_fn_factory();
 
             let task_body: ~fn() = |move port, move init_fn| {

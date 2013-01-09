@@ -1,11 +1,29 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
-use T = inst::T;
+use T = self::inst::T;
+
+use char;
 use cmp::{Eq, Ord};
+use cmp;
 use from_str::FromStr;
-use num::from_int;
+use iter;
+use num;
+use num::Num::from_int;
+use str;
+use uint;
+use vec;
 
 pub const bits : uint = inst::bits;
 pub const bytes : uint = (inst::bits / 8);
@@ -69,15 +87,23 @@ impl T : Eq {
 }
 
 impl T: num::Num {
-    pure fn add(other: &T)    -> T { return self + *other; }
-    pure fn sub(other: &T)    -> T { return self - *other; }
-    pure fn mul(other: &T)    -> T { return self * *other; }
-    pure fn div(other: &T)    -> T { return self / *other; }
-    pure fn modulo(other: &T) -> T { return self % *other; }
-    pure fn neg()              -> T { return -self;        }
+    pure fn add(&self, other: &T)    -> T { return *self + *other; }
+    pure fn sub(&self, other: &T)    -> T { return *self - *other; }
+    pure fn mul(&self, other: &T)    -> T { return *self * *other; }
+    pure fn div(&self, other: &T)    -> T { return *self / *other; }
+    pure fn modulo(&self, other: &T) -> T { return *self % *other; }
+    pure fn neg(&self)              -> T { return -*self;        }
 
-    pure fn to_int()         -> int { return self as int; }
+    pure fn to_int(&self)         -> int { return *self as int; }
     static pure fn from_int(n: int) -> T   { return n as T;      }
+}
+
+impl T: num::Zero {
+    static pure fn zero() -> T { 0 }
+}
+
+impl T: num::One {
+    static pure fn one() -> T { 1 }
 }
 
 impl T: iter::Times {
@@ -87,12 +113,12 @@ impl T: iter::Times {
         will execute the given function exactly x times. If we assume that \
         `x` is an int, this is functionally equivalent to \
         `for int::range(0, x) |_i| { /* anything */ }`."]
-    pure fn times(it: fn() -> bool) {
-        if self < 0 {
+    pure fn times(&self, it: fn() -> bool) {
+        if *self < 0 {
             fail fmt!("The .times method expects a nonnegative number, \
                        but found %?", self);
         }
-        let mut i = self;
+        let mut i = *self;
         while i > 0 {
             if !it() { break }
             i -= 1;

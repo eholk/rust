@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 This file actually contains two passes related to regions.  The first
@@ -7,19 +17,24 @@ region parameterized.
 
 */
 
-use driver::session::Session;
-use middle::ty;
-use syntax::{ast, visit};
-use syntax::codemap::span;
-use syntax::print::pprust;
-use syntax::ast_map;
-use dvec::DVec;
-use metadata::csearch;
-use ty::{region_variance, rv_covariant, rv_invariant, rv_contravariant};
 
+use driver::session::Session;
+use metadata::csearch;
+use middle::resolve;
+use middle::ty::{region_variance, rv_covariant, rv_invariant};
+use middle::ty::{rv_contravariant};
+use middle::ty;
+
+use core::cmp;
+use core::dvec::DVec;
+use core::vec;
 use std::list;
 use std::list::list;
 use std::map::HashMap;
+use syntax::ast_map;
+use syntax::codemap::span;
+use syntax::print::pprust;
+use syntax::{ast, visit};
 
 type parent = Option<ast::node_id>;
 
@@ -258,7 +273,7 @@ fn resolve_expr(expr: @ast::expr, cx: ctxt, visitor: visit::vt<ctxt>) {
       // FIXME #3387
       // ast::expr_index(*) | ast::expr_binary(*) |
       // ast::expr_unary(*) |
-      ast::expr_call(*) => {
+      ast::expr_call(*) | ast::expr_method_call(*) => {
         debug!("node %d: %s", expr.id, pprust::expr_to_str(expr,
                                                            cx.sess.intr()));
         new_cx.parent = Some(expr.id);
@@ -553,7 +568,7 @@ impl determine_rp_ctxt {
         self.item_id = item_id;
         self.anon_implies_rp = anon_implies_rp;
         debug!("with_item_id(%d, %b)", item_id, anon_implies_rp);
-        let _i = util::common::indenter();
+        let _i = ::util::common::indenter();
         f();
         self.item_id = old_item_id;
         self.anon_implies_rp = old_anon_implies_rp;
@@ -656,7 +671,7 @@ fn determine_rp_in_ty(ty: @ast::Ty,
     match ty.node {
       ast::ty_path(path, id) => {
         match cx.def_map.find(id) {
-          Some(ast::def_ty(did)) | Some(ast::def_class(did)) => {
+          Some(ast::def_ty(did)) | Some(ast::def_struct(did)) => {
             if did.crate == ast::local_crate {
                 if cx.opt_region_is_relevant(path.rp) {
                     cx.add_dep(did.node);
@@ -687,8 +702,8 @@ fn determine_rp_in_ty(ty: @ast::Ty,
         visit_mt(mt, cx, visitor);
       }
 
-      ast::ty_rec(fields) => {
-        for fields.each |field| {
+      ast::ty_rec(ref fields) => {
+        for (*fields).each |field| {
             visit_mt(field.node.mt, cx, visitor);
         }
       }
@@ -739,12 +754,12 @@ fn determine_rp_in_struct_field(cm: @ast::struct_field,
                                 &&cx: determine_rp_ctxt,
                                 visitor: visit::vt<determine_rp_ctxt>) {
     match cm.node.kind {
-      ast::named_field(_, ast::class_mutable, _) => {
+      ast::named_field(_, ast::struct_mutable, _) => {
         do cx.with_ambient_variance(rv_invariant) {
             visit::visit_struct_field(cm, cx, visitor);
         }
       }
-      ast::named_field(_, ast::class_immutable, _) |
+      ast::named_field(_, ast::struct_immutable, _) |
       ast::unnamed_field => {
         visit::visit_struct_field(cm, cx, visitor);
       }

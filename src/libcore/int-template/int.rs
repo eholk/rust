@@ -1,18 +1,28 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Operations and constants for `int`
 
-pub use inst::pow;
+pub use self::inst::pow;
 
 mod inst {
     pub type T = int;
-    pub const bits: uint = uint::bits;
+    pub const bits: uint = ::uint::bits;
 
     /// Returns `base` raised to the power of `exponent`
-    pub fn pow(base: int, exponent: uint) -> int {
+    pub pure fn pow(base: int, exponent: uint) -> int {
         if exponent == 0u {
             //Not mathemtically true if ~[base == 0]
             return 1;
         }
-        if base     == 0  { return 0; }
+        if base == 0 { return 0; }
         let mut my_pow  = exponent;
         let mut acc     = 1;
         let mut multiplier = base;

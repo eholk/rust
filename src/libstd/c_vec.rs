@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * Library to interface with chunks of memory allocated in C.
  *
@@ -26,6 +36,12 @@
  * still held if needed.
  */
 #[forbid(deprecated_mode)];
+
+use core::libc;
+use core::oldcomm;
+use core::option;
+use core::ptr;
+use core::task;
 
 /**
  * The type representing a foreign chunk of memory
@@ -125,7 +141,7 @@ pub fn set<T: Copy>(t: CVec<T>, ofs: uint, v: T) {
  */
 
 /// Returns the length of the vector
-pub fn len<T>(t: CVec<T>) -> uint {
+pub pure fn len<T>(t: CVec<T>) -> uint {
     return (*t).len;
 }
 
@@ -136,7 +152,8 @@ pub unsafe fn ptr<T>(t: CVec<T>) -> *mut T {
 
 #[cfg(test)]
 mod tests {
-    use libc::*;
+    use core::libc::*;
+    use core::libc;
 
     fn malloc(n: size_t) -> CVec<u8> {
         let mem = libc::malloc(n);

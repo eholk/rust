@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 Attribute parsing
 
@@ -5,9 +15,13 @@ The attribute parser provides methods for pulling documentation out of
 an AST's attributes.
 */
 
+use core::str;
+use core::tuple;
+use core::vec;
 use syntax::ast;
 use syntax::attr;
-use core::tuple;
+use syntax::codemap;
+use syntax;
 
 pub type CrateAttrs = {
     name: Option<~str>
@@ -17,10 +31,13 @@ pub type CrateAttrs = {
 mod test {
     #[legacy_exports];
 
+    use syntax::ast;
+    use syntax;
+
     fn parse_attributes(+source: ~str) -> ~[ast::attribute] {
         use syntax::parse;
-        use parse::parser;
-        use parse::attr::parser_attr;
+        use syntax::parse::parser;
+        use syntax::parse::attr::parser_attr;
         use syntax::codemap;
         use syntax::diagnostic;
 
@@ -105,7 +122,7 @@ fn parse_desc_should_parse_simple_doc_attributes() {
 
 pub fn parse_hidden(+attrs: ~[ast::attribute]) -> bool {
     do doc_metas(attrs).find |meta| {
-        match attr::get_meta_item_list(meta) {
+        match attr::get_meta_item_list(*meta) {
           Some(metas) => {
             let hiddens = attr::find_meta_items_by_name(metas, ~"hidden");
             vec::is_not_empty(hiddens)

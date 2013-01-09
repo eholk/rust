@@ -1,12 +1,32 @@
-use io::WriterUtil;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
+use io;
+use io::WriterUtil;
+use os;
+use str;
+use uint;
+use vec;
+
+use common;
 use common::mode_run_pass;
 use common::mode_run_fail;
 use common::mode_compile_fail;
 use common::mode_pretty;
 use common::config;
+use errors;
+use header;
 use header::load_props;
 use header::test_props;
+use procsrv;
+use util;
 use util::logv;
 
 export run;
@@ -107,7 +127,7 @@ fn run_pretty_test(config: config, props: test_props, testfile: &Path) {
     } else { logv(config, ~"testing for converging pretty-printing"); }
 
     let rounds =
-        match props.pp_exact { option::Some(_) => 1, option::None => 2 };
+        match props.pp_exact { Some(_) => 1, None => 2 };
 
     let mut srcs = ~[io::read_whole_file_str(testfile).get()];
 
@@ -127,11 +147,11 @@ fn run_pretty_test(config: config, props: test_props, testfile: &Path) {
 
     let mut expected =
         match props.pp_exact {
-          option::Some(file) => {
+          Some(file) => {
             let filepath = testfile.dir_path().push_rel(&file);
             io::read_whole_file_str(&filepath).get()
           }
-          option::None => { srcs[vec::len(srcs) - 2u] }
+          None => { srcs[vec::len(srcs) - 2u] }
         };
     let mut actual = srcs[vec::len(srcs) - 1u];
 
@@ -155,7 +175,7 @@ fn run_pretty_test(config: config, props: test_props, testfile: &Path) {
 
     fn print_source(config: config, testfile: &Path, src: ~str) -> procres {
         compose_and_run(config, testfile, make_pp_args(config, testfile),
-                        ~[], config.compile_lib_path, option::Some(src))
+                        ~[], config.compile_lib_path, Some(src))
     }
 
     fn make_pp_args(config: config, _testfile: &Path) -> procargs {
@@ -189,7 +209,7 @@ actual:\n\
         compose_and_run_compiler(
             config, props, testfile,
             make_typecheck_args(config, testfile),
-            option::Some(src))
+            Some(src))
     }
 
     fn make_typecheck_args(config: config, testfile: &Path) -> procargs {
@@ -408,7 +428,7 @@ fn exec_compiled_test(config: config, props: test_props,
     compose_and_run(config, testfile,
                     make_run_args(config, props, testfile),
                     props.exec_env,
-                    config.run_lib_path, option::None)
+                    config.run_lib_path, None)
 }
 
 fn compose_and_run_compiler(
@@ -431,7 +451,7 @@ fn compose_and_run_compiler(
             make_compile_args(config, props, ~[~"--lib"] + extra_link_args,
                               |a,b| make_lib_name(a, b, testfile), &abs_ab);
         let auxres = compose_and_run(config, &abs_ab, aux_args, ~[],
-                                     config.compile_lib_path, option::None);
+                                     config.compile_lib_path, None);
         if auxres.status != 0 {
             fatal_procres(
                 fmt!("auxiliary build of %s failed to compile: ",
@@ -491,8 +511,8 @@ fn make_run_args(config: config, _props: test_props, testfile: &Path) ->
             // then split apart its command
             let runtool =
                 match config.runtool {
-                  option::Some(s) => option::Some(s),
-                  option::None => option::None
+                  Some(s) => Some(s),
+                  None => None
                 };
             split_maybe_args(runtool)
         };
@@ -507,8 +527,8 @@ fn split_maybe_args(argstr: Option<~str>) -> ~[~str] {
     }
 
     match argstr {
-      option::Some(s) => rm_whitespace(str::split_char(s, ' ')),
-      option::None => ~[]
+      Some(s) => rm_whitespace(str::split_char(s, ' ')),
+      None => ~[]
     }
 }
 

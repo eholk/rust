@@ -1,12 +1,33 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Type resolution: the phase that finds all the types in the AST with
 // unresolved type variables and replaces "ty_var" types with their
 // substitutions.
 
-use check::{fn_ctxt, lookup_local};
-use infer::{resolve_type, resolve_region, resolve_all, force_all};
+
+use middle::pat_util;
+use middle::ty;
+use middle::typeck::check::{fn_ctxt, lookup_local};
+use middle::typeck::infer::{force_all, resolve_all, resolve_region};
+use middle::typeck::infer::{resolve_type};
+use middle::typeck::infer;
+use util::ppaux;
+
+use core::result::{Result, Ok, Err};
+use core::vec;
+use syntax::ast;
+use syntax::visit;
+
 export resolve_type_vars_in_fn;
 export resolve_type_vars_in_expr;
-use result::{Result, Ok, Err};
 
 fn resolve_type_vars_in_type(fcx: @fn_ctxt, sp: span, typ: ty::t)
     -> Option<ty::t>
@@ -87,12 +108,12 @@ fn resolve_type_vars_for_node(wbcx: wb_ctxt, sp: span, id: ast::node_id)
 
       Some(t) => {
         debug!("resolve_type_vars_for_node(id=%d, n_ty=%s, t=%s)",
-               id, ty_to_str(tcx, n_ty), ty_to_str(tcx, t));
+               id, ppaux::ty_to_str(tcx, n_ty), ppaux::ty_to_str(tcx, t));
         write_ty_to_tcx(tcx, id, t);
         match fcx.opt_node_ty_substs(id) {
-          Some(substs) => {
+          Some(ref substs) => {
             let mut new_tps = ~[];
-            for substs.tps.each |subst| {
+            for (*substs).tps.each |subst| {
                 match resolve_type_vars_in_type(fcx, sp, *subst) {
                   Some(t) => new_tps.push(t),
                   None => { wbcx.success = false; return None; }
@@ -134,7 +155,7 @@ fn visit_expr(e: @ast::expr, wbcx: wb_ctxt, v: wb_vt) {
     resolve_type_vars_for_node(wbcx, e.span, e.id);
     resolve_method_map_entry(wbcx.fcx, e.span, e.id);
     resolve_method_map_entry(wbcx.fcx, e.span, e.callee_id);
-    match e.node {
+    match /*bad*/copy e.node {
       ast::expr_fn(_, decl, _, _) |
       ast::expr_fn_block(decl, _, _) => {
           for vec::each(decl.inputs) |input| {
@@ -156,6 +177,11 @@ fn visit_expr(e: @ast::expr, wbcx: wb_ctxt, v: wb_vt) {
       ast::expr_binary(*) | ast::expr_unary(*) | ast::expr_assign_op(*)
         | ast::expr_index(*) => {
         maybe_resolve_type_vars_for_node(wbcx, e.span, e.callee_id);
+      }
+
+      ast::expr_method_call(*) => {
+        // We must always have written in a callee ID type for these.
+        resolve_type_vars_for_node(wbcx, e.span, e.callee_id);
       }
 
       _ => ()

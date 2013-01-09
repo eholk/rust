@@ -1,5 +1,17 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use common::config;
+use io;
 use io::ReaderUtil;
+use str;
 
 export load_errors;
 export expected_error;
@@ -23,8 +35,8 @@ fn parse_expected(line_num: uint, line: ~str) -> ~[expected_error] unsafe {
     let error_tag = ~"//~";
     let mut idx;
     match str::find_str(line, error_tag) {
-      option::None => return ~[],
-      option::Some(nn) => { idx = (nn as uint) + str::len(error_tag); }
+      None => return ~[],
+      Some(nn) => { idx = (nn as uint) + str::len(error_tag); }
     }
 
     // "//~^^^ kind msg" denotes a message expected

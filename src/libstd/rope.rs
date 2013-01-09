@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
  * High-level text containers.
  *
@@ -25,6 +35,13 @@
 
 #[forbid(deprecated_mode)];
 
+use core::cast;
+use core::char;
+use core::option;
+use core::str;
+use core::uint;
+use core::vec;
+
 /// The type of ropes.
 pub type Rope = node::Root;
 
@@ -33,7 +50,7 @@ pub type Rope = node::Root;
  */
 
 /// Create an empty rope
-pub fn empty() -> Rope {
+pub pure fn empty() -> Rope {
    return node::Empty;
 }
 
@@ -431,6 +448,8 @@ pub fn loop_leaves(rope: Rope, it: fn(node::Leaf) -> bool) -> bool{
 
 pub mod iterator {
     pub mod leaf {
+        use rope::node;
+
         pub fn start(rope: Rope) -> node::leaf_iterator::T {
             match (rope) {
               node::Empty      => return node::leaf_iterator::empty(),
@@ -442,6 +461,8 @@ pub mod iterator {
         }
     }
     pub mod char {
+        use rope::node;
+
         pub fn start(rope: Rope) -> node::char_iterator::T {
             match (rope) {
               node::Empty      => return node::char_iterator::empty(),
@@ -469,7 +490,7 @@ pub mod iterator {
  *
  * Constant time.
  */
-pub fn height(rope: Rope) -> uint {
+pub pure fn height(rope: Rope) -> uint {
    match (rope) {
       node::Empty      => return 0u,
       node::Content(x) => return node::height(x)
@@ -533,7 +554,15 @@ pub fn char_at(rope: Rope, pos: uint) -> char {
 /*
  Section: Implementation
 */
-mod node {
+pub mod node {
+    use rope::node;
+
+    use core::cast;
+    use core::char;
+    use core::option;
+    use core::str;
+    use core::uint;
+    use core::vec;
 
     /// Implementation of type `rope`
     pub enum Root {
@@ -1009,7 +1038,7 @@ mod node {
                     })
     }
 
-    pub fn height(node: @Node) -> uint {
+    pub pure fn height(node: @Node) -> uint {
         match (*node) {
           Leaf(_)   => return 0u,
           Concat(ref x) => return x.height
@@ -1090,7 +1119,7 @@ mod node {
      * proportional to the height of the rope + the (bounded)
      * length of the largest leaf.
      */
-    pub fn char_at(node: @Node, pos: uint) -> char {
+    pub pure fn char_at(node: @Node, pos: uint) -> char {
         let mut node    = node;
         let mut pos     = pos;
         loop {
@@ -1106,6 +1135,9 @@ mod node {
     }
 
     pub mod leaf_iterator {
+        use core::option;
+        use core::vec;
+
         pub type T = {
             stack:            ~[mut @Node],
             mut stackpos: int
@@ -1143,6 +1175,11 @@ mod node {
     }
 
     pub mod char_iterator {
+        use rope::node::leaf_iterator;
+
+        use core::option;
+        use core::str;
+
         pub type T = {
             leaf_iterator: leaf_iterator::T,
             mut leaf:  Option<Leaf>,
@@ -1222,6 +1259,13 @@ mod node {
 
 #[cfg(test)]
 mod tests {
+    use rope::iterator;
+    use rope::node;
+
+    use core::option;
+    use core::str;
+    use core::uint;
+    use core::vec;
 
     //Utility function, used for sanity check
     fn rope_to_string(r: Rope) -> ~str {

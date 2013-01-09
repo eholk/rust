@@ -1,9 +1,29 @@
-use std::map::HashMap;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
-use libc::{c_char, c_int, c_uint, c_longlong, c_ulonglong};
+
+use core::cast;
+use core::cmp;
+use core::int;
+use core::io;
+use core::libc::{c_char, c_int, c_uint, c_longlong, c_ulonglong};
+use core::option;
+use core::ptr;
+use core::str;
+use core::uint;
+use core::vec;
+use std::map::HashMap;
 
 type Opcode = u32;
 type Bool = c_uint;
+
 const True: Bool = 1 as Bool;
 const False: Bool = 0 as Bool;
 
@@ -314,7 +334,7 @@ extern mod llvm {
     fn LLVMStructType(ElementTypes: *TypeRef, ElementCount: c_uint,
                       Packed: Bool) -> TypeRef;
     fn LLVMCountStructElementTypes(StructTy: TypeRef) -> c_uint;
-    fn LLVMGetStructElementTypes(StructTy: TypeRef, Dest: *TypeRef);
+    fn LLVMGetStructElementTypes(StructTy: TypeRef, Dest: *mut TypeRef);
     fn LLVMIsPackedStruct(StructTy: TypeRef) -> Bool;
 
     /* Operations on array, pointer, and vector types (sequence types) */
@@ -1050,11 +1070,12 @@ fn SetLinkage(Global: ValueRef, Link: Linkage) {
 
 /* Memory-managed object interface to type handles. */
 
-type type_names = @{type_names: std::map::HashMap<TypeRef, ~str>,
-                    named_types: std::map::HashMap<~str, TypeRef>};
+type type_names = @{type_names: HashMap<TypeRef, ~str>,
+                    named_types: HashMap<~str, TypeRef>};
 
-fn associate_type(tn: type_names, s: ~str, t: TypeRef) {
-    assert tn.type_names.insert(t, s);
+fn associate_type(tn: type_names, +s: ~str, t: TypeRef) {
+    // XXX: Bad copy, use @str instead?
+    assert tn.type_names.insert(t, copy s);
     assert tn.named_types.insert(s, t);
 }
 
@@ -1062,27 +1083,28 @@ fn type_has_name(tn: type_names, t: TypeRef) -> Option<~str> {
     return tn.type_names.find(t);
 }
 
-fn name_has_type(tn: type_names, s: ~str) -> Option<TypeRef> {
+fn name_has_type(tn: type_names, +s: ~str) -> Option<TypeRef> {
     return tn.named_types.find(s);
 }
 
 fn mk_type_names() -> type_names {
-    @{type_names: std::map::HashMap(),
-      named_types: std::map::HashMap()}
+    @{type_names: HashMap(),
+      named_types: HashMap()}
 }
 
 fn type_to_str(names: type_names, ty: TypeRef) -> ~str {
     return type_to_str_inner(names, ~[], ty);
 }
 
-fn type_to_str_inner(names: type_names, outer0: ~[TypeRef], ty: TypeRef) ->
+fn type_to_str_inner(names: type_names, +outer0: ~[TypeRef], ty: TypeRef) ->
    ~str {
     match type_has_name(names, ty) {
-      option::Some(n) => return n,
+      option::Some(ref n) => return (/*bad*/copy *n),
       _ => {}
     }
 
-    let outer = vec::append_one(outer0, ty);
+    // XXX: Bad copy.
+    let outer = vec::append_one(copy outer0, ty);
 
     let kind = llvm::LLVMGetTypeKind(ty);
 
@@ -1125,10 +1147,9 @@ fn type_to_str_inner(names: type_names, outer0: ~[TypeRef], ty: TypeRef) ->
       Struct => {
         let mut s: ~str = ~"{";
         let n_elts = llvm::LLVMCountStructElementTypes(ty) as uint;
-        let elts = vec::from_elem(n_elts, 0 as TypeRef);
-        unsafe {
-            llvm::LLVMGetStructElementTypes(ty, vec::raw::to_ptr(elts));
-        }
+        let mut elts = vec::from_elem(n_elts, 0 as TypeRef);
+        llvm::LLVMGetStructElementTypes(ty,
+                                        ptr::to_mut_unsafe_ptr(&mut elts[0]));
         s += tys_str(names, outer, elts);
         s += ~"}";
         return s;
@@ -1179,6 +1200,18 @@ fn fn_ty_param_tys(fn_ty: TypeRef) -> ~[TypeRef] unsafe {
                              0 as TypeRef);
     llvm::LLVMGetParamTypes(fn_ty, vec::raw::to_ptr(args));
     return args;
+}
+
+fn struct_element_types(struct_ty: TypeRef) -> ~[TypeRef] {
+    unsafe {
+        let count = llvm::LLVMCountStructElementTypes(struct_ty);
+        let mut buf: ~[TypeRef] =
+            vec::from_elem(count as uint,
+                           cast::transmute::<uint,TypeRef>(0));
+        llvm::LLVMGetStructElementTypes(struct_ty,
+                                        ptr::to_mut_unsafe_ptr(&mut buf[0]));
+        return move buf;
+    }
 }
 
 

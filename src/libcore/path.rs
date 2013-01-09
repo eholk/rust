@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 Cross-platform file path handling
@@ -9,7 +19,11 @@ Cross-platform file path handling
 #[forbid(deprecated_pattern)];
 
 use cmp::Eq;
+use libc;
+use ptr;
+use str;
 
+#[deriving_eq]
 pub struct WindowsPath {
     host: Option<~str>,
     device: Option<~str>,
@@ -18,16 +32,17 @@ pub struct WindowsPath {
 }
 
 pub pure fn WindowsPath(s: &str) -> WindowsPath {
-    from_str(s)
+    GenericPath::from_str(s)
 }
 
+#[deriving_eq]
 pub struct PosixPath {
     is_absolute: bool,
     components: ~[~str],
 }
 
 pub pure fn PosixPath(s: &str) -> PosixPath {
-    from_str(s)
+    GenericPath::from_str(s)
 }
 
 pub trait GenericPath {
@@ -75,6 +90,8 @@ pub pure fn Path(s: &str) -> Path {
 mod stat {
     #[cfg(target_arch = "x86")]
     pub mod arch {
+        use libc;
+
         pub fn default_stat() -> libc::stat {
             libc::stat {
                 st_dev: 0,
@@ -103,6 +120,8 @@ mod stat {
 
     #[cfg(target_arch = "x86_64")]
     pub mod arch {
+        use libc;
+
         pub fn default_stat() -> libc::stat {
             libc::stat {
                 st_dev: 0,
@@ -132,6 +151,8 @@ mod stat {
 mod stat {
     #[cfg(target_arch = "x86_64")]
     pub mod arch {
+        use libc;
+
         pub fn default_stat() -> libc::stat {
             libc::stat {
                 st_dev: 0,
@@ -164,6 +185,8 @@ mod stat {
 #[cfg(target_os = "macos")]
 mod stat {
     pub mod arch {
+        use libc;
+
         pub fn default_stat() -> libc::stat {
             libc::stat {
                 st_dev: 0,
@@ -196,6 +219,7 @@ mod stat {
 #[cfg(target_os = "win32")]
 mod stat {
     pub mod arch {
+        use libc;
         pub fn default_stat() -> libc::stat {
             libc::stat {
                 st_dev: 0,
@@ -346,24 +370,6 @@ impl PosixPath : ToStr {
     }
 }
 
-impl PosixPath : Eq {
-    pure fn eq(&self, other: &PosixPath) -> bool {
-        return (*self).is_absolute == (*other).is_absolute &&
-            (*self).components == (*other).components;
-    }
-    pure fn ne(&self, other: &PosixPath) -> bool { !(*self).eq(other) }
-}
-
-impl WindowsPath : Eq {
-    pure fn eq(&self, other: &WindowsPath) -> bool {
-        return (*self).host == (*other).host &&
-            (*self).device == (*other).device &&
-            (*self).is_absolute == (*other).is_absolute &&
-            (*self).components == (*other).components;
-    }
-    pure fn ne(&self, other: &WindowsPath) -> bool { !(*self).eq(other) }
-}
-
 // FIXME (#3227): when default methods in traits are working, de-duplicate
 // PosixPath and WindowsPath, most of their methods are common.
 impl PosixPath : GenericPath {
@@ -492,7 +498,7 @@ impl PosixPath : GenericPath {
         let mut v = copy self.components;
         let mut ss = str::split_nonempty(s, |c| windows::is_sep(c as u8));
         unsafe { v.push_all_move(move ss); }
-        PosixPath { components: move v, ..self }
+        PosixPath { components: move v, ..copy self }
     }
 
     pure fn pop() -> PosixPath {
@@ -697,7 +703,7 @@ impl WindowsPath : GenericPath {
         let mut v = copy self.components;
         let mut ss = str::split_nonempty(s, |c| windows::is_sep(c as u8));
         unsafe { v.push_all_move(move ss); }
-        return WindowsPath { components: move v, ..self }
+        return WindowsPath { components: move v, ..copy self }
     }
 
     pure fn pop() -> WindowsPath {
@@ -743,7 +749,9 @@ pub pure fn normalize(components: &[~str]) -> ~[~str] {
 }
 
 // Various windows helpers, and tests for the impl.
-mod windows {
+pub mod windows {
+    use libc;
+
     #[inline(always)]
     pub pure fn is_sep(u: u8) -> bool {
         u == '/' as u8 || u == '\\' as u8
@@ -785,6 +793,9 @@ mod windows {
 
 #[cfg(test)]
 mod tests {
+    use path::windows;
+    use str;
+
     #[test]
     fn test_double_slash_collapsing() {
         let path = PosixPath("tmp/");

@@ -1,14 +1,27 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! A map type
 #[forbid(deprecated_mode)];
 
-use io::WriterUtil;
-use to_str::ToStr;
-use mutable::Mut;
-use send_map::linear::LinearMap;
-
 use core::cmp::Eq;
-use hash::Hash;
-use to_bytes::IterBytes;
+use core::hash::Hash;
+use core::io::WriterUtil;
+use core::io;
+use core::ops;
+use core::to_str::ToStr;
+use core::mutable::Mut;
+use core::send_map::linear::LinearMap;
+use core::to_bytes::IterBytes;
+use core::uint;
+use core::vec;
 
 /// A convenience type to treat a hashmap as a set
 pub type Set<K:Eq IterBytes Hash> = HashMap<K, ()>;
@@ -41,7 +54,7 @@ pub trait Map<K:Eq IterBytes Hash Copy, V: Copy> {
      * Add a value to the map.
      *
      * If the map contains a value for the key, use the function to
-     * set a new value.  (Like `insert_or_update_with_key`, but with a
+     * set a new value.  (Like `update_with_key`, but with a
      * function of only values.)
      */
     fn update(key: K, newval: V, ff: fn(V, V) -> V) -> bool;
@@ -93,7 +106,7 @@ pub trait Map<K:Eq IterBytes Hash Copy, V: Copy> {
     pure fn each_value_ref(fn(value: &V) -> bool);
 }
 
-mod util {
+pub mod util {
     pub type Rational = {num: int, den: int}; // : int::positive(*.den);
 
     pub pure fn rational_leq(x: Rational, y: Rational) -> bool {
@@ -107,6 +120,13 @@ mod util {
 // FIXME (#2344): package this up and export it as a datatype usable for
 // external code that doesn't want to pay the cost of a box.
 pub mod chained {
+    use map::util;
+
+    use core::io;
+    use core::ops;
+    use core::option;
+    use core::uint;
+    use core::vec;
 
     const initial_capacity: uint = 32u; // 2^5
 
@@ -420,7 +440,7 @@ pub mod chained {
     }
 
     impl<K:Eq IterBytes Hash Copy, V: Copy> T<K, V>: ops::Index<K, V> {
-        pure fn index(k: K) -> V {
+        pure fn index(&self, k: K) -> V {
             unsafe {
                 self.get(k)
             }
@@ -593,6 +613,10 @@ impl<K: Eq IterBytes Hash Copy, V: Copy> @Mut<LinearMap<K, V>>:
 
 #[cfg(test)]
 mod tests {
+    use map;
+
+    use core::option;
+    use core::uint;
 
     #[test]
     fn test_simple() {

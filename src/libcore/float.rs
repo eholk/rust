@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
@@ -16,6 +26,14 @@
 
 use m_float = f64;
 
+use cmp::{Eq, Ord};
+use cmp;
+use f64;
+use num;
+use num::Num::from_int;
+use str;
+use uint;
+
 pub use f64::{add, sub, mul, div, rem, lt, le, eq, ne, ge, gt};
 pub use f64::logarithm;
 pub use f64::{acos, asin, atan2, cbrt, ceil, copysign, cosh, floor};
@@ -25,8 +43,6 @@ pub use f64::{lgamma, ln, log_radix, ln1p, log10, log2, ilog_radix};
 pub use f64::{modf, pow, round, sinh, tanh, tgamma, trunc};
 pub use f64::signbit;
 pub use f64::{j0, j1, jn, y0, y1, yn};
-use cmp::{Eq, Ord};
-use num::from_int;
 
 pub const NaN: float = 0.0/0.0;
 
@@ -178,7 +194,7 @@ pub pure fn to_str_common(num: float, digits: uint, exact: bool) -> ~str {
  * * num - The float value
  * * digits - The number of significant digits
  */
-pub fn to_str_exact(num: float, digits: uint) -> ~str {
+pub pure fn to_str_exact(num: float, digits: uint) -> ~str {
     to_str_common(num, digits, true)
 }
 
@@ -228,7 +244,7 @@ pub pure fn to_str(num: float, digits: uint) -> ~str {
  * `none` if the string did not represent a valid number.  Otherwise,
  * `Some(n)` where `n` is the floating-point number represented by `[num]`.
  */
-pub fn from_str(num: &str) -> Option<float> {
+pub pure fn from_str(num: &str) -> Option<float> {
    if num == "inf" {
        return Some(infinity as float);
    } else if num == "-inf" {
@@ -415,22 +431,30 @@ impl float : Ord {
 
 impl float: num::Num {
     #[inline(always)]
-    pub pure fn add(other: &float)    -> float { return self + *other; }
+    pub pure fn add(&self, other: &float) -> float { return *self + *other; }
     #[inline(always)]
-    pub pure fn sub(other: &float)    -> float { return self - *other; }
+    pub pure fn sub(&self, other: &float) -> float { return *self - *other; }
     #[inline(always)]
-    pub pure fn mul(other: &float)    -> float { return self * *other; }
+    pub pure fn mul(&self, other: &float) -> float { return *self * *other; }
     #[inline(always)]
-    pub pure fn div(other: &float)    -> float { return self / *other; }
+    pub pure fn div(&self, other: &float) -> float { return *self / *other; }
     #[inline(always)]
-    pure fn modulo(other: &float) -> float { return self % *other; }
+    pure fn modulo(&self, other: &float) -> float { return *self % *other; }
     #[inline(always)]
-    pure fn neg()                  -> float { return -self;        }
+    pure fn neg(&self)                  -> float { return -*self;        }
 
     #[inline(always)]
-    pure fn to_int()         -> int   { return self as int; }
+    pure fn to_int(&self)         -> int   { return *self as int; }
     #[inline(always)]
-    static pure fn from_int(n: int) -> float { return n as float;  }
+    static pure fn from_int(&self, n: int) -> float { return n as float;  }
+}
+
+impl float: num::Zero {
+    static pure fn zero() -> float { 0.0 }
+}
+
+impl float: num::One {
+    static pure fn one() -> float { 1.0 }
 }
 
 #[test]

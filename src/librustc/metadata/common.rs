@@ -1,3 +1,14 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 // EBML enum definitions and utils shared by the encoder and decoder
 
 const tag_items: uint = 0x02u;
@@ -74,7 +85,7 @@ const tag_path_len: uint = 0x41u;
 const tag_path_elt_mod: uint = 0x42u;
 const tag_path_elt_name: uint = 0x43u;
 const tag_item_field: uint = 0x44u;
-const tag_class_mut: uint = 0x45u;
+const tag_struct_mut: uint = 0x45u;
 
 const tag_region_param: uint = 0x46u;
 const tag_mod_impl_trait: uint = 0x47u;
@@ -121,12 +132,25 @@ enum astencode_tag { // Reserves 0x50 -- 0x6f
     tag_table_method_map = 0x60,
     tag_table_vtable_map = 0x61,
     tag_table_adjustments = 0x62,
-    tag_table_legacy_boxed_trait = 0x63
+    tag_table_legacy_boxed_trait = 0x63,
+    tag_table_value_mode = 0x64
 }
 
 const tag_item_trait_method_sort: uint = 0x70;
 
 const tag_item_impl_type_basename: uint = 0x71;
+
+// Language items are a top-level directory (for speed). Hierarchy:
+//
+// tag_lang_items
+// - tag_lang_items_item
+//   - tag_lang_items_item_id: u32
+//   - tag_lang_items_item_node_id: u32
+
+const tag_lang_items: uint = 0x72;
+const tag_lang_items_item: uint = 0x73;
+const tag_lang_items_item_id: uint = 0x74;
+const tag_lang_items_item_node_id: uint = 0x75;
 
 type link_meta = {name: ~str, vers: ~str, extras_hash: ~str};
 

@@ -1,11 +1,26 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
 // Type encoding
 
-use io::WriterUtil;
+use middle::ty;
+use middle::ty::vid;
+
+use core::io::WriterUtil;
+use core::io;
+use core::uint;
+use core::vec;
 use std::map::HashMap;
 use syntax::ast::*;
 use syntax::diagnostic::span_handler;
-use middle::ty;
-use middle::ty::vid;
 use syntax::print::pprust::*;
 
 export ctxt;
@@ -46,12 +61,12 @@ fn enc_ty(w: io::Writer, cx: @ctxt, t: ty::t) {
     match cx.abbrevs {
       ac_no_abbrevs => {
         let result_str = match cx.tcx.short_names_cache.find(t) {
-            Some(s) => *s,
+            Some(s) => /*bad*/copy *s,
             None => {
                 let s = do io::with_str_writer |wr| {
-                    enc_sty(wr, cx, ty::get(t).sty);
+                    enc_sty(wr, cx, /*bad*/copy ty::get(t).sty);
                 };
-                cx.tcx.short_names_cache.insert(t, @s);
+                cx.tcx.short_names_cache.insert(t, @copy s);
                 s
           }
         };
@@ -75,7 +90,7 @@ fn enc_ty(w: io::Writer, cx: @ctxt, t: ty::t) {
               }
               _ => {}
             }
-            enc_sty(w, cx, ty::get(t).sty);
+            enc_sty(w, cx, /*bad*/copy ty::get(t).sty);
             let end = w.tell();
             let len = end - pos;
             fn estimate_sz(u: uint) -> uint {
@@ -108,11 +123,11 @@ fn enc_mt(w: io::Writer, cx: @ctxt, mt: ty::mt) {
 }
 
 fn enc_opt<T>(w: io::Writer, t: Option<T>, enc_f: fn(T)) {
-    match t {
-      None => w.write_char('n'),
-      Some(v) => {
+    match &t {
+      &None => w.write_char('n'),
+      &Some(ref v) => {
         w.write_char('s');
-        enc_f(v);
+        enc_f((*v));
       }
     }
 }
@@ -196,7 +211,7 @@ fn enc_vstore(w: io::Writer, cx: @ctxt, v: ty::vstore) {
     }
 }
 
-fn enc_sty(w: io::Writer, cx: @ctxt, st: ty::sty) {
+fn enc_sty(w: io::Writer, cx: @ctxt, +st: ty::sty) {
     match st {
       ty::ty_nil => w.write_char('n'),
       ty::ty_bot => w.write_char('z'),
@@ -227,18 +242,18 @@ fn enc_sty(w: io::Writer, cx: @ctxt, st: ty::sty) {
           ty_f64 => w.write_str(&"MF"),
         }
       }
-      ty::ty_enum(def, substs) => {
+      ty::ty_enum(def, ref substs) => {
         w.write_str(&"t[");
         w.write_str((cx.ds)(def));
         w.write_char('|');
-        enc_substs(w, cx, substs);
+        enc_substs(w, cx, (*substs));
         w.write_char(']');
       }
-      ty::ty_trait(def, substs, vstore) => {
+      ty::ty_trait(def, ref substs, vstore) => {
         w.write_str(&"x[");
         w.write_str((cx.ds)(def));
         w.write_char('|');
-        enc_substs(w, cx, substs);
+        enc_substs(w, cx, (*substs));
         enc_vstore(w, cx, vstore);
         w.write_char(']');
       }
@@ -274,8 +289,8 @@ fn enc_sty(w: io::Writer, cx: @ctxt, st: ty::sty) {
         }
         w.write_char(']');
       }
-      ty::ty_fn(f) => {
-        enc_ty_fn(w, cx, f);
+      ty::ty_fn(ref f) => {
+        enc_ty_fn(w, cx, (*f));
       }
       ty::ty_infer(ty::TyVar(id)) => {
         w.write_char('X');
@@ -306,7 +321,7 @@ fn enc_sty(w: io::Writer, cx: @ctxt, st: ty::sty) {
           enc_proto(w, p);
       }
       ty::ty_opaque_box => w.write_char('B'),
-      ty::ty_class(def, substs) => {
+      ty::ty_struct(def, ref substs) => {
           debug!("~~~~ %s", ~"a[");
           w.write_str(&"a[");
           let s = (cx.ds)(def);
@@ -314,7 +329,7 @@ fn enc_sty(w: io::Writer, cx: @ctxt, st: ty::sty) {
           w.write_str(s);
           debug!("~~~~ %s", ~"|");
           w.write_char('|');
-          enc_substs(w, cx, substs);
+          enc_substs(w, cx, (*substs));
           debug!("~~~~ %s", ~"]");
           w.write_char(']');
       }
@@ -382,10 +397,10 @@ fn enc_ty_fn(w: io::Writer, cx: @ctxt, ft: ty::FnTy) {
 fn enc_bounds(w: io::Writer, cx: @ctxt, bs: @~[ty::param_bound]) {
     for vec::each(*bs) |bound| {
         match *bound {
-          ty::bound_send => w.write_char('S'),
+          ty::bound_owned => w.write_char('S'),
           ty::bound_copy => w.write_char('C'),
           ty::bound_const => w.write_char('K'),
-          ty::bound_owned => w.write_char('O'),
+          ty::bound_durable => w.write_char('O'),
           ty::bound_trait(tp) => {
             w.write_char('I');
             enc_ty(w, cx, tp);

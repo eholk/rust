@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! A process-wide libuv event loop for library use.
 
 #[forbid(deprecated_mode)];
@@ -5,12 +15,16 @@
 use ll = uv_ll;
 use iotask = uv_iotask;
 use get_gl = get;
-use iotask::{IoTask, spawn_iotask};
-use private::{chan_from_global_ptr, weaken_task};
-use comm = core::comm;
-use comm::{Port, Chan, select2, listen};
-use task::TaskBuilder;
-use either::{Left, Right};
+use uv_iotask::{IoTask, spawn_iotask};
+
+use core::either::{Left, Right};
+use core::libc;
+use core::oldcomm::{Port, Chan, select2, listen};
+use core::private::{chan_from_global_ptr, weaken_task};
+use core::str;
+use core::task::TaskBuilder;
+use core::task;
+use core::vec;
 
 extern mod rustrt {
     fn rust_uv_get_kernel_global_chan_ptr() -> *libc::uintptr_t;
@@ -109,11 +123,20 @@ fn spawn_loop() -> IoTask {
 
 #[cfg(test)]
 mod test {
+    use uv::iotask;
+    use uv::ll;
+
+    use core::iter;
+    use core::libc;
+    use core::oldcomm;
+    use core::ptr;
+    use core::task;
+
     extern fn simple_timer_close_cb(timer_ptr: *ll::uv_timer_t) unsafe {
         let exit_ch_ptr = ll::get_data_for_uv_handle(
-            timer_ptr as *libc::c_void) as *comm::Chan<bool>;
+            timer_ptr as *libc::c_void) as *oldcomm::Chan<bool>;
         let exit_ch = *exit_ch_ptr;
-        core::comm::send(exit_ch, true);
+        oldcomm::send(exit_ch, true);
         log(debug, fmt!("EXIT_CH_PTR simple_timer_close_cb exit_ch_ptr: %?",
                        exit_ch_ptr));
     }
@@ -132,8 +155,8 @@ mod test {
     }
 
     fn impl_uv_hl_simple_timer(iotask: IoTask) unsafe {
-        let exit_po = core::comm::Port::<bool>();
-        let exit_ch = core::comm::Chan(&exit_po);
+        let exit_po = oldcomm::Port::<bool>();
+        let exit_ch = oldcomm::Chan(&exit_po);
         let exit_ch_ptr = ptr::addr_of(&exit_ch);
         log(debug, fmt!("EXIT_CH_PTR newly created exit_ch_ptr: %?",
                        exit_ch_ptr));
@@ -158,21 +181,21 @@ mod test {
                 fail ~"failure on ll::timer_init()";
             }
         };
-        core::comm::recv(exit_po);
+        oldcomm::recv(exit_po);
         log(debug, ~"global_loop timer test: msg recv on exit_po, done..");
     }
 
     #[test]
     fn test_gl_uv_global_loop_high_level_global_timer() unsafe {
         let hl_loop = get_gl();
-        let exit_po = comm::Port::<()>();
-        let exit_ch = comm::Chan(&exit_po);
+        let exit_po = oldcomm::Port::<()>();
+        let exit_ch = oldcomm::Chan(&exit_po);
         task::spawn_sched(task::ManualThreads(1u), || {
             impl_uv_hl_simple_timer(hl_loop);
-            core::comm::send(exit_ch, ());
+            oldcomm::send(exit_ch, ());
         });
         impl_uv_hl_simple_timer(hl_loop);
-        core::comm::recv(exit_po);
+        oldcomm::recv(exit_po);
     }
 
     // keeping this test ignored until some kind of stress-test-harness
@@ -181,17 +204,17 @@ mod test {
     #[ignore]
     fn test_stress_gl_uv_global_loop_high_level_global_timer() unsafe {
         let hl_loop = get_gl();
-        let exit_po = core::comm::Port::<()>();
-        let exit_ch = core::comm::Chan(&exit_po);
+        let exit_po = oldcomm::Port::<()>();
+        let exit_ch = oldcomm::Chan(&exit_po);
         let cycles = 5000u;
         for iter::repeat(cycles) {
             task::spawn_sched(task::ManualThreads(1u), || {
                 impl_uv_hl_simple_timer(hl_loop);
-                core::comm::send(exit_ch, ());
+                oldcomm::send(exit_ch, ());
             });
         };
         for iter::repeat(cycles) {
-            core::comm::recv(exit_po);
+            oldcomm::recv(exit_po);
         };
         log(debug, ~"test_stress_gl_uv_global_loop_high_level_global_timer"+
             ~" exiting sucessfully!");

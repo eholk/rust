@@ -1,5 +1,23 @@
-use syntax::{ast,ast_map,ast_util,visit};
-use ast::*;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::resolve;
+use middle::ty;
+use middle;
+
+use core::cmp;
+use core::float;
+use core::vec;
+use syntax::{ast, ast_map, ast_util, visit};
+use syntax::ast::*;
 
 //
 // This pass classifies expressions by their constant-ness.
@@ -62,7 +80,7 @@ fn classify(e: @expr,
       Some(x) => x,
       None => {
         let cn =
-            match e.node {
+            match /*bad*/copy e.node {
               ast::expr_lit(lit) => {
                 match lit.node {
                   ast::lit_str(*) |
@@ -93,13 +111,14 @@ fn classify(e: @expr,
                       ast::expr_vstore_slice => classify(e, def_map, tcx),
                       ast::expr_vstore_uniq |
                       ast::expr_vstore_box |
-                      ast::expr_vstore_mut_box => non_const
+                      ast::expr_vstore_mut_box |
+                      ast::expr_vstore_mut_slice => non_const
                   }
               }
 
-              ast::expr_struct(_, fs, None) |
-              ast::expr_rec(fs, None) => {
-                let cs = do vec::map(fs) |f| {
+              ast::expr_struct(_, ref fs, None) |
+              ast::expr_rec(ref fs, None) => {
+                let cs = do vec::map((*fs)) |f| {
                     if f.node.mutbl == ast::m_imm {
                         classify(f.node.expr, def_map, tcx)
                     } else {
@@ -212,7 +231,7 @@ impl const_val : cmp::Eq {
             (const_float(a), const_float(b)) => a == b,
             (const_int(a), const_int(b)) => a == b,
             (const_uint(a), const_uint(b)) => a == b,
-            (const_str(a), const_str(b)) => a == b,
+            (const_str(ref a), const_str(ref b)) => (*a) == (*b),
             (const_bool(a), const_bool(b)) => a == b,
             (const_float(_), _) | (const_int(_), _) | (const_uint(_), _) |
             (const_str(_), _) | (const_bool(_), _) => false
@@ -223,8 +242,8 @@ impl const_val : cmp::Eq {
 
 fn eval_const_expr(tcx: middle::ty::ctxt, e: @expr) -> const_val {
     match eval_const_expr_partial(tcx, e) {
-        Ok(r) => r,
-        Err(s) => fail s
+        Ok(ref r) => (/*bad*/copy *r),
+        Err(ref s) => fail (/*bad*/copy *s)
     }
 }
 
@@ -240,7 +259,7 @@ fn eval_const_expr_partial(tcx: middle::ty::ctxt, e: @expr)
           Ok(const_uint(i)) => Ok(const_uint(-i)),
           Ok(const_str(_)) => Err(~"Negate on string"),
           Ok(const_bool(_)) => Err(~"Negate on boolean"),
-          err => err
+          ref err => (/*bad*/copy *err)
         }
       }
       expr_unary(not, inner) => {
@@ -387,7 +406,7 @@ fn eval_const_expr_partial(tcx: middle::ty::ctxt, e: @expr)
 
 fn lit_to_const(lit: @lit) -> const_val {
     match lit.node {
-      lit_str(s) => const_str(*s),
+      lit_str(s) => const_str(/*bad*/copy *s),
       lit_int(n, _) => const_int(n),
       lit_uint(n, _) => const_uint(n),
       lit_int_unsuffixed(n) => const_int(n),
@@ -428,10 +447,10 @@ fn compare_const_vals(a: const_val, b: const_val) -> int {
             1
         }
     }
-    (const_str(a), const_str(b)) => {
-        if a == b {
+    (const_str(ref a), const_str(ref b)) => {
+        if (*a) == (*b) {
             0
-        } else if a < b {
+        } else if (*a) < (*b) {
             -1
         } else {
             1

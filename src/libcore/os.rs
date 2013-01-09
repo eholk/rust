@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers.src/libcore/os.rs
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
@@ -20,14 +30,24 @@
  * to write OS-ignorant code by default.
  */
 
-use libc::{c_char, c_void, c_int, c_uint, size_t, ssize_t,
-           mode_t, pid_t, FILE};
-pub use libc::{close, fclose};
-
+use cast;
+use either;
+use io;
+use libc;
+use libc::{c_char, c_void, c_int, c_uint, size_t, ssize_t};
+use libc::{mode_t, pid_t, FILE};
+use option;
 use option::{Some, None};
-
-pub use consts::*;
+use private;
+use ptr;
+use str;
+use task;
 use task::TaskBuilder;
+use uint;
+use vec;
+
+pub use libc::{close, fclose};
+pub use os::consts::*;
 
 // FIXME: move these to str perhaps? #2620
 
@@ -67,8 +87,12 @@ pub fn fill_charp_buf(f: fn(*mut c_char, size_t) -> bool)
 }
 
 #[cfg(windows)]
-mod win32 {
-    use libc::DWORD;
+pub mod win32 {
+    use libc;
+    use vec;
+    use str;
+    use option;
+    use libc::types::os::arch::extra::DWORD;
 
     pub fn fill_utf16_buf_and_decode(f: fn(*mut u16, DWORD) -> DWORD)
         -> Option<~str> {
@@ -117,42 +141,48 @@ pub fn env() -> ~[(~str,~str)] {
 
 mod global_env {
     //! Internal module for serializing access to getenv/setenv
+    use either;
+    use libc;
+    use oldcomm;
+    use private;
+    use str;
+    use task;
 
     extern mod rustrt {
         fn rust_global_env_chan_ptr() -> *libc::uintptr_t;
     }
 
     enum Msg {
-        MsgGetEnv(~str, comm::Chan<Option<~str>>),
-        MsgSetEnv(~str, ~str, comm::Chan<()>),
-        MsgEnv(comm::Chan<~[(~str,~str)]>)
+        MsgGetEnv(~str, oldcomm::Chan<Option<~str>>),
+        MsgSetEnv(~str, ~str, oldcomm::Chan<()>),
+        MsgEnv(oldcomm::Chan<~[(~str,~str)]>)
     }
 
     pub fn getenv(n: &str) -> Option<~str> {
         let env_ch = get_global_env_chan();
-        let po = comm::Port();
-        comm::send(env_ch, MsgGetEnv(str::from_slice(n),
-                                     comm::Chan(&po)));
-        comm::recv(po)
+        let po = oldcomm::Port();
+        oldcomm::send(env_ch, MsgGetEnv(str::from_slice(n),
+                                        oldcomm::Chan(&po)));
+        oldcomm::recv(po)
     }
 
     pub fn setenv(n: &str, v: &str) {
         let env_ch = get_global_env_chan();
-        let po = comm::Port();
-        comm::send(env_ch, MsgSetEnv(str::from_slice(n),
-                                     str::from_slice(v),
-                                     comm::Chan(&po)));
-        comm::recv(po)
+        let po = oldcomm::Port();
+        oldcomm::send(env_ch, MsgSetEnv(str::from_slice(n),
+                                        str::from_slice(v),
+                                        oldcomm::Chan(&po)));
+        oldcomm::recv(po)
     }
 
     pub fn env() -> ~[(~str,~str)] {
         let env_ch = get_global_env_chan();
-        let po = comm::Port();
-        comm::send(env_ch, MsgEnv(comm::Chan(&po)));
-        comm::recv(po)
+        let po = oldcomm::Port();
+        oldcomm::send(env_ch, MsgEnv(oldcomm::Chan(&po)));
+        oldcomm::recv(po)
     }
 
-    fn get_global_env_chan() -> comm::Chan<Msg> {
+    fn get_global_env_chan() -> oldcomm::Chan<Msg> {
         let global_ptr = rustrt::rust_global_env_chan_ptr();
         unsafe {
             private::chan_from_global_ptr(global_ptr, || {
@@ -163,19 +193,19 @@ mod global_env {
         }
     }
 
-    fn global_env_task(msg_po: comm::Port<Msg>) {
+    fn global_env_task(msg_po: oldcomm::Port<Msg>) {
         unsafe {
             do private::weaken_task |weak_po| {
                 loop {
-                    match comm::select2(msg_po, weak_po) {
+                    match oldcomm::select2(msg_po, weak_po) {
                       either::Left(MsgGetEnv(ref n, resp_ch)) => {
-                        comm::send(resp_ch, impl_::getenv(*n))
+                        oldcomm::send(resp_ch, impl_::getenv(*n))
                       }
                       either::Left(MsgSetEnv(ref n, ref v, resp_ch)) => {
-                        comm::send(resp_ch, impl_::setenv(*n, *v))
+                        oldcomm::send(resp_ch, impl_::setenv(*n, *v))
                       }
                       either::Left(MsgEnv(resp_ch)) => {
-                        comm::send(resp_ch, impl_::env())
+                        oldcomm::send(resp_ch, impl_::env())
                       }
                       either::Right(_) => break
                     }
@@ -185,6 +215,13 @@ mod global_env {
     }
 
     mod impl_ {
+        use cast;
+        use libc;
+        use option;
+        use ptr;
+        use str;
+        use vec;
+
         extern mod rustrt {
             fn rust_env_pairs() -> ~[~str];
         }
@@ -214,7 +251,7 @@ mod global_env {
 
         #[cfg(windows)]
         pub fn getenv(n: &str) -> Option<~str> {
-            use win32::*;
+            use os::win32::*;
             do as_utf16_p(n) |u| {
                 do fill_utf16_buf_and_decode() |buf, sz| {
                     libc::GetEnvironmentVariableW(u, buf, sz)
@@ -235,7 +272,7 @@ mod global_env {
 
         #[cfg(windows)]
         pub fn setenv(n: &str, v: &str) {
-            use win32::*;
+            use os::win32::*;
             do as_utf16_p(n) |nbuf| {
                 do as_utf16_p(v) |vbuf| {
                     libc::SetEnvironmentVariableW(nbuf, vbuf);
@@ -393,7 +430,7 @@ pub fn self_exe_path() -> Option<Path> {
 
     #[cfg(windows)]
     fn load_self() -> Option<~str> {
-        use win32::*;
+        use os::win32::*;
         do fill_utf16_buf_and_decode() |buf, sz| {
             libc::GetModuleFileNameW(0u as libc::DWORD, buf, sz)
         }
@@ -473,14 +510,14 @@ pub fn tmpdir() -> Path {
     #[cfg(unix)]
     #[allow(non_implicitly_copyable_typarams)]
     fn lookup() -> Path {
-        option::get_default(getenv_nonempty("TMPDIR"),
+        option::get_or_default(getenv_nonempty("TMPDIR"),
                             Path("/tmp"))
     }
 
     #[cfg(windows)]
     #[allow(non_implicitly_copyable_typarams)]
     fn lookup() -> Path {
-        option::get_default(
+        option::get_or_default(
                     option::or(getenv_nonempty("TMP"),
                     option::or(getenv_nonempty("TEMP"),
                     option::or(getenv_nonempty("USERPROFILE"),
@@ -556,7 +593,7 @@ pub fn make_dir(p: &Path, mode: c_int) -> bool {
 
     #[cfg(windows)]
     fn mkdir(p: &Path, _mode: c_int) -> bool {
-        use win32::*;
+        use os::win32::*;
         // FIXME: turn mode into something useful? #2623
         do as_utf16_p(p.to_str()) |buf| {
             libc::CreateDirectoryW(buf, unsafe {
@@ -604,7 +641,7 @@ pub fn remove_dir(p: &Path) -> bool {
 
     #[cfg(windows)]
     fn rmdir(p: &Path) -> bool {
-        use win32::*;
+        use os::win32::*;
         return do as_utf16_p(p.to_str()) |buf| {
             libc::RemoveDirectoryW(buf) != (0 as libc::BOOL)
         };
@@ -623,7 +660,7 @@ pub fn change_dir(p: &Path) -> bool {
 
     #[cfg(windows)]
     fn chdir(p: &Path) -> bool {
-        use win32::*;
+        use os::win32::*;
         return do as_utf16_p(p.to_str()) |buf| {
             libc::SetCurrentDirectoryW(buf) != (0 as libc::BOOL)
         };
@@ -643,7 +680,7 @@ pub fn copy_file(from: &Path, to: &Path) -> bool {
 
     #[cfg(windows)]
     fn do_copy_file(from: &Path, to: &Path) -> bool {
-        use win32::*;
+        use os::win32::*;
         return do as_utf16_p(from.to_str()) |fromp| {
             do as_utf16_p(to.to_str()) |top| {
                 libc::CopyFileW(fromp, top, (0 as libc::BOOL)) !=
@@ -703,7 +740,7 @@ pub fn remove_file(p: &Path) -> bool {
 
     #[cfg(windows)]
     fn unlink(p: &Path) -> bool {
-        use win32::*;
+        use os::win32::*;
         return do as_utf16_p(p.to_str()) |buf| {
             libc::DeleteFileW(buf) != (0 as libc::BOOL)
         };
@@ -887,6 +924,13 @@ pub fn arch() -> str { ~"arm" }
 #[cfg(test)]
 #[allow(non_implicitly_copyable_typarams)]
 mod tests {
+    use libc;
+    use option;
+    use os;
+    use rand;
+    use run;
+    use str;
+    use vec;
 
     #[test]
     pub fn last_os_error() {
@@ -936,7 +980,7 @@ mod tests {
         while i < 100 { s += ~"aaaaaaaaaa"; i += 1; }
         let n = make_rand_name();
         setenv(n, s);
-        log(debug, s);
+        log(debug, copy s);
         assert getenv(n) == option::Some(move s);
     }
 
@@ -945,7 +989,7 @@ mod tests {
         let path = os::self_exe_path();
         assert path.is_some();
         let path = path.get();
-        log(debug, path);
+        log(debug, copy path);
 
         // Hard to test this function
         assert path.is_absolute;
@@ -958,7 +1002,7 @@ mod tests {
         assert vec::len(e) > 0u;
         for vec::each(e) |p| {
             let (n, v) = copy *p;
-            log(debug, n);
+            log(debug, copy n);
             let v2 = getenv(n);
             // MingW seems to set some funky environment variables like
             // "=C:=C:\MinGW\msys\1.0\bin" and "!::=::\" that are returned
@@ -1050,7 +1094,7 @@ mod tests {
         assert (vec::len(dirs) > 0u);
 
         for vec::each(dirs) |dir| {
-            log(debug, *dir);
+            log(debug, copy *dir);
         }
     }
 

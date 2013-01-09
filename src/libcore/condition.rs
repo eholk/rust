@@ -1,115 +1,120 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+use task;
+use task::local_data::{local_data_pop, local_data_set};
+
 // helper for transmutation, shown below.
-type RustClosure = (int,int);
-struct Handler<T, U:Copy> {
+type RustClosure = (int, int);
+
+pub struct Handler<T, U> {
     handle: RustClosure,
     prev: Option<@Handler<T, U>>,
 }
 
-struct Condition<T, U:Copy> {
-    key: task::local_data::LocalDataKey<Handler<T,U>>
+pub struct Condition<T, U> {
+    name: &static/str,
+    key: task::local_data::LocalDataKey<Handler<T, U>>
 }
 
-impl<T, U: Copy>  Condition<T,U> {
-
-    fn trap(&self, h: &self/fn(&T) ->U) -> Trap/&self<T,U> {
+impl<T, U> Condition<T, U> {
+    fn trap(&self, h: &self/fn(T) -> U) -> Trap/&self<T, U> {
         unsafe {
             let p : *RustClosure = ::cast::transmute(&h);
             let prev = task::local_data::local_data_get(self.key);
-            let h = @Handler{handle: *p, prev: prev};
-            move Trap { cond: self, handler: h }
+            let h = @Handler { handle: *p, prev: prev };
+            Trap { cond: self, handler: h }
         }
     }
 
-    fn raise(t:&T) -> U  {
-        do self.raise_default(t) {
-            fail ~"Unhandled condition";
-        }
+    fn raise(t: T) -> U {
+        let msg = fmt!("Unhandled condition: %s: %?", self.name, t);
+        self.raise_default(t, || fail msg)
     }
 
-    fn raise_default(t:&T, default: fn() -> U) -> U {
+    fn raise_default(t: T, default: &fn() -> U) -> U {
         unsafe {
-            match task::local_data::local_data_pop(self.key) {
+            match local_data_pop(self.key) {
                 None => {
                     debug!("Condition.raise: found no handler");
                     default()
                 }
-
                 Some(handler) => {
                     debug!("Condition.raise: found handler");
                     match handler.prev {
-                        None => (),
-                        Some(hp) =>
-                        task::local_data::local_data_set(self.key, hp)
+                        None => {}
+                        Some(hp) => local_data_set(self.key, hp)
                     }
-                    let handle : &fn(&T) -> U =
+                    let handle : &fn(T) -> U =
                         ::cast::transmute(handler.handle);
                     let u = handle(t);
-                    task::local_data::local_data_set(self.key,
-                                                     handler);
-                    move u
+                    local_data_set(self.key, handler);
+                    u
                 }
             }
         }
     }
 }
 
-
-
-struct Trap<T, U:Copy> {
-    cond: &Condition<T,U>,
+struct Trap<T, U> {
+    cond: &Condition<T, U>,
     handler: @Handler<T, U>
 }
 
-impl<T, U: Copy> Trap<T,U> {
-    fn in<V: Copy>(&self, inner: &self/fn() -> V) -> V {
+impl<T, U> Trap<T, U> {
+    fn in<V>(&self, inner: &self/fn() -> V) -> V {
         unsafe {
             let _g = Guard { cond: self.cond };
             debug!("Trap: pushing handler to TLS");
-            task::local_data::local_data_set(self.cond.key, self.handler);
+            local_data_set(self.cond.key, self.handler);
             inner()
         }
     }
 }
 
-struct Guard<T, U:Copy> {
-    cond: &Condition<T,U>,
-    drop {
+struct Guard<T, U> {
+    cond: &Condition<T, U>
+}
+
+impl<T, U> Guard<T, U> : Drop {
+    fn finalize(&self) {
         unsafe {
             debug!("Guard: popping handler from TLS");
-            let curr = task::local_data::local_data_pop(self.cond.key);
+            let curr = local_data_pop(self.cond.key);
             match curr {
-                None => (),
-                Some(h) =>
-                match h.prev {
-                    None => (),
-                    Some(hp) => {
-                        task::local_data::local_data_set(self.cond.key, hp)
-                    }
+                None => {}
+                Some(h) => match h.prev {
+                    None => {}
+                    Some(hp) => local_data_set(self.cond.key, hp)
                 }
             }
         }
     }
 }
 
-
 #[cfg(test)]
 mod test {
-
-    fn sadness_key(_x: @Handler<int,int>) { }
-    const sadness_condition : Condition<int,int> =
-        Condition { key: sadness_key };
+    condition! {
+        sadness: int -> int;
+    }
 
     fn trouble(i: int) {
-        debug!("trouble: raising conition");
-        let j = sadness_condition.raise(&i);
+        debug!("trouble: raising condition");
+        let j = sadness::cond.raise(i);
         debug!("trouble: handler recovered with %d", j);
     }
 
     fn nested_trap_test_inner() {
-
         let mut inner_trapped = false;
 
-        do sadness_condition.trap(|_j| {
+        do sadness::cond.trap(|_j| {
             debug!("nested_trap_test_inner: in handler");
             inner_trapped = true;
             0
@@ -123,10 +128,9 @@ mod test {
 
     #[test]
     fn nested_trap_test_outer() {
-
         let mut outer_trapped = false;
 
-        do sadness_condition.trap(|_j| {
+        do sadness::cond.trap(|_j| {
             debug!("nested_trap_test_outer: in handler");
             outer_trapped = true; 0
         }).in {
@@ -139,15 +143,14 @@ mod test {
     }
 
     fn nested_reraise_trap_test_inner() {
-
         let mut inner_trapped = false;
 
-        do sadness_condition.trap(|_j| {
+        do sadness::cond.trap(|_j| {
             debug!("nested_reraise_trap_test_inner: in handler");
             inner_trapped = true;
             let i = 10;
             debug!("nested_reraise_trap_test_inner: handler re-raising");
-            sadness_condition.raise(&i)
+            sadness::cond.raise(i)
         }).in {
             debug!("nested_reraise_trap_test_inner: in protected block");
             trouble(1);
@@ -158,10 +161,9 @@ mod test {
 
     #[test]
     fn nested_reraise_trap_test_outer() {
-
         let mut outer_trapped = false;
 
-        do sadness_condition.trap(|_j| {
+        do sadness::cond.trap(|_j| {
             debug!("nested_reraise_trap_test_outer: in handler");
             outer_trapped = true; 0
         }).in {
@@ -174,12 +176,11 @@ mod test {
 
     #[test]
     fn test_default() {
-
         let mut trapped = false;
 
-        do sadness_condition.trap(|j| {
+        do sadness::cond.trap(|j| {
             debug!("test_default: in handler");
-            sadness_condition.raise_default(j, || {trapped=true; 5})
+            sadness::cond.raise_default(j, || { trapped=true; 5 })
         }).in {
             debug!("test_default: in protected block");
             trouble(1);
@@ -187,5 +188,4 @@ mod test {
 
         assert trapped;
     }
-
 }

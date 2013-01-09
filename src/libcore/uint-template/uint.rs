@@ -1,11 +1,24 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Operations and constants for `uint`
 
-pub use inst::{
+pub use self::inst::{
     div_ceil, div_round, div_floor, iterate,
     next_power_of_two
 };
 
 mod inst {
+    use sys;
+    use uint;
+
     pub type T = uint;
 
     #[cfg(target_arch = "x86")]
@@ -94,7 +107,7 @@ mod inst {
 
     /// Returns the smallest power of 2 greater than or equal to `n`
     #[inline(always)]
-    pub fn next_power_of_two(n: uint) -> uint {
+    pub pure fn next_power_of_two(n: uint) -> uint {
         let halfbits: uint = sys::size_of::<uint>() * 4u;
         let mut tmp: uint = n - 1u;
         let mut shift: uint = 1u;

@@ -1,9 +1,42 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! Generate markdown from a document tree
 
+use astsrv;
+use attr_pass;
+use config;
+use desc_to_brief_pass;
 use doc::ItemUtils;
+use doc;
+use extract;
+use fold;
+use markdown_index_pass;
+use markdown_pass;
 use markdown_writer::Writer;
 use markdown_writer::WriterUtils;
 use markdown_writer::WriterFactory;
+use markdown_writer;
+use page_pass;
+use path_pass;
+use sectionalize_pass;
+use sort_pass;
+use trim_pass;
+use unindent_pass;
+
+use core::iter;
+use core::oldcomm;
+use core::str;
+use core::vec;
+use std::par;
+use syntax;
 
 pub fn mk_pass(+writer_factory: WriterFactory) -> Pass {
     let f = fn~(move writer_factory,
@@ -115,11 +148,11 @@ fn should_request_new_writer_for_each_page() {
     let (writer_factory, po) = markdown_writer::future_writer_factory();
     let (srv, doc) = test::create_doc_srv(~"mod a { }");
     // Split the document up into pages
-    let doc = page_pass::mk_pass(config::DocPerMod).f(srv, doc);
+    let doc = (page_pass::mk_pass(config::DocPerMod).f)(srv, doc);
     write_markdown(doc, move writer_factory);
     // We expect two pages to have been written
     for iter::repeat(2) {
-        comm::recv(po);
+        oldcomm::recv(po);
     }
 }
 
@@ -147,10 +180,10 @@ fn should_write_title_for_each_page() {
     let (writer_factory, po) = markdown_writer::future_writer_factory();
     let (srv, doc) = test::create_doc_srv(
         ~"#[link(name = \"core\")]; mod a { }");
-    let doc = page_pass::mk_pass(config::DocPerMod).f(srv, doc);
+    let doc = (page_pass::mk_pass(config::DocPerMod).f)(srv, doc);
     write_markdown(doc, move writer_factory);
     for iter::repeat(2) {
-        let (page, markdown) = comm::recv(po);
+        let (page, markdown) = oldcomm::recv(po);
         match page {
           doc::CratePage(_) => {
             assert str::contains(markdown, ~"% Crate core");
@@ -202,7 +235,7 @@ pub fn header_kind(+doc: doc::ItemTag) -> ~str {
         ~"Enum"
       }
       doc::TraitTag(_) => {
-        ~"Interface"
+        ~"Trait"
       }
       doc::ImplTag(_) => {
         ~"Implementation"
@@ -294,7 +327,7 @@ fn should_write_full_path_to_mod() {
     assert str::contains(markdown, ~"# Module `a::b::c`");
 }
 
-fn write_common(
+fn write_oldcommon(
     ctxt: &Ctxt,
     +desc: Option<~str>,
     sections: &[doc::Section]
@@ -343,7 +376,7 @@ fn write_mod_contents(
     ctxt: &Ctxt,
     +doc: doc::ModDoc
 ) {
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
     if doc.index.is_some() {
         write_index(ctxt, doc.index.get());
     }
@@ -446,7 +479,7 @@ fn should_write_index_for_foreign_mods() {
 }
 
 fn write_nmod(ctxt: &Ctxt, +doc: doc::NmodDoc) {
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
     if doc.index.is_some() {
         write_index(ctxt, doc.index.get());
     }
@@ -497,7 +530,7 @@ fn write_fnlike(
     sections: &[doc::Section]
 ) {
     write_sig(ctxt, sig);
-    write_common(ctxt, desc, sections);
+    write_oldcommon(ctxt, desc, sections);
 }
 
 fn write_sig(ctxt: &Ctxt, +sig: Option<~str>) {
@@ -566,7 +599,7 @@ fn write_const(
     +doc: doc::ConstDoc
 ) {
     write_sig(ctxt, doc.sig);
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
 }
 
 #[test]
@@ -587,7 +620,7 @@ fn write_enum(
     ctxt: &Ctxt,
     +doc: doc::EnumDoc
 ) {
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
     write_variants(ctxt, doc.variants);
 }
 
@@ -668,7 +701,7 @@ fn should_write_variant_list_with_signatures() {
 }
 
 fn write_trait(ctxt: &Ctxt, +doc: doc::TraitDoc) {
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
     write_methods(ctxt, doc.methods);
 }
 
@@ -691,7 +724,7 @@ fn write_method(ctxt: &Ctxt, +doc: doc::MethodDoc) {
 #[test]
 fn should_write_trait_header() {
     let markdown = test::render(~"trait i { fn a(); }");
-    assert str::contains(markdown, ~"## Interface `i`");
+    assert str::contains(markdown, ~"## Trait `i`");
 }
 
 #[test]
@@ -716,7 +749,7 @@ fn should_write_trait_method_signature() {
 }
 
 fn write_impl(ctxt: &Ctxt, +doc: doc::ImplDoc) {
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
     write_methods(ctxt, doc.methods);
 }
 
@@ -758,7 +791,7 @@ fn write_type(
     +doc: doc::TyDoc
 ) {
     write_sig(ctxt, doc.sig);
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
 }
 
 #[test]
@@ -785,7 +818,7 @@ fn write_struct(
     +doc: doc::StructDoc
 ) {
     write_sig(ctxt, doc.sig);
-    write_common(ctxt, doc.desc(), doc.sections());
+    write_oldcommon(ctxt, doc.desc(), doc.sections());
 }
 
 #[test]
@@ -797,6 +830,24 @@ fn should_write_struct_header() {
 #[cfg(test)]
 mod test {
     #[legacy_exports];
+
+    use astsrv;
+    use attr_pass;
+    use config;
+    use desc_to_brief_pass;
+    use doc;
+    use extract;
+    use markdown_index_pass;
+    use markdown_writer;
+    use path_pass;
+    use sectionalize_pass;
+    use trim_pass;
+    use tystr_pass;
+    use unindent_pass;
+
+    use core::oldcomm;
+    use core::str;
+
     fn render(+source: ~str) -> ~str {
         let (srv, doc) = create_doc_srv(source);
         let markdown = write_markdown_str_srv(srv, doc);
@@ -814,21 +865,21 @@ mod test {
 
             let doc = extract::from_srv(srv, ~"");
             debug!("doc (extract): %?", doc);
-            let doc = tystr_pass::mk_pass().f(srv, doc);
+            let doc = (tystr_pass::mk_pass().f)(srv, doc);
             debug!("doc (tystr): %?", doc);
-            let doc = path_pass::mk_pass().f(srv, doc);
+            let doc = (path_pass::mk_pass().f)(srv, doc);
             debug!("doc (path): %?", doc);
-            let doc = attr_pass::mk_pass().f(srv, doc);
+            let doc = (attr_pass::mk_pass().f)(srv, doc);
             debug!("doc (attr): %?", doc);
-            let doc = desc_to_brief_pass::mk_pass().f(srv, doc);
+            let doc = (desc_to_brief_pass::mk_pass().f)(srv, doc);
             debug!("doc (desc_to_brief): %?", doc);
-            let doc = unindent_pass::mk_pass().f(srv, doc);
+            let doc = (unindent_pass::mk_pass().f)(srv, doc);
             debug!("doc (unindent): %?", doc);
-            let doc = sectionalize_pass::mk_pass().f(srv, doc);
+            let doc = (sectionalize_pass::mk_pass().f)(srv, doc);
             debug!("doc (trim): %?", doc);
-            let doc = trim_pass::mk_pass().f(srv, doc);
+            let doc = (trim_pass::mk_pass().f)(srv, doc);
             debug!("doc (sectionalize): %?", doc);
-            let doc = markdown_index_pass::mk_pass(config).f(srv, doc);
+            let doc = (markdown_index_pass::mk_pass(config).f)(srv, doc);
             debug!("doc (index): %?", doc);
             (srv, doc)
         }
@@ -844,7 +895,7 @@ mod test {
     ) -> ~str {
         let (writer_factory, po) = markdown_writer::future_writer_factory();
         write_markdown(doc, move writer_factory);
-        return comm::recv(po).second();
+        return oldcomm::recv(po).second();
     }
 
     fn write_markdown_str_srv(
@@ -853,8 +904,8 @@ mod test {
     ) -> ~str {
         let (writer_factory, po) = markdown_writer::future_writer_factory();
         let pass = mk_pass(move writer_factory);
-        pass.f(srv, doc);
-        return comm::recv(po).second();
+        (pass.f)(srv, doc);
+        return oldcomm::recv(po).second();
     }
 
     #[test]

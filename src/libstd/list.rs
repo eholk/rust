@@ -1,18 +1,29 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 //! A standard linked list
 #[forbid(deprecated_mode)];
 
 use core::cmp::Eq;
 use core::option;
-use option::*;
-use option::{Some, None};
+use core::option::*;
+use core::vec;
 
+#[deriving_eq]
 pub enum List<T> {
     Cons(T, @List<T>),
     Nil,
 }
 
-/// Cregate a list from a vector
-pub fn from_vec<T: Copy>(v: &[T]) -> @List<T> {
+/// Create a list from a vector
+pub pure fn from_vec<T: Copy>(v: &[T]) -> @List<T> {
     vec::foldr(v, @Nil::<T>, |h, t| @Cons(*h, t))
 }
 
@@ -42,7 +53,7 @@ pub fn foldl<T: Copy, U>(z: T, ls: @List<U>, f: fn(&T, &U) -> T) -> T {
  * When function `f` returns true then an option containing the element
  * is returned. If `f` matches no elements then none is returned.
  */
-pub fn find<T: Copy>(ls: @List<T>, f: fn(&T) -> bool) -> Option<T> {
+pub pure fn find<T: Copy>(ls: @List<T>, f: fn(&T) -> bool) -> Option<T> {
     let mut ls = ls;
     loop {
         ls = match *ls {
@@ -77,7 +88,7 @@ pub pure fn is_not_empty<T: Copy>(ls: @List<T>) -> bool {
 }
 
 /// Returns the length of a list
-pub fn len<T>(ls: @List<T>) -> uint {
+pub pure fn len<T>(ls: @List<T>) -> uint {
     let mut count = 0u;
     iter(ls, |_e| count += 1u);
     count
@@ -120,7 +131,7 @@ pure fn push<T: Copy>(ll: &mut @list<T>, vv: T) {
 */
 
 /// Iterate over a list
-pub fn iter<T>(l: @List<T>, f: fn(&T)) {
+pub pure fn iter<T>(l: @List<T>, f: fn(&T)) {
     let mut cur = l;
     loop {
         cur = match *cur {
@@ -134,7 +145,7 @@ pub fn iter<T>(l: @List<T>, f: fn(&T)) {
 }
 
 /// Iterate over a list
-pub fn each<T>(l: @List<T>, f: fn(&T) -> bool) {
+pub pure fn each<T>(l: @List<T>, f: fn(&T) -> bool) {
     let mut cur = l;
     loop {
         cur = match *cur {
@@ -147,29 +158,13 @@ pub fn each<T>(l: @List<T>, f: fn(&T) -> bool) {
     }
 }
 
-impl<T:Eq> List<T> : Eq {
-    pure fn eq(&self, other: &List<T>) -> bool {
-        match (*self) {
-            Cons(ref e0a, e1a) => {
-                match (*other) {
-                    Cons(ref e0b, e1b) => e0a == e0b && e1a == e1b,
-                    _ => false
-                }
-            }
-            Nil => {
-                match (*other) {
-                    Nil => true,
-                    _ => false
-                }
-            }
-        }
-    }
-    pure fn ne(&self, other: &List<T>) -> bool { !(*self).eq(other) }
-}
-
 #[cfg(test)]
 mod tests {
     #[legacy_exports];
+
+    use list;
+
+    use core::option;
 
     #[test]
     fn test_is_empty() {

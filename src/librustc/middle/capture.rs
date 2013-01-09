@@ -1,7 +1,23 @@
-use syntax::{ast, ast_util};
-use syntax::codemap::span;
-use std::map;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::freevars;
+use middle::ty;
+
+use core::option;
+use core::vec;
 use std::map::HashMap;
+use std::map;
+use syntax::codemap::span;
+use syntax::{ast, ast_util};
 
 export capture_mode;
 export capture_var;
@@ -100,22 +116,29 @@ fn compute_capture_vars(tcx: ty::ctxt,
     // now go through anything that is referenced but was not explicitly
     // named and add that
 
-    let implicit_mode;
-    if fn_proto == ast::ProtoBorrowed {
-        implicit_mode = cap_ref;
-    } else {
-        implicit_mode = cap_copy;
-    }
-
+    let implicit_mode_is_by_ref = fn_proto == ast::ProtoBorrowed;
     for vec::each(*freevars) |fvar| {
         let fvar_def_id = ast_util::def_id_of_def(fvar.def).node;
         match cap_map.find(fvar_def_id) {
             option::Some(_) => { /* was explicitly named, do nothing */ }
             option::None => {
+                // Move if this type implicitly moves; copy otherwise.
+                let mode;
+                if implicit_mode_is_by_ref {
+                    mode = cap_ref;
+                } else {
+                    let fvar_ty = ty::node_id_to_type(tcx, fvar_def_id);
+                    if ty::type_implicitly_moves(tcx, fvar_ty) {
+                        mode = cap_move;
+                    } else {
+                        mode = cap_copy;
+                    }
+                };
+
                 cap_map.insert(fvar_def_id, {def:fvar.def,
                                              span: fvar.span,
                                              cap_item: None,
-                                             mode:implicit_mode});
+                                             mode:mode});
             }
         }
     }

@@ -1,12 +1,28 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Functions for building ASTs, without having to fuss with spans.
 //
 // To start with, it will be use dummy spans, but it might someday do
 // something smarter.
 
 use ast::{ident, node_id};
+use ast;
 use ast_util::{ident_to_path, respan, dummy_sp};
+use ast_util;
+use attr;
 use codemap::span;
 use ext::base::mk_ctxt;
+use ext::quote::rt::*;
+
+use core::vec;
 
 // Transitional reexports so qquote can find the paths it is looking for
 mod syntax {
@@ -18,6 +34,14 @@ mod syntax {
 fn path(ids: ~[ident], span: span) -> @ast::path {
     @{span: span,
       global: false,
+      idents: ids,
+      rp: None,
+      types: ~[]}
+}
+
+fn path_global(ids: ~[ident], span: span) -> @ast::path {
+    @{span: span,
+      global: true,
       idents: ids,
       rp: None,
       types: ~[]}
@@ -71,6 +95,7 @@ trait ext_ctxt_ast_builder {
                     +params: ~[ast::ty_param]) -> @ast::item;
     fn item_ty(name: ident, span: span, ty: @ast::Ty) -> @ast::item;
     fn ty_vars(+ty_params: ~[ast::ty_param]) -> ~[@ast::Ty];
+    fn ty_vars_global(+ty_params: ~[ast::ty_param]) -> ~[@ast::Ty];
     fn ty_field_imm(name: ident, ty: @ast::Ty) -> ast::ty_field;
     fn ty_rec(+v: ~[ast::ty_field]) -> @ast::Ty;
     fn field_imm(name: ident, e: @ast::expr) -> ast::field;
@@ -112,26 +137,8 @@ impl ext_ctxt: ext_ctxt_ast_builder {
     }
 
     fn stmt_let(ident: ident, e: @ast::expr) -> @ast::stmt {
-        // If the quasiquoter could interpolate idents, this is all
-        // we'd need.
-        //
-        //let ext_cx = self;
-        //#ast[stmt] { let $(ident) = $(e) }
-
-        @{node: ast::stmt_decl(@{node: ast::decl_local(~[
-            @{node: {is_mutbl: false,
-                     ty: self.ty_infer(),
-                     pat: @{id: self.next_id(),
-                            node: ast::pat_ident(ast::bind_by_implicit_ref,
-                                                 path(~[ident],
-                                                      dummy_sp()),
-                                                 None),
-                            span: dummy_sp()},
-                     init: Some(self.move_expr(e)),
-                     id: self.next_id()},
-              span: dummy_sp()}]),
-                               span: dummy_sp()}, self.next_id()),
-         span: dummy_sp()}
+        let ext_cx = self;
+        quote_stmt!( let $ident = $e; )
     }
 
     fn field_imm(name: ident, e: @ast::expr) -> ast::field {
@@ -307,6 +314,11 @@ impl ext_ctxt: ext_ctxt_ast_builder {
     }
 
     fn ty_vars(+ty_params: ~[ast::ty_param]) -> ~[@ast::Ty] {
+        ty_params.map(|p| self.ty_path_ast_builder(
+            path(~[p.ident], dummy_sp())))
+    }
+
+    fn ty_vars_global(+ty_params: ~[ast::ty_param]) -> ~[@ast::Ty] {
         ty_params.map(|p| self.ty_path_ast_builder(
             path(~[p.ident], dummy_sp())))
     }

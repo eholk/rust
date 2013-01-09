@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // Resolution is the process of removing type variables and replacing
 // them with their inferred values.  Unfortunately our inference has
 // become fairly complex and so there are a number of options to
@@ -36,9 +46,16 @@
 // future).  If you want to resolve everything but one type, you are
 // probably better off writing `resolve_all - resolve_ivar`.
 
-use integral::*;
-use floating::*;
-use to_str::ToStr;
+
+use middle::ty;
+use middle::typeck::infer::floating::*;
+use middle::typeck::infer::floating;
+use middle::typeck::infer::integral::*;
+use middle::typeck::infer::integral;
+use middle::typeck::infer::to_str::ToStr;
+
+use core::uint;
+use core::vec;
 
 const resolve_nested_tvar: uint = 0b00000001;
 const resolve_rvar: uint        = 0b00000010;
@@ -94,7 +111,8 @@ impl resolve_state {
         assert vec::is_empty(self.v_seen);
         match self.err {
           None => {
-            debug!("Resolved to %s (modes=%x)",
+            debug!("Resolved to %s + %s (modes=%x)",
+                   ty_to_str(self.infcx.tcx, rty),
                    ty_to_str(self.infcx.tcx, rty),
                    self.modes);
             return Ok(rty);
@@ -117,7 +135,7 @@ impl resolve_state {
         indent(fn&() -> ty::t {
             if !ty::type_needs_infer(typ) { return typ; }
 
-            match ty::get(typ).sty {
+            match copy ty::get(typ).sty {
               ty::ty_infer(TyVar(vid)) => {
                 self.resolve_ty_var(vid)
               }

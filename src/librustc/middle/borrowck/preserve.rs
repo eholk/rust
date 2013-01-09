@@ -1,7 +1,22 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // ----------------------------------------------------------------------
 // Preserve(Ex, S) holds if ToAddr(Ex) will remain valid for the entirety of
 // the scope S.
 //
+
+
+use middle::ty;
+
+use syntax::ast;
 
 export public_methods, preserve_condition, pc_ok, pc_if_pure;
 
@@ -64,7 +79,9 @@ priv impl &preserve_ctxt {
         let _i = indenter();
 
         match cmt.cat {
-          cat_special(sk_self) | cat_special(sk_heap_upvar) => {
+          cat_special(sk_self) |
+          cat_special(sk_implicit_self) |
+          cat_special(sk_heap_upvar) => {
             self.compare_scope(cmt, ty::re_scope(self.item_ub))
           }
           cat_special(sk_static_item) | cat_special(sk_method) => {
@@ -168,9 +185,9 @@ priv impl &preserve_ctxt {
                     debug!("must root @T, otherwise purity req'd");
                     self.attempt_root(cmt, base, derefs)
                   }
-                  Err(e) => {
+                  Err(ref e) => {
                     debug!("must root @T, err: %s",
-                           self.bccx.bckerr_to_str(e));
+                           self.bccx.bckerr_to_str((*e)));
                     self.attempt_root(cmt, base, derefs)
                   }
                 }
@@ -264,13 +281,13 @@ priv impl &preserve_ctxt {
           }
 
           // the base requires purity too, that's fine
-          Ok(pc_if_pure(e)) => {
-            Ok(pc_if_pure(e))
+          Ok(pc_if_pure(ref e)) => {
+            Ok(pc_if_pure((*e)))
           }
 
           // base is not stable, doesn't matter
-          Err(e) => {
-            Err(e)
+          Err(ref e) => {
+            Err((*e))
           }
         }
     }

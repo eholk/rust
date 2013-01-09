@@ -1,9 +1,24 @@
-use syntax::ast;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use back;
 use lib::llvm::ValueRef;
-use common::*;
-use build::*;
-use base::*;
-use datum::immediate_rvalue;
+use middle::trans::base::*;
+use middle::trans::build::*;
+use middle::trans::common::*;
+use middle::trans::datum::immediate_rvalue;
+use middle::trans::datum;
+use middle::trans::glue;
+
+use syntax::ast;
 
 export make_free_glue, autoderef, duplicate;
 

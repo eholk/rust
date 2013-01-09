@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!**************************************************************************
  * Spawning & linked failure
  *
@@ -63,8 +73,18 @@
 #[doc(hidden)]; // FIXME #3538
 #[warn(deprecated_mode)];
 
-use rt::rust_task;
-use rt::rust_closure;
+use cast;
+use oldcomm;
+use option;
+use pipes;
+use private;
+use ptr;
+use send_map;
+use task::rt;
+use task::rt::rust_task;
+use task::rt::rust_closure;
+use uint;
+use util;
 
 macro_rules! move_it (
     { $x:expr } => ( unsafe { let y = move *ptr::addr_of(&($x)); move y } )
@@ -636,12 +656,12 @@ pub fn spawn_raw(opts: TaskOpts, f: fn~()) {
 
 #[test]
 fn test_spawn_raw_simple() {
-    let po = comm::Port();
-    let ch = comm::Chan(&po);
+    let po = oldcomm::Port();
+    let ch = oldcomm::Chan(&po);
     do spawn_raw(default_task_opts()) {
-        comm::send(ch, ());
+        oldcomm::send(ch, ());
     }
-    comm::recv(po);
+    oldcomm::recv(po);
 }
 
 #[test]
@@ -660,7 +680,7 @@ fn test_spawn_raw_unsupervise() {
 #[test]
 #[ignore(cfg(windows))]
 fn test_spawn_raw_notify_success() {
-    let (notify_ch, notify_po) = pipes::stream();
+    let (notify_po, notify_ch) = pipes::stream();
 
     let opts = {
         notify_chan: Some(move notify_ch),
@@ -675,7 +695,7 @@ fn test_spawn_raw_notify_success() {
 #[ignore(cfg(windows))]
 fn test_spawn_raw_notify_failure() {
     // New bindings for these
-    let (notify_ch, notify_po) = pipes::stream();
+    let (notify_po, notify_ch) = pipes::stream();
 
     let opts = {
         linked: false,

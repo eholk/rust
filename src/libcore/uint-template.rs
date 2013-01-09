@@ -1,10 +1,27 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NB: transitionary, de-mode-ing.
 #[forbid(deprecated_mode)];
 #[forbid(deprecated_pattern)];
 
-use T = inst::T;
+use T = self::inst::T;
+
+use char;
 use cmp::{Eq, Ord};
 use from_str::FromStr;
+use iter;
+use num;
+use str;
+use uint;
+use vec;
 
 pub const bits : uint = inst::bits;
 pub const bytes : uint = (inst::bits / 8);
@@ -63,15 +80,23 @@ impl T : Eq {
 }
 
 impl T: num::Num {
-    pure fn add(other: &T)    -> T { return self + *other; }
-    pure fn sub(other: &T)    -> T { return self - *other; }
-    pure fn mul(other: &T)    -> T { return self * *other; }
-    pure fn div(other: &T)    -> T { return self / *other; }
-    pure fn modulo(other: &T) -> T { return self % *other; }
-    pure fn neg()              -> T { return -self;        }
+    pure fn add(&self, other: &T)    -> T { return *self + *other; }
+    pure fn sub(&self, other: &T)    -> T { return *self - *other; }
+    pure fn mul(&self, other: &T)    -> T { return *self * *other; }
+    pure fn div(&self, other: &T)    -> T { return *self / *other; }
+    pure fn modulo(&self, other: &T) -> T { return *self % *other; }
+    pure fn neg(&self)              -> T { return -*self;        }
 
-    pure fn to_int()         -> int { return self as int; }
+    pure fn to_int(&self)         -> int { return *self as int; }
     static pure fn from_int(n: int) -> T   { return n as T;      }
+}
+
+impl T: num::Zero {
+    static pure fn zero() -> T { 0 }
+}
+
+impl T: num::One {
+    static pure fn one() -> T { 1 }
 }
 
 impl T: iter::Times {
@@ -81,8 +106,8 @@ impl T: iter::Times {
         will execute the given function exactly x times. If we assume that \
         `x` is an int, this is functionally equivalent to \
         `for int::range(0, x) |_i| { /* anything */ }`."]
-    pure fn times(it: fn() -> bool) {
-        let mut i = self;
+    pure fn times(&self, it: fn() -> bool) {
+        let mut i = *self;
         while i > 0 {
             if !it() { break }
             i -= 1;
@@ -164,7 +189,7 @@ pub pure fn to_str_bytes<U>(neg: bool, num: T, radix: uint,
                    f: fn(v: &[u8]) -> U) -> U {
 
     #[inline(always)]
-    fn digit(n: T) -> u8 {
+    pure fn digit(n: T) -> u8 {
         if n <= 9u as T {
             n as u8 + '0' as u8
         } else if n <= 15u as T {
@@ -180,35 +205,27 @@ pub pure fn to_str_bytes<U>(neg: bool, num: T, radix: uint,
     // Worst case: 64-bit number, binary-radix, with
     // a leading negative sign = 65 bytes.
     let buf : [mut u8 * 65] = [mut 0u8, ..65];
+    let len = buf.len();
 
-    // FIXME (#2649): post-snapshot, you can do this without the raw
-    // pointers and unsafe bits, and the codegen will prove it's all
-    // in-bounds, no extra cost.
-
-    unsafe {
-        do vec::as_imm_buf(buf) |p, len| {
-            let mp = p as *mut u8;
-            let mut i = len;
-            let mut n = num;
-            let radix = radix as T;
-            loop {
-                i -= 1u;
-                assert 0u < i && i < len;
-                *ptr::mut_offset(mp, i) = digit(n % radix);
-                n /= radix;
-                if n == 0 as T { break; }
-            }
-
-            assert 0u < i && i < len;
-
-            if neg {
-                i -= 1u;
-                *ptr::mut_offset(mp, i) = '-' as u8;
-            }
-
-            vec::raw::buf_as_slice(ptr::offset(p, i), len - i, f)
-        }
+    let mut i = len;
+    let mut n = num;
+    let radix = radix as T;
+    loop {
+        i -= 1u;
+        assert 0u < i && i < len;
+        buf[i] = digit(n % radix);
+        n /= radix;
+        if n == 0 as T { break; }
     }
+
+    assert 0u < i && i < len;
+
+    if neg {
+        i -= 1u;
+        buf[i] = '-' as u8;
+    }
+
+    f(vec::view(buf, i, len))
 }
 
 /// Convert to a string

@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 
 
 /* -*- mode: rust; indent-tabs-mode: nil -*-
@@ -36,7 +46,7 @@ fn select_random(r: u32, genelist: ~[aminoacids]) -> char {
             } else { return bisect(v, mid, hi, target); }
         } else { return v[hi].ch; }
     }
-    return bisect(genelist, 0u, vec::len::<aminoacids>(genelist) - 1u, r);
+    return bisect(copy genelist, 0, vec::len::<aminoacids>(genelist) - 1, r);
 }
 
 fn make_random_fasta(wr: io::Writer, id: ~str, desc: ~str, genelist: ~[aminoacids], n: int) {
@@ -45,7 +55,7 @@ fn make_random_fasta(wr: io::Writer, id: ~str, desc: ~str, genelist: ~[aminoacid
     let mut op: ~str = ~"";
     for uint::range(0u, n as uint) |_i| {
         str::push_char(&mut op, select_random(myrandom_next(rng, 100u32),
-                                              genelist));
+                                              copy genelist));
         if str::len(op) >= LINE_LENGTH() {
             wr.write_line(op);
             op = ~"";

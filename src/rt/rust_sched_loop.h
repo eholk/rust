@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #ifndef RUST_SCHED_LOOP_H
 #define RUST_SCHED_LOOP_H
 
@@ -71,6 +81,11 @@ private:
     const char *state_name(rust_task_state state);
 
     void pump_loop();
+
+private:
+    // private and undefined to disable copying
+    rust_sched_loop(const rust_sched_loop& rhs);
+    rust_sched_loop& operator=(const rust_sched_loop& rhs);
 
 public:
     rust_kernel *kernel;

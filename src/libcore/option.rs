@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 /*!
 
 Operations on the ubiquitous `Option` type.
@@ -35,8 +45,14 @@ let unwrapped_msg = match move msg {
 #[forbid(deprecated_pattern)];
 
 use cmp::Eq;
+use option;
+use ptr;
+use str;
+use util;
+use num::Zero;
 
 /// The option type
+#[deriving_eq]
 pub enum Option<T> {
     None,
     Some(T),
@@ -85,19 +101,6 @@ pub pure fn get_ref<T>(opt: &r/Option<T>) -> &r/T {
     }
 }
 
-pub pure fn expect<T>(opt: Option<T>, reason: ~str) -> T {
-    /*!
-     * Gets the value out of an option without copying, printing a
-     * specified message on failure.
-     *
-     * # Failure
-     *
-     * Fails if the value equals `none`
-     */
-    if opt.is_some() { move option::unwrap(move opt) }
-    else { fail reason }
-}
-
 pub pure fn map<T, U>(opt: &Option<T>, f: fn(x: &T) -> U) -> Option<U> {
     //! Maps a `some` value by reference from one type to another
 
@@ -140,8 +143,8 @@ pub pure fn or<T>(opta: Option<T>, optb: Option<T>) -> Option<T> {
     /*!
      * Returns the leftmost some() value, or none if both are none.
      */
-    match opta {
-        Some(_) => move opta,
+    match move opta {
+        Some(move opta) => Some(move opta),
         _ => move optb
     }
 }
@@ -168,7 +171,13 @@ pub pure fn is_some<T>(opt: &Option<T>) -> bool {
     !is_none(opt)
 }
 
-pub pure fn get_default<T: Copy>(opt: Option<T>, def: T) -> T {
+pub pure fn get_or_zero<T: Copy Zero>(opt: Option<T>) -> T {
+    //! Returns the contained value or zero (for this type)
+
+    match opt { Some(copy x) => x, None => Zero::zero() }
+}
+
+pub pure fn get_or_default<T: Copy>(opt: Option<T>, def: T) -> T {
     //! Returns the contained value or a default
 
     match opt { Some(copy x) => x, None => def }
@@ -224,35 +233,46 @@ pub fn swap_unwrap<T>(opt: &mut Option<T>) -> T {
     unwrap(util::replace(opt, None))
 }
 
-pub pure fn unwrap_expect<T>(opt: Option<T>, reason: &str) -> T {
+pub pure fn expect<T>(opt: Option<T>, reason: &str) -> T {
     //! As unwrap, but with a specified failure message.
-    if opt.is_none() { fail reason.to_owned(); }
-    unwrap(move opt)
+    match move opt {
+        Some(move val) => val,
+        None => fail reason.to_owned(),
+    }
 }
 
-// Some of these should change to be &Option<T>, some should not. See below.
 impl<T> Option<T> {
     /// Returns true if the option equals `none`
-    pure fn is_none() -> bool { is_none(&self) }
-    /// Returns true if the option contains some value
-    pure fn is_some() -> bool { is_some(&self) }
-}
+    #[inline(always)]
+    pure fn is_none(&self) -> bool { is_none(self) }
 
-impl<T> &Option<T> {
+    /// Returns true if the option contains some value
+    #[inline(always)]
+    pure fn is_some(&self) -> bool { is_some(self) }
+
     /**
      * Update an optional value by optionally running its content by reference
      * through a function that returns an option.
      */
-    pure fn chain_ref<U>(f: fn(x: &T) -> Option<U>) -> Option<U> {
+    #[inline(always)]
+    pure fn chain_ref<U>(&self, f: fn(x: &T) -> Option<U>) -> Option<U> {
         chain_ref(self, f)
     }
-    /// Applies a function to the contained value or returns a default
-    pure fn map_default<U>(def: U, f: fn(x: &T) -> U) -> U
-        { map_default(self, move def, f) }
-    /// Performs an operation on the contained value by reference
-    pure fn iter(f: fn(x: &T)) { iter(self, f) }
+
     /// Maps a `some` value from one type to another by reference
-    pure fn map<U>(f: fn(x: &T) -> U) -> Option<U> { map(self, f) }
+    #[inline(always)]
+    pure fn map<U>(&self, f: fn(x: &T) -> U) -> Option<U> { map(self, f) }
+
+    /// Applies a function to the contained value or returns a default
+    #[inline(always)]
+    pure fn map_default<U>(&self, def: U, f: fn(x: &T) -> U) -> U {
+        map_default(self, move def, f)
+    }
+
+    /// Performs an operation on the contained value by reference
+    #[inline(always)]
+    pure fn iter(&self, f: fn(x: &T)) { iter(self, f) }
+
     /**
     Gets an immutable reference to the value inside an option.
 
@@ -267,7 +287,29 @@ impl<T> &Option<T> {
     Instead, prefer to use pattern matching and handle the `None`
     case explicitly.
      */
-    pure fn get_ref() -> &self/T { get_ref(self) }
+    #[inline(always)]
+    pure fn get_ref(&self) -> &self/T { get_ref(self) }
+
+    /**
+     * Gets the value out of an option without copying.
+     *
+     * # Failure
+     *
+     * Fails if the value equals `none`
+     */
+    #[inline(always)]
+    pure fn unwrap(self) -> T { unwrap(self) }
+
+    /**
+     * Gets the value out of an option, printing a specified message on
+     * failure
+     *
+     * # Failure
+     *
+     * Fails if the value equals `none`
+     */
+    #[inline(always)]
+    pure fn expect(self, reason: &str) -> T { expect(self, reason) }
 }
 
 impl<T: Copy> Option<T> {
@@ -285,40 +327,22 @@ impl<T: Copy> Option<T> {
     Instead, prefer to use pattern matching and handle the `None`
     case explicitly.
     */
-    pure fn get() -> T { get(self) }
-    pure fn get_default(def: T) -> T { get_default(self, def) }
-    /**
-     * Gets the value out of an option, printing a specified message on
-     * failure
-     *
-     * # Failure
-     *
-     * Fails if the value equals `none`
-     */
-    pure fn expect(reason: ~str) -> T { expect(self, move reason) }
+    #[inline(always)]
+    pure fn get(self) -> T { get(self) }
+
+    #[inline(always)]
+    pure fn get_or_default(self, def: T) -> T { get_or_default(self, def) }
+
     /// Applies a function zero or more times until the result is none.
-    pure fn while_some(blk: fn(v: T) -> Option<T>) { while_some(self, blk) }
+    #[inline(always)]
+    pure fn while_some(self, blk: fn(v: T) -> Option<T>) {
+        while_some(self, blk)
+    }
 }
 
-impl<T: Eq> Option<T> : Eq {
-    pure fn eq(&self, other: &Option<T>) -> bool {
-        match (*self) {
-            None => {
-                match (*other) {
-                    None => true,
-                    Some(_) => false
-                }
-            }
-            Some(ref self_contents) => {
-                match (*other) {
-                    None => false,
-                    Some(ref other_contents) =>
-                        (*self_contents).eq(other_contents)
-                }
-            }
-        }
-    }
-    pure fn ne(&self, other: &Option<T>) -> bool { !(*self).eq(other) }
+impl<T: Copy Zero> Option<T> {
+    #[inline(always)]
+    pure fn get_or_zero(self) -> T { get_or_zero(self) }
 }
 
 #[test]
@@ -393,6 +417,14 @@ fn test_option_while_some() {
         }
     }
     assert i == 11;
+}
+
+#[test]
+fn test_get_or_zero() {
+    let some_stuff = Some(42);
+    assert some_stuff.get_or_zero() == 42;
+    let no_stuff: Option<int> = None;
+    assert no_stuff.get_or_zero() == 0;
 }
 
 // Local Variables:

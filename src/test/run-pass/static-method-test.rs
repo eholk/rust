@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // xfail-fast
 #[legacy_modes];
 
@@ -8,7 +18,7 @@ trait bool_like {
 }
 
 fn andand<T: bool_like Copy>(x1: T, x2: T) -> T {
-    select(x1, x2, x1)
+    bool_like::select(x1, x2, x1)
 }
 
 impl bool: bool_like {
@@ -47,7 +57,7 @@ impl<A> ~[A]: buildable<A> {
 
 #[inline(always)]
 pure fn build<A, B: buildable<A>>(builder: fn(push: pure fn(+v: A))) -> B {
-    build_sized(4, builder)
+    buildable::build_sized(4, builder)
 }
 
 /// Apply a function to each element of an iterable and return the results
@@ -61,7 +71,7 @@ fn map<T, IT: BaseIter<T>, U, BU: buildable<U>>
 }
 
 fn seq_range<BT: buildable<int>>(lo: uint, hi: uint) -> BT {
-    do build_sized(hi-lo) |push| {
+    do buildable::build_sized(hi-lo) |push| {
         for uint::range(lo, hi) |i| {
             push(i as int);
         }
@@ -77,7 +87,7 @@ fn main() {
     let v: ~[int] = map(&[1,2,3], |x| 1+x);
     assert v == ~[2, 3, 4];
 
-    assert select(true, 9, 14) == 9;
+    assert bool_like::select(true, 9, 14) == 9;
     assert !andand(true, false);
     assert andand(7, 12) == 12;
     assert andand(0, 12) == 0;

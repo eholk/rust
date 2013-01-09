@@ -1,3 +1,13 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // ----------------------------------------------------------------------
 // Gathering loans
 //
@@ -6,9 +16,19 @@
 // their associated scopes.  In phase two, checking loans, we will then make
 // sure that all of these loans are honored.
 
-use mem_categorization::{mem_categorization_ctxt, opt_deref_kind};
-use preserve::{preserve_condition, pc_ok, pc_if_pure};
-use ty::{ty_region};
+
+use middle::borrowck::preserve::{preserve_condition, pc_ok, pc_if_pure};
+use middle::mem_categorization::{mem_categorization_ctxt, opt_deref_kind};
+use middle::pat_util;
+use middle::ty::{ty_region};
+use middle::ty;
+
+use core::dvec;
+use core::send_map::linear::LinearMap;
+use core::vec;
+use syntax::ast;
+use syntax::print::pprust;
+use syntax::visit;
 
 export gather_loans;
 
@@ -43,14 +63,16 @@ export gather_loans;
 enum gather_loan_ctxt = @{bccx: borrowck_ctxt,
                           req_maps: req_maps,
                           mut item_ub: ast::node_id,
-                          mut root_ub: ast::node_id};
+                          mut root_ub: ast::node_id,
+                          mut ignore_adjustments: LinearMap<ast::node_id,()>};
 
 fn gather_loans(bccx: borrowck_ctxt, crate: @ast::crate) -> req_maps {
     let glcx = gather_loan_ctxt(@{bccx: bccx,
                                   req_maps: {req_loan_map: HashMap(),
                                              pure_map: HashMap()},
                                   mut item_ub: 0,
-                                  mut root_ub: 0});
+                                  mut root_ub: 0,
+                                  mut ignore_adjustments: LinearMap()});
     let v = visit::mk_vt(@{visit_expr: req_loans_in_expr,
                            visit_fn: req_loans_in_fn,
                            .. *visit::default_visitor()});
@@ -94,12 +116,14 @@ fn req_loans_in_expr(ex: @ast::expr,
            ex.id, pprust::expr_to_str(ex, tcx.sess.intr()));
 
     // If this expression is borrowed, have to ensure it remains valid:
-    for tcx.adjustments.find(ex.id).each |adjustments| {
-        self.guarantee_adjustments(ex, *adjustments);
+    if !self.ignore_adjustments.contains_key(&ex.id) {
+        for tcx.adjustments.find(ex.id).each |adjustments| {
+            self.guarantee_adjustments(ex, *adjustments);
+        }
     }
 
     // Special checks for various kinds of expressions:
-    match ex.node {
+    match /*bad*/copy ex.node {
       ast::expr_addr_of(mutbl, base) => {
         let base_cmt = self.bccx.cat_expr(base);
 
@@ -125,9 +149,41 @@ fn req_loans_in_expr(ex: @ast::expr,
         visit::visit_expr(ex, self, vt);
       }
 
-      ast::expr_match(ex_v, arms) => {
+      ast::expr_method_call(rcvr, _, _, args, _) => {
+        let arg_tys = ty::ty_fn_args(ty::node_id_to_type(self.tcx(),
+                                                         ex.callee_id));
+        let scope_r = ty::re_scope(ex.id);
+        for vec::each2(args, arg_tys) |arg, arg_ty| {
+            match ty::resolved_mode(self.tcx(), arg_ty.mode) {
+              ast::by_ref => {
+                let arg_cmt = self.bccx.cat_expr(*arg);
+                self.guarantee_valid(arg_cmt, m_imm,  scope_r);
+              }
+               ast::by_val | ast::by_move | ast::by_copy => {}
+            }
+        }
+
+        match self.bccx.method_map.find(ex.id) {
+            Some(ref method_map_entry) => {
+                match (*method_map_entry).explicit_self {
+                    ast::sty_by_ref => {
+                        let rcvr_cmt = self.bccx.cat_expr(rcvr);
+                        self.guarantee_valid(rcvr_cmt, m_imm, scope_r);
+                    }
+                    _ => {} // Nothing to do.
+                }
+            }
+            None => {
+                self.tcx().sess.span_bug(ex.span, ~"no method map entry");
+            }
+        }
+
+        visit::visit_expr(ex, self, vt);
+      }
+
+      ast::expr_match(ex_v, ref arms) => {
         let cmt = self.bccx.cat_expr(ex_v);
-        for arms.each |arm| {
+        for (*arms).each |arm| {
             for arm.pats.each |pat| {
                 self.gather_pat(cmt, *pat, arm.body.node.id, ex.id);
             }
@@ -137,7 +193,8 @@ fn req_loans_in_expr(ex: @ast::expr,
 
       ast::expr_index(rcvr, _) |
       ast::expr_binary(_, rcvr, _) |
-      ast::expr_unary(_, rcvr)
+      ast::expr_unary(_, rcvr) |
+      ast::expr_assign_op(_, rcvr, _)
       if self.bccx.method_map.contains_key(ex.id) => {
         // Receivers in method calls are always passed by ref.
         //
@@ -151,6 +208,11 @@ fn req_loans_in_expr(ex: @ast::expr,
         let scope_r = ty::re_scope(ex.id);
         let rcvr_cmt = self.bccx.cat_expr(rcvr);
         self.guarantee_valid(rcvr_cmt, m_imm, scope_r);
+
+        // FIXME (#3387): Total hack: Ignore adjustments for the left-hand
+        // side. Their regions will be inferred to be too large.
+        self.ignore_adjustments.insert(rcvr.id, ());
+
         visit::visit_expr(ex, self, vt);
       }
 
@@ -186,19 +248,19 @@ fn req_loans_in_expr(ex: @ast::expr,
       }
 
       // see explanation attached to the `root_ub` field:
-      ast::expr_while(cond, body) => {
+      ast::expr_while(cond, ref body) => {
         // during the condition, can only root for the condition
         self.root_ub = cond.id;
         (vt.visit_expr)(cond, self, vt);
 
         // during body, can only root for the body
-        self.root_ub = body.node.id;
-        (vt.visit_block)(body, self, vt);
+        self.root_ub = (*body).node.id;
+        (vt.visit_block)((*body), self, vt);
       }
 
       // see explanation attached to the `root_ub` field:
-      ast::expr_loop(body, _) => {
-        self.root_ub = body.node.id;
+      ast::expr_loop(ref body, _) => {
+        self.root_ub = (*body).node.id;
         visit::visit_expr(ex, self, vt);
       }
 
@@ -241,7 +303,7 @@ impl gather_loan_ctxt {
                                              autoref.mutbl,
                                              autoref.region)
                     }
-                    ty::AutoBorrowVec => {
+                    ty::AutoBorrowVec | ty::AutoBorrowVecRef => {
                         let cmt_index = mcx.cat_index(expr, cmt);
                         self.guarantee_valid(cmt_index,
                                              autoref.mutbl,
@@ -289,7 +351,7 @@ impl gather_loan_ctxt {
           // error will be reported.
           Some(_) => {
               match self.bccx.loan(cmt, scope_r, req_mutbl) {
-                  Err(e) => { self.bccx.report(e); }
+                  Err(ref e) => { self.bccx.report((*e)); }
                   Ok(move loans) => {
                       self.add_loans(cmt, req_mutbl, scope_r, move loans);
                   }
@@ -322,8 +384,8 @@ impl gather_loan_ctxt {
                     // rooted.  good.
                     self.bccx.stable_paths += 1;
                 }
-                Ok(pc_if_pure(e)) => {
-                    debug!("result of preserve: %?", pc_if_pure(e));
+                Ok(pc_if_pure(ref e)) => {
+                    debug!("result of preserve: %?", pc_if_pure((*e)));
 
                     // we are only able to guarantee the validity if
                     // the scope is pure
@@ -332,7 +394,7 @@ impl gather_loan_ctxt {
                             // if the scope is some block/expr in the
                             // fn, then just require that this scope
                             // be pure
-                            self.req_maps.pure_map.insert(pure_id, e);
+                            self.req_maps.pure_map.insert(pure_id, (*e));
                             self.bccx.req_pure_paths += 1;
 
                             debug!("requiring purity for scope %?",
@@ -348,14 +410,14 @@ impl gather_loan_ctxt {
                             // otherwise, we can't enforce purity for
                             // that scope, so give up and report an
                             // error
-                            self.bccx.report(e);
+                            self.bccx.report((*e));
                         }
                     }
                 }
-                Err(e) => {
+                Err(ref e) => {
                     // we cannot guarantee the validity of this pointer
                     debug!("result of preserve: error");
-                    self.bccx.report(e);
+                    self.bccx.report((*e));
                 }
             }
           }
@@ -475,20 +537,9 @@ impl gather_loan_ctxt {
                         self.guarantee_valid(cmt, mutbl, scope_r);
                     }
                   }
-                  ast::bind_by_implicit_ref => {
-                    // Note: there is a discussion of the function of
-                    // cat_discr in the method preserve():
-                    let cmt1 = self.bccx.cat_discr(cmt, alt_id);
-                    let arm_scope = ty::re_scope(arm_id);
-
-                    // We used to remember the mutability of the location
-                    // that this binding refers to and use it later when
-                    // categorizing the binding.  This hack is being
-                    // removed in favor of ref mode bindings.
-                    //
-                    // self.bccx.binding_map.insert(pat.id, cmt1.mutbl);
-
-                    self.guarantee_valid(cmt1, m_const, arm_scope);
+                  ast::bind_infer => {
+                    // Nothing to do here; this is either a copy or a move;
+                    // thus either way there is nothing to check. Yay!
                   }
                 }
               }

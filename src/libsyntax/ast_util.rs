@@ -1,5 +1,25 @@
-use codemap::{span, BytePos};
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use ast::*;
+use ast;
+use ast_util;
+use codemap::{span, BytePos};
+use visit;
+
+use core::cmp;
+use core::int;
+use core::option;
+use core::str;
+use core::to_bytes;
+use core::vec;
 
 pure fn spanned<T>(+lo: BytePos, +hi: BytePos, +t: T) -> spanned<T> {
     respan(mk_sp(lo, hi), move t)
@@ -58,11 +78,11 @@ pure fn def_id_of_def(d: def) -> def_id {
       def_fn(id, _) | def_static_method(id, _, _) | def_mod(id) |
       def_foreign_mod(id) | def_const(id) |
       def_variant(_, id) | def_ty(id) | def_ty_param(id, _) |
-      def_use(id) | def_class(id) => {
+      def_use(id) | def_struct(id) => {
         id
       }
-      def_arg(id, _) | def_local(id, _) | def_self(id) |
-      def_upvar(id, _, _, _) | def_binding(id, _) | def_region(id)
+      def_arg(id, _) | def_local(id, _) | def_self(id, _) | def_self_ty(id)
+      | def_upvar(id, _, _, _) | def_binding(id, _) | def_region(id)
       | def_typaram_binder(id) | def_label(id) => {
         local_def(id)
       }
@@ -195,8 +215,8 @@ fn is_exported(i: ident, m: _mod) -> bool {
     for m.items.each |it| {
         if it.ident == i { local = true; }
         match it.node {
-          item_enum(enum_definition, _) =>
-            for enum_definition.variants.each |v| {
+          item_enum(ref enum_definition, _) =>
+            for (*enum_definition).variants.each |v| {
                 if v.node.name == i {
                     local = true;
                     parent_enum = Some(/* FIXME (#2543) */ copy it.ident);
@@ -223,10 +243,10 @@ fn is_exported(i: ident, m: _mod) -> bool {
                     }
                   }
 
-                  ast::view_path_list(path, ids, _) => {
+                  ast::view_path_list(path, ref ids, _) => {
                     if vec::len(path.idents) == 1u {
                         if i == path.idents[0] { return true; }
-                        for ids.each |id| {
+                        for (*ids).each |id| {
                             if id.node.name == i { return true; }
                         }
                     } else {
@@ -252,19 +272,10 @@ pure fn is_call_expr(e: @expr) -> bool {
 }
 
 // This makes def_id hashable
-#[cfg(stage0)]
-impl def_id : core::to_bytes::IterBytes {
+impl def_id : to_bytes::IterBytes {
     #[inline(always)]
-    pure fn iter_bytes(+lsb0: bool, f: core::to_bytes::Cb) {
-        core::to_bytes::iter_bytes_2(&self.crate, &self.node, lsb0, f);
-    }
-}
-#[cfg(stage1)]
-#[cfg(stage2)]
-impl def_id : core::to_bytes::IterBytes {
-    #[inline(always)]
-    pure fn iter_bytes(&self, +lsb0: bool, f: core::to_bytes::Cb) {
-        core::to_bytes::iter_bytes_2(&self.crate, &self.node, lsb0, f);
+    pure fn iter_bytes(&self, +lsb0: bool, f: to_bytes::Cb) {
+        to_bytes::iter_bytes_2(&self.crate, &self.node, lsb0, f);
     }
 }
 
@@ -313,7 +324,7 @@ fn public_methods(ms: ~[@method]) -> ~[@method] {
 // a default, pull out the useful fields to make a ty_method
 fn trait_method_to_ty_method(method: trait_method) -> ty_method {
     match method {
-      required(m) => m,
+      required(ref m) => (*m),
       provided(m) => {
         {ident: m.ident, attrs: m.attrs,
          purity: m.purity, decl: m.decl,
@@ -328,7 +339,7 @@ fn split_trait_methods(trait_methods: ~[trait_method])
     let mut reqd = ~[], provd = ~[];
     for trait_methods.each |trt_method| {
         match *trt_method {
-          required(tm) => reqd.push(tm),
+          required(ref tm) => reqd.push((*tm)),
           provided(m) => provd.push(m)
         }
     };
@@ -363,7 +374,7 @@ impl inlined_item: inlined_item_utils {
           ii_item(i) => i.id,
           ii_foreign(i) => i.id,
           ii_method(_, m) => m.id,
-          ii_dtor(dtor, _, _, _) => dtor.node.id
+          ii_dtor(ref dtor, _, _, _) => (*dtor).node.id
         }
     }
 
@@ -372,8 +383,8 @@ impl inlined_item: inlined_item_utils {
           ii_item(i) => (v.visit_item)(i, e, v),
           ii_foreign(i) => (v.visit_foreign_item)(i, e, v),
           ii_method(_, m) => visit::visit_method_helper(m, e, v),
-          ii_dtor(dtor, _, tps, parent_id) => {
-              visit::visit_class_dtor_helper(dtor, tps, parent_id, e, v);
+          ii_dtor(ref dtor, _, tps, parent_id) => {
+              visit::visit_struct_dtor_helper((*dtor), tps, parent_id, e, v);
           }
         }
     }
@@ -383,7 +394,7 @@ impl inlined_item: inlined_item_utils {
  referring to a def_self */
 fn is_self(d: ast::def) -> bool {
   match d {
-    def_self(_)           => true,
+    def_self(*)           => true,
     def_upvar(_, d, _, _) => is_self(*d),
     _                     => false
   }
@@ -416,8 +427,8 @@ fn dtor_dec() -> fn_decl {
 // ______________________________________________________________________
 // Enumerating the IDs which appear in an AST
 
-#[auto_serialize]
-#[auto_deserialize]
+#[auto_encode]
+#[auto_decode]
 type id_range = {min: node_id, max: node_id};
 
 fn empty(range: id_range) -> bool {
@@ -452,8 +463,8 @@ fn id_visitor(vfn: fn@(node_id)) -> visit::vt<()> {
         visit_item: fn@(i: @item) {
             vfn(i.id);
             match i.node {
-              item_enum(enum_definition, _) =>
-                for enum_definition.variants.each |v| { vfn(v.node.id); },
+              item_enum(ref enum_definition, _) =>
+                for (*enum_definition).variants.each |v| { vfn(v.node.id); },
               _ => ()
             }
         },
@@ -592,6 +603,14 @@ fn walk_pat(pat: @pat, it: fn(@pat)) {
         pat_box(s) | pat_uniq(s) | pat_region(s) => {
             walk_pat(s, it)
         }
+        pat_vec(elts, tail) => {
+            for elts.each |p| {
+                walk_pat(*p, it)
+            }
+            do option::iter(&tail) |tail| {
+                walk_pat(*tail, it)
+            }
+        }
         pat_wild | pat_lit(_) | pat_range(_, _) | pat_ident(_, _, _) |
         pat_enum(_, _) => {
         }
@@ -609,6 +628,46 @@ fn view_path_id(p: @view_path) -> node_id {
 /// are unnamed.
 fn struct_def_is_tuple_like(struct_def: @ast::struct_def) -> bool {
     struct_def.ctor_id.is_some()
+}
+
+
+fn visibility_to_privacy(visibility: visibility,
+                         legacy_exports: bool) -> Privacy {
+    if legacy_exports {
+        match visibility {
+            inherited | public => Public,
+            private => Private
+        }
+    } else {
+        match visibility {
+            public => Public,
+            inherited | private => Private
+        }
+    }
+}
+
+enum Privacy {
+    Private,
+    Public
+}
+
+impl Privacy : cmp::Eq {
+    pure fn eq(&self, other: &Privacy) -> bool {
+        ((*self) as uint) == ((*other) as uint)
+    }
+    pure fn ne(&self, other: &Privacy) -> bool { !(*self).eq(other) }
+}
+
+fn has_legacy_export_attr(attrs: &[attribute]) -> bool {
+    for attrs.each |attribute| {
+        match attribute.node.value.node {
+          meta_word(ref w) if (*w) == ~"legacy_exports" => {
+            return true;
+          }
+          _ => {}
+        }
+    }
+    return false;
 }
 
 // Local Variables:

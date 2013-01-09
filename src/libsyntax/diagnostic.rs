@@ -1,6 +1,23 @@
-use std::term;
-use io::WriterUtil;
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use codemap::span;
+use codemap;
+
+use core::cmp;
+use core::io::WriterUtil;
+use core::io;
+use core::option;
+use core::str;
+use core::vec;
+use std::term;
 
 export emitter, emit;
 export level, fatal, error, warning, note;
@@ -275,7 +292,7 @@ fn print_macro_backtrace(cm: @codemap::CodeMap, sp: span) {
 fn expect<T: Copy>(diag: span_handler,
                    opt: Option<T>, msg: fn() -> ~str) -> T {
     match opt {
-       Some(t) => t,
+       Some(ref t) => (*t),
        None => diag.handler().bug(msg())
     }
 }

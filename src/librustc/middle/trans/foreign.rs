@@ -1,26 +1,43 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // The classification code for the x86_64 ABI is taken from the clay language
 // https://github.com/jckarter/clay/blob/master/compiler/src/externals.cpp
 
-use driver::session::arch_x86_64;
-use syntax::codemap::span;
-use libc::c_uint;
-use syntax::{attr, ast_map};
-use lib::llvm::{ llvm, TypeRef, ValueRef, Integer, Pointer, Float, Double,
-    Struct, Array, ModuleRef, CallConv, Attribute,
-    StructRetAttribute, ByValAttribute,
-    SequentiallyConsistent, Acquire, Release, Xchg };
-use syntax::{ast, ast_util};
+
 use back::{link, abi};
-use common::*;
-use build::*;
-use base::*;
-use type_of::*;
-use std::map::HashMap;
+use driver::session::arch_x86_64;
+use lib::llvm::{SequentiallyConsistent, Acquire, Release, Xchg};
+use lib::llvm::{Struct, Array, ModuleRef, CallConv, Attribute};
+use lib::llvm::{StructRetAttribute, ByValAttribute};
+use lib::llvm::{llvm, TypeRef, ValueRef, Integer, Pointer, Float, Double};
+use lib;
+use middle::trans::base::*;
+use middle::trans::build::*;
+use middle::trans::callee::*;
+use middle::trans::common::*;
+use middle::trans::datum::*;
+use middle::trans::expr::{Dest, Ignore};
+use middle::trans::glue;
+use middle::trans::machine;
+use middle::trans::shape;
+use middle::trans::type_of::*;
+use middle::trans::type_of;
+use middle::ty::{FnTyBase, FnMeta, FnSig};
 use util::ppaux::ty_to_str;
-use datum::*;
-use callee::*;
-use expr::{Dest, Ignore};
-use ty::{FnTyBase, FnMeta, FnSig};
+
+use core::libc::c_uint;
+use syntax::codemap::span;
+use syntax::{ast, ast_util};
+use syntax::{attr, ast_map};
+use syntax::parse::token::special_idents;
 
 export link_name, trans_foreign_mod, register_foreign_fn, trans_foreign_fn,
        trans_intrinsic;
@@ -55,7 +72,7 @@ fn is_sse(++c: x86_64_reg_class) -> bool {
     };
 }
 
-fn is_ymm(cls: ~[x86_64_reg_class]) -> bool {
+fn is_ymm(cls: &[x86_64_reg_class]) -> bool {
     let len = vec::len(cls);
     return (len > 2u &&
          is_sse(cls[0]) &&
@@ -75,10 +92,9 @@ fn classify_ty(ty: TypeRef) -> ~[x86_64_reg_class] {
 
     fn struct_tys(ty: TypeRef) -> ~[TypeRef] {
         let n = llvm::LLVMCountStructElementTypes(ty);
-        let elts = vec::from_elem(n as uint, ptr::null());
-        do vec::as_imm_buf(elts) |buf, _len| {
-            llvm::LLVMGetStructElementTypes(ty, buf);
-        }
+        let mut elts = vec::from_elem(n as uint, ptr::null());
+        llvm::LLVMGetStructElementTypes(ty,
+                                        ptr::to_mut_unsafe_ptr(&mut elts[0]));
         return elts;
     }
 
@@ -127,13 +143,13 @@ fn classify_ty(ty: TypeRef) -> ~[x86_64_reg_class] {
         };
     }
 
-    fn all_mem(cls: ~[mut x86_64_reg_class]) {
+    fn all_mem(cls: &[mut x86_64_reg_class]) {
         for uint::range(0, cls.len()) |i| {
             cls[i] = memory_class;
         }
     }
 
-    fn unify(cls: ~[mut x86_64_reg_class],
+    fn unify(cls: &[mut x86_64_reg_class],
              i: uint,
              newv: x86_64_reg_class) {
         if cls[i] == newv {
@@ -158,8 +174,8 @@ fn classify_ty(ty: TypeRef) -> ~[x86_64_reg_class] {
         }
     }
 
-    fn classify_struct(tys: ~[TypeRef],
-                       cls: ~[mut x86_64_reg_class], i: uint,
+    fn classify_struct(tys: &[TypeRef],
+                       cls: &[mut x86_64_reg_class], i: uint,
                        off: uint) {
         if vec::is_empty(tys) {
             classify(T_i64(), cls, i, off);
@@ -174,7 +190,7 @@ fn classify_ty(ty: TypeRef) -> ~[x86_64_reg_class] {
     }
 
     fn classify(ty: TypeRef,
-                cls: ~[mut x86_64_reg_class], ix: uint,
+                cls: &[mut x86_64_reg_class], ix: uint,
                 off: uint) {
         let t_align = ty_align(ty);
         let t_size = ty_size(ty);
@@ -222,7 +238,7 @@ fn classify_ty(ty: TypeRef) -> ~[x86_64_reg_class] {
         }
     }
 
-    fn fixup(ty: TypeRef, cls: ~[mut x86_64_reg_class]) {
+    fn fixup(ty: TypeRef, cls: &[mut x86_64_reg_class]) {
         let mut i = 0u;
         let llty = llvm::LLVMGetTypeKind(ty) as int;
         let e = vec::len(cls);
@@ -280,8 +296,8 @@ fn classify_ty(ty: TypeRef) -> ~[x86_64_reg_class] {
     return vec::from_mut(move cls);
 }
 
-fn llreg_ty(cls: ~[x86_64_reg_class]) -> TypeRef {
-    fn llvec_len(cls: ~[x86_64_reg_class]) -> uint {
+fn llreg_ty(cls: &[x86_64_reg_class]) -> TypeRef {
+    fn llvec_len(cls: &[x86_64_reg_class]) -> uint {
         let mut len = 1u;
         for vec::each(cls) |c| {
             if *c != sseup_class {
@@ -333,7 +349,7 @@ type x86_64_tys = {
     sret: bool
 };
 
-fn x86_64_tys(atys: ~[TypeRef],
+fn x86_64_tys(atys: &[TypeRef],
               rty: TypeRef,
               ret_def: bool) -> x86_64_tys {
     fn is_reg_ty(ty: TypeRef) -> bool {
@@ -346,18 +362,18 @@ fn x86_64_tys(atys: ~[TypeRef],
         };
     }
 
-    fn is_pass_byval(cls: ~[x86_64_reg_class]) -> bool {
+    fn is_pass_byval(cls: &[x86_64_reg_class]) -> bool {
         return cls[0] == memory_class ||
             cls[0] == x87_class ||
             cls[0] == complex_x87_class;
     }
 
-    fn is_ret_bysret(cls: ~[x86_64_reg_class]) -> bool {
+    fn is_ret_bysret(cls: &[x86_64_reg_class]) -> bool {
         return cls[0] == memory_class;
     }
 
     fn x86_64_ty(ty: TypeRef,
-                 is_mem_cls: fn(cls: ~[x86_64_reg_class]) -> bool,
+                 is_mem_cls: fn(cls: &[x86_64_reg_class]) -> bool,
                  attr: Attribute) -> (x86_64_llty, Option<Attribute>) {
         let mut cast = false;
         let mut ty_attr = option::None;
@@ -426,7 +442,7 @@ fn decl_x86_64_fn(tys: x86_64_tys,
 fn link_name(ccx: @crate_ctxt, i: @ast::foreign_item) -> ~str {
     match attr::first_attr_value_str_by_name(i.attrs, ~"link_name") {
         None => ccx.sess.str_of(i.ident),
-        option::Some(ln) => ln
+        option::Some(ref ln) => (/*bad*/copy *ln)
     }
 }
 
@@ -443,7 +459,9 @@ fn c_arg_and_ret_lltys(ccx: @crate_ctxt,
                        id: ast::node_id) -> (~[TypeRef], TypeRef, ty::t) {
     match ty::get(ty::node_id_to_type(ccx.tcx, id)).sty {
         ty::ty_fn(ref fn_ty) => {
-            let llargtys = type_of_explicit_args(ccx, fn_ty.sig.inputs);
+            let llargtys = type_of_explicit_args(
+                ccx,
+                /*bad*/copy fn_ty.sig.inputs);
             let llretty = type_of::type_of(ccx, fn_ty.sig.output);
             (llargtys, llretty, fn_ty.sig.output)
         }
@@ -454,7 +472,8 @@ fn c_arg_and_ret_lltys(ccx: @crate_ctxt,
 fn c_stack_tys(ccx: @crate_ctxt,
                id: ast::node_id) -> @c_stack_tys {
     let (llargtys, llretty, ret_ty) = c_arg_and_ret_lltys(ccx, id);
-    let bundle_ty = T_struct(vec::append_one(llargtys, T_ptr(llretty)));
+    // XXX: Bad copy.
+    let bundle_ty = T_struct(vec::append_one(copy llargtys, T_ptr(llretty)));
     let ret_def = !ty::type_is_bot(ret_ty) && !ty::type_is_nil(ret_ty);
     let x86_64 = if ccx.sess.targ_cfg.arch == arch_x86_64 {
         option::Some(x86_64_tys(llargtys, llretty, ret_def))
@@ -478,7 +497,7 @@ type shim_ret_builder = fn(bcx: block, tys: @c_stack_tys,
                            llargbundle: ValueRef, llretval: ValueRef);
 
 fn build_shim_fn_(ccx: @crate_ctxt,
-                  shim_name: ~str,
+                  +shim_name: ~str,
                   llbasefn: ValueRef,
                   tys: @c_stack_tys,
                   cc: lib::llvm::CallConv,
@@ -599,10 +618,10 @@ fn trans_foreign_mod(ccx: @crate_ctxt,
             let n = vec::len(tys.arg_tys);
 
             match tys.x86_64_tys {
-                Some(x86_64) => {
-                    let mut atys = x86_64.arg_tys;
-                    let mut attrs = x86_64.attrs;
-                    if x86_64.sret {
+                Some(ref x86_64) => {
+                    let mut atys = /*bad*/copy (*x86_64).arg_tys;
+                    let mut attrs = /*bad*/copy (*x86_64).attrs;
+                    if (*x86_64).sret {
                         let llretptr = GEPi(bcx, llargbundle, [0u, n]);
                         let llretloc = Load(bcx, llretptr);
                         llargvals = ~[llretloc];
@@ -640,8 +659,8 @@ fn trans_foreign_mod(ccx: @crate_ctxt,
                      llargbundle: ValueRef, llretval: ValueRef)  {
             let _icx = bcx.insn_ctxt("foreign::shim::build_ret");
             match tys.x86_64_tys {
-                Some(x86_64) => {
-                  for vec::eachi(x86_64.attrs) |i, a| {
+                Some(ref x86_64) => {
+                  for vec::eachi((*x86_64).attrs) |i, a| {
                         match *a {
                             Some(attr) => {
                                 llvm::LLVMAddInstrAttribute(
@@ -651,15 +670,16 @@ fn trans_foreign_mod(ccx: @crate_ctxt,
                             _ => ()
                         }
                     }
-                    if x86_64.sret || !tys.ret_def {
+                    if (*x86_64).sret || !tys.ret_def {
                         return;
                     }
                     let n = vec::len(tys.arg_tys);
                     let llretptr = GEPi(bcx, llargbundle, [0u, n]);
                     let llretloc = Load(bcx, llretptr);
-                    if x86_64.ret_ty.cast {
-                        let tmp_ptr = BitCast(bcx, llretloc,
-                                                   T_ptr(x86_64.ret_ty.ty));
+                    if (*x86_64).ret_ty.cast {
+                        let tmp_ptr = BitCast(bcx,
+                                              llretloc,
+                                              T_ptr((*x86_64).ret_ty.ty));
                         Store(bcx, llretval, tmp_ptr);
                     } else {
                         Store(bcx, llretval, llretloc);
@@ -680,24 +700,24 @@ fn trans_foreign_mod(ccx: @crate_ctxt,
         }
 
         let lname = link_name(ccx, foreign_item);
-        let llbasefn = base_fn(ccx, lname, tys, cc);
+        let llbasefn = base_fn(ccx, copy lname, tys, cc);
         // Name the shim function
         let shim_name = lname + ~"__c_stack_shim";
         return build_shim_fn_(ccx, shim_name, llbasefn, tys, cc,
                            build_args, build_ret);
     }
 
-    fn base_fn(ccx: @crate_ctxt, lname: ~str, tys: @c_stack_tys,
+    fn base_fn(ccx: @crate_ctxt, +lname: ~str, tys: @c_stack_tys,
                cc: lib::llvm::CallConv) -> ValueRef {
         // Declare the "prototype" for the base function F:
         match tys.x86_64_tys {
-          Some(x86_64) => {
-            do decl_x86_64_fn(x86_64) |fnty| {
-                decl_fn(ccx.llmod, lname, cc, fnty)
+          Some(ref x86_64) => {
+            do decl_x86_64_fn((*x86_64)) |fnty| {
+                decl_fn(ccx.llmod, /*bad*/copy lname, cc, fnty)
             }
           }
           _ => {
-            let llbasefnty = T_fn(tys.arg_tys, tys.ret_ty);
+            let llbasefnty = T_fn(/*bad*/copy tys.arg_tys, tys.ret_ty);
             decl_fn(ccx.llmod, lname, cc, llbasefnty)
           }
         }
@@ -770,7 +790,7 @@ fn trans_foreign_mod(ccx: @crate_ctxt,
           if abi != ast::foreign_abi_rust_intrinsic {
               let llwrapfn = get_item_val(ccx, id);
               let tys = c_stack_tys(ccx, id);
-              if attr::attrs_contains_name(foreign_item.attrs,
+              if attr::attrs_contains_name(/*bad*/copy foreign_item.attrs,
                                            ~"rust_stack") {
                   build_direct_fn(ccx, llwrapfn, *foreign_item, tys, cc);
               } else {
@@ -790,13 +810,14 @@ fn trans_foreign_mod(ccx: @crate_ctxt,
 }
 
 fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
-                   path: ast_map::path, substs: param_substs,
+                   +path: ast_map::path, +substs: param_substs,
                    ref_id: Option<ast::node_id>)
 {
     debug!("trans_intrinsic(item.ident=%s)", ccx.sess.str_of(item.ident));
 
+    // XXX: Bad copy.
     let fcx = new_fn_ctxt_w_id(ccx, path, decl, item.id, None,
-                               Some(substs), Some(item.span));
+                               Some(copy substs), Some(item.span));
     let mut bcx = top_scope_block(fcx, None), lltop = bcx.llbb;
     match ccx.sess.str_of(item.ident) {
         ~"atomic_cxchg" => {
@@ -951,8 +972,8 @@ fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
             let tp_ty = substs.tys[0];
             let lltp_ty = type_of::type_of(ccx, tp_ty);
             let llout_ty = type_of::type_of(ccx, substs.tys[1]);
-            let tp_sz = shape::llsize_of_real(ccx, lltp_ty),
-            out_sz = shape::llsize_of_real(ccx, llout_ty);
+            let tp_sz = machine::llbitsize_of_real(ccx, lltp_ty),
+            out_sz = machine::llbitsize_of_real(ccx, llout_ty);
           if tp_sz != out_sz {
               let sp = match ccx.tcx.items.get(ref_id.get()) {
                   ast_map::node_expr(e) => e.span,
@@ -960,7 +981,8 @@ fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
               };
               ccx.sess.span_fatal(
                   sp, fmt!("reinterpret_cast called on types \
-                            with different size: %s (%u) to %s (%u)",
+                            with different size: %s (%u bit(s)) to %s \
+                            (%u bit(s))",
                            ty_to_str(ccx.tcx, tp_ty), tp_sz,
                            ty_to_str(ccx.tcx, substs.tys[1]), out_sz));
           }
@@ -973,7 +995,7 @@ fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
               let llcast = PointerCast(bcx, llcast, T_ptr(T_i8()));
               call_memcpy(bcx, llretptr, llcast, llsize_of(ccx, lltp_ty));
           }
-      }
+        }
         ~"addr_of" => {
             Store(bcx, get_param(decl, first_real_arg), fcx.llretptr);
         }
@@ -1072,6 +1094,247 @@ fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
             let ptx_ctaid_w = ccx.intrinsics.get(~"llvm.ptx.read.ctaid.w");
             Store(bcx, Call(bcx, ptx_ctaid_w, ~[]), fcx.llretptr);
         }
+        ~"sqrtf32" => {
+            let x = get_param(decl, first_real_arg);
+            let sqrtf = ccx.intrinsics.get(~"llvm.sqrt.f32");
+            Store(bcx, Call(bcx, sqrtf, ~[x]), fcx.llretptr);
+        }
+        ~"sqrtf64" => {
+            let x = get_param(decl, first_real_arg);
+            let sqrtf = ccx.intrinsics.get(~"llvm.sqrt.f64");
+            Store(bcx, Call(bcx, sqrtf, ~[x]), fcx.llretptr);
+        }
+        ~"powif32" => {
+            let a = get_param(decl, first_real_arg);
+            let x = get_param(decl, first_real_arg + 1u);
+            let powif = ccx.intrinsics.get(~"llvm.powi.f32");
+            Store(bcx, Call(bcx, powif, ~[a, x]), fcx.llretptr);
+        }
+        ~"powif64" => {
+            let a = get_param(decl, first_real_arg);
+            let x = get_param(decl, first_real_arg + 1u);
+            let powif = ccx.intrinsics.get(~"llvm.powi.f64");
+            Store(bcx, Call(bcx, powif, ~[a, x]), fcx.llretptr);
+        }
+        ~"sinf32" => {
+            let x = get_param(decl, first_real_arg);
+            let sinf = ccx.intrinsics.get(~"llvm.sin.f32");
+            Store(bcx, Call(bcx, sinf, ~[x]), fcx.llretptr);
+        }
+        ~"sinf64" => {
+            let x = get_param(decl, first_real_arg);
+            let sinf = ccx.intrinsics.get(~"llvm.sin.f64");
+            Store(bcx, Call(bcx, sinf, ~[x]), fcx.llretptr);
+        }
+        ~"cosf32" => {
+            let x = get_param(decl, first_real_arg);
+            let cosf = ccx.intrinsics.get(~"llvm.cos.f32");
+            Store(bcx, Call(bcx, cosf, ~[x]), fcx.llretptr);
+        }
+        ~"cosf64" => {
+            let x = get_param(decl, first_real_arg);
+            let cosf = ccx.intrinsics.get(~"llvm.cos.f64");
+            Store(bcx, Call(bcx, cosf, ~[x]), fcx.llretptr);
+        }
+        ~"powf32" => {
+            let a = get_param(decl, first_real_arg);
+            let x = get_param(decl, first_real_arg + 1u);
+            let powf = ccx.intrinsics.get(~"llvm.pow.f32");
+            Store(bcx, Call(bcx, powf, ~[a, x]), fcx.llretptr);
+        }
+        ~"powf64" => {
+            let a = get_param(decl, first_real_arg);
+            let x = get_param(decl, first_real_arg + 1u);
+            let powf = ccx.intrinsics.get(~"llvm.pow.f64");
+            Store(bcx, Call(bcx, powf, ~[a, x]), fcx.llretptr);
+        }
+        ~"expf32" => {
+            let x = get_param(decl, first_real_arg);
+            let expf = ccx.intrinsics.get(~"llvm.exp.f32");
+            Store(bcx, Call(bcx, expf, ~[x]), fcx.llretptr);
+        }
+        ~"expf64" => {
+            let x = get_param(decl, first_real_arg);
+            let expf = ccx.intrinsics.get(~"llvm.exp.f64");
+            Store(bcx, Call(bcx, expf, ~[x]), fcx.llretptr);
+        }
+        ~"exp2f32" => {
+            let x = get_param(decl, first_real_arg);
+            let exp2f = ccx.intrinsics.get(~"llvm.exp2.f32");
+            Store(bcx, Call(bcx, exp2f, ~[x]), fcx.llretptr);
+        }
+        ~"exp2f64" => {
+            let x = get_param(decl, first_real_arg);
+            let exp2f = ccx.intrinsics.get(~"llvm.exp2.f64");
+            Store(bcx, Call(bcx, exp2f, ~[x]), fcx.llretptr);
+        }
+        ~"logf32" => {
+            let x = get_param(decl, first_real_arg);
+            let logf = ccx.intrinsics.get(~"llvm.log.f32");
+            Store(bcx, Call(bcx, logf, ~[x]), fcx.llretptr);
+        }
+        ~"logf64" => {
+            let x = get_param(decl, first_real_arg);
+            let logf = ccx.intrinsics.get(~"llvm.log.f64");
+            Store(bcx, Call(bcx, logf, ~[x]), fcx.llretptr);
+        }
+        ~"log10f32" => {
+            let x = get_param(decl, first_real_arg);
+            let log10f = ccx.intrinsics.get(~"llvm.log10.f32");
+            Store(bcx, Call(bcx, log10f, ~[x]), fcx.llretptr);
+        }
+        ~"log10f64" => {
+            let x = get_param(decl, first_real_arg);
+            let log10f = ccx.intrinsics.get(~"llvm.log10.f64");
+            Store(bcx, Call(bcx, log10f, ~[x]), fcx.llretptr);
+        }
+        ~"log2f32" => {
+            let x = get_param(decl, first_real_arg);
+            let log2f = ccx.intrinsics.get(~"llvm.log2.f32");
+            Store(bcx, Call(bcx, log2f, ~[x]), fcx.llretptr);
+        }
+        ~"log2f64" => {
+            let x = get_param(decl, first_real_arg);
+            let log2f = ccx.intrinsics.get(~"llvm.log2.f64");
+            Store(bcx, Call(bcx, log2f, ~[x]), fcx.llretptr);
+        }
+        ~"fmaf32" => {
+            let a = get_param(decl, first_real_arg);
+            let b = get_param(decl, first_real_arg + 1u);
+            let c = get_param(decl, first_real_arg + 2u);
+            let fmaf = ccx.intrinsics.get(~"llvm.fma.f32");
+            Store(bcx, Call(bcx, fmaf, ~[a, b, c]), fcx.llretptr);
+        }
+        ~"fmaf64" => {
+            let a = get_param(decl, first_real_arg);
+            let b = get_param(decl, first_real_arg + 1u);
+            let c = get_param(decl, first_real_arg + 2u);
+            let fmaf = ccx.intrinsics.get(~"llvm.fma.f64");
+            Store(bcx, Call(bcx, fmaf, ~[a, b, c]), fcx.llretptr);
+        }
+        ~"fabsf32" => {
+            let x = get_param(decl, first_real_arg);
+            let fabsf = ccx.intrinsics.get(~"llvm.fabs.f32");
+            Store(bcx, Call(bcx, fabsf, ~[x]), fcx.llretptr);
+        }
+        ~"fabsf64" => {
+            let x = get_param(decl, first_real_arg);
+            let fabsf = ccx.intrinsics.get(~"llvm.fabs.f64");
+            Store(bcx, Call(bcx, fabsf, ~[x]), fcx.llretptr);
+        }
+        ~"floorf32" => {
+            let x = get_param(decl, first_real_arg);
+            let floorf = ccx.intrinsics.get(~"llvm.floor.f32");
+            Store(bcx, Call(bcx, floorf, ~[x]), fcx.llretptr);
+        }
+        ~"floorf64" => {
+            let x = get_param(decl, first_real_arg);
+            let floorf = ccx.intrinsics.get(~"llvm.floor.f64");
+            Store(bcx, Call(bcx, floorf, ~[x]), fcx.llretptr);
+        }
+        ~"ceilf32" => {
+            let x = get_param(decl, first_real_arg);
+            let ceilf = ccx.intrinsics.get(~"llvm.ceil.f32");
+            Store(bcx, Call(bcx, ceilf, ~[x]), fcx.llretptr);
+        }
+        ~"ceilf64" => {
+            let x = get_param(decl, first_real_arg);
+            let ceilf = ccx.intrinsics.get(~"llvm.ceil.f64");
+            Store(bcx, Call(bcx, ceilf, ~[x]), fcx.llretptr);
+        }
+        ~"truncf32" => {
+            let x = get_param(decl, first_real_arg);
+            let truncf = ccx.intrinsics.get(~"llvm.trunc.f32");
+            Store(bcx, Call(bcx, truncf, ~[x]), fcx.llretptr);
+        }
+        ~"truncf64" => {
+            let x = get_param(decl, first_real_arg);
+            let truncf = ccx.intrinsics.get(~"llvm.trunc.f64");
+            Store(bcx, Call(bcx, truncf, ~[x]), fcx.llretptr);
+        }
+        ~"ctpop8" => {
+            let x = get_param(decl, first_real_arg);
+            let ctpop = ccx.intrinsics.get(~"llvm.ctpop.i8");
+            Store(bcx, Call(bcx, ctpop, ~[x]), fcx.llretptr)
+        }
+        ~"ctpop16" => {
+            let x = get_param(decl, first_real_arg);
+            let ctpop = ccx.intrinsics.get(~"llvm.ctpop.i16");
+            Store(bcx, Call(bcx, ctpop, ~[x]), fcx.llretptr)
+        }
+        ~"ctpop32" => {
+            let x = get_param(decl, first_real_arg);
+            let ctpop = ccx.intrinsics.get(~"llvm.ctpop.i32");
+            Store(bcx, Call(bcx, ctpop, ~[x]), fcx.llretptr)
+        }
+        ~"ctpop64" => {
+            let x = get_param(decl, first_real_arg);
+            let ctpop = ccx.intrinsics.get(~"llvm.ctpop.i64");
+            Store(bcx, Call(bcx, ctpop, ~[x]), fcx.llretptr)
+        }
+        ~"ctlz8" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let ctlz = ccx.intrinsics.get(~"llvm.ctlz.i8");
+            Store(bcx, Call(bcx, ctlz, ~[x, y]), fcx.llretptr)
+        }
+        ~"ctlz16" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let ctlz = ccx.intrinsics.get(~"llvm.ctlz.i16");
+            Store(bcx, Call(bcx, ctlz, ~[x, y]), fcx.llretptr)
+        }
+        ~"ctlz32" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let ctlz = ccx.intrinsics.get(~"llvm.ctlz.i32");
+            Store(bcx, Call(bcx, ctlz, ~[x, y]), fcx.llretptr)
+        }
+        ~"ctlz64" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let ctlz = ccx.intrinsics.get(~"llvm.ctlz.i64");
+            Store(bcx, Call(bcx, ctlz, ~[x, y]), fcx.llretptr)
+        }
+        ~"cttz8" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let cttz = ccx.intrinsics.get(~"llvm.cttz.i8");
+            Store(bcx, Call(bcx, cttz, ~[x, y]), fcx.llretptr)
+        }
+        ~"cttz16" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let cttz = ccx.intrinsics.get(~"llvm.cttz.i16");
+            Store(bcx, Call(bcx, cttz, ~[x, y]), fcx.llretptr)
+        }
+        ~"cttz32" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let cttz = ccx.intrinsics.get(~"llvm.cttz.i32");
+            Store(bcx, Call(bcx, cttz, ~[x, y]), fcx.llretptr)
+        }
+        ~"cttz64" => {
+            let x = get_param(decl, first_real_arg);
+            let y = C_bool(false);
+            let cttz = ccx.intrinsics.get(~"llvm.cttz.i64");
+            Store(bcx, Call(bcx, cttz, ~[x, y]), fcx.llretptr)
+        }
+        ~"bswap16" => {
+            let x = get_param(decl, first_real_arg);
+            let cttz = ccx.intrinsics.get(~"llvm.bswap.i16");
+            Store(bcx, Call(bcx, cttz, ~[x]), fcx.llretptr)
+        }
+        ~"bswap32" => {
+            let x = get_param(decl, first_real_arg);
+            let cttz = ccx.intrinsics.get(~"llvm.bswap.i32");
+            Store(bcx, Call(bcx, cttz, ~[x]), fcx.llretptr)
+        }
+        ~"bswap64" => {
+            let x = get_param(decl, first_real_arg);
+            let cttz = ccx.intrinsics.get(~"llvm.bswap.i64");
+            Store(bcx, Call(bcx, cttz, ~[x]), fcx.llretptr)
+        }
         _ => {
             // Could we make this an enum rather than a string? does it get
             // checked earlier?
@@ -1082,19 +1345,20 @@ fn trans_intrinsic(ccx: @crate_ctxt, decl: ValueRef, item: @ast::foreign_item,
     finish_fn(fcx, lltop);
 }
 
-fn trans_foreign_fn(ccx: @crate_ctxt, path: ast_map::path, decl: ast::fn_decl,
-                  body: ast::blk, llwrapfn: ValueRef, id: ast::node_id) {
-
+fn trans_foreign_fn(ccx: @crate_ctxt, +path: ast_map::path,
+                    decl: ast::fn_decl, body: ast::blk, llwrapfn: ValueRef,
+                    id: ast::node_id) {
     let _icx = ccx.insn_ctxt("foreign::build_foreign_fn");
 
-    fn build_rust_fn(ccx: @crate_ctxt, path: ast_map::path,
+    fn build_rust_fn(ccx: @crate_ctxt, +path: ast_map::path,
                      decl: ast::fn_decl, body: ast::blk,
                      id: ast::node_id) -> ValueRef {
         let _icx = ccx.insn_ctxt("foreign::foreign::build_rust_fn");
         let t = ty::node_id_to_type(ccx.tcx, id);
+        // XXX: Bad copy.
         let ps = link::mangle_internal_name_by_path(
-            ccx, vec::append_one(path, ast_map::path_name(
-                syntax::parse::token::special_idents::clownshoe_abi
+            ccx, vec::append_one(copy path, ast_map::path_name(
+                special_idents::clownshoe_abi
             )));
         let llty = type_of_fn_from_ty(ccx, t);
         let llfndecl = decl_internal_cdecl_fn(ccx.llmod, ps, llty);
@@ -1102,9 +1366,8 @@ fn trans_foreign_fn(ccx: @crate_ctxt, path: ast_map::path, decl: ast::fn_decl,
         return llfndecl;
     }
 
-    fn build_shim_fn(ccx: @crate_ctxt, path: ast_map::path,
+    fn build_shim_fn(ccx: @crate_ctxt, +path: ast_map::path,
                      llrustfn: ValueRef, tys: @c_stack_tys) -> ValueRef {
-
         let _icx = ccx.insn_ctxt("foreign::foreign::build_shim_fn");
 
         fn build_args(bcx: block, tys: @c_stack_tys,
@@ -1133,7 +1396,7 @@ fn trans_foreign_fn(ccx: @crate_ctxt, path: ast_map::path, decl: ast::fn_decl,
 
         let shim_name = link::mangle_internal_name_by_path(
             ccx, vec::append_one(path, ast_map::path_name(
-                syntax::parse::token::special_idents::clownshoe_stack_shim
+                special_idents::clownshoe_stack_shim
             )));
         return build_shim_fn_(ccx, shim_name, llrustfn, tys,
                            lib::llvm::CCallConv,
@@ -1149,17 +1412,17 @@ fn trans_foreign_fn(ccx: @crate_ctxt, path: ast_map::path, decl: ast::fn_decl,
                       llwrapfn: ValueRef, llargbundle: ValueRef) {
             let _icx = bcx.insn_ctxt("foreign::foreign::wrap::build_args");
             match tys.x86_64_tys {
-                option::Some(x86_64) => {
-                    let mut atys = x86_64.arg_tys;
-                    let mut attrs = x86_64.attrs;
+                option::Some(ref x86_64) => {
+                    let mut atys = /*bad*/copy (*x86_64).arg_tys;
+                    let mut attrs = /*bad*/copy (*x86_64).attrs;
                     let mut j = 0u;
-                    let llretptr = if x86_64.sret {
+                    let llretptr = if (*x86_64).sret {
                         atys = vec::tail(atys);
                         attrs = vec::tail(attrs);
                         j = 1u;
                         get_param(llwrapfn, 0u)
-                    } else if x86_64.ret_ty.cast {
-                        let retptr = alloca(bcx, x86_64.ret_ty.ty);
+                    } else if (*x86_64).ret_ty.cast {
+                        let retptr = alloca(bcx, (*x86_64).ret_ty.ty);
                         BitCast(bcx, retptr, T_ptr(tys.ret_ty))
                     } else {
                         alloca(bcx, tys.ret_ty)
@@ -1203,16 +1466,16 @@ fn trans_foreign_fn(ccx: @crate_ctxt, path: ast_map::path, decl: ast::fn_decl,
                      llargbundle: ValueRef) {
             let _icx = bcx.insn_ctxt("foreign::foreign::wrap::build_ret");
             match tys.x86_64_tys {
-                option::Some(x86_64) => {
-                    if x86_64.sret || !tys.ret_def {
+                option::Some(ref x86_64) => {
+                    if (*x86_64).sret || !tys.ret_def {
                         RetVoid(bcx);
                         return;
                     }
                     let n = vec::len(tys.arg_tys);
                     let llretval = load_inbounds(bcx, llargbundle, ~[0u, n]);
-                    let llretval = if x86_64.ret_ty.cast {
+                    let llretval = if (*x86_64).ret_ty.cast {
                         let retptr = BitCast(bcx, llretval,
-                                                  T_ptr(x86_64.ret_ty.ty));
+                                                  T_ptr((*x86_64).ret_ty.ty));
                         Load(bcx, retptr)
                     } else {
                         Load(bcx, llretval)
@@ -1235,16 +1498,19 @@ fn trans_foreign_fn(ccx: @crate_ctxt, path: ast_map::path, decl: ast::fn_decl,
 
     let tys = c_stack_tys(ccx, id);
     // The internal Rust ABI function - runs on the Rust stack
-    let llrustfn = build_rust_fn(ccx, path, decl, body, id);
+    // XXX: Bad copy.
+    let llrustfn = build_rust_fn(ccx, copy path, decl, body, id);
     // The internal shim function - runs on the Rust stack
     let llshimfn = build_shim_fn(ccx, path, llrustfn, tys);
     // The foreign C function - runs on the C stack
     build_wrap_fn(ccx, llshimfn, llwrapfn, tys)
 }
 
-fn register_foreign_fn(ccx: @crate_ctxt, sp: span,
-                     path: ast_map::path, node_id: ast::node_id)
-    -> ValueRef {
+fn register_foreign_fn(ccx: @crate_ctxt,
+                       sp: span,
+                       +path: ast_map::path,
+                       node_id: ast::node_id)
+                    -> ValueRef {
     let _icx = ccx.insn_ctxt("foreign::register_foreign_fn");
     let t = ty::node_id_to_type(ccx.tcx, node_id);
     let (llargtys, llretty, ret_ty) = c_arg_and_ret_lltys(ccx, node_id);
@@ -1252,7 +1518,7 @@ fn register_foreign_fn(ccx: @crate_ctxt, sp: span,
         let ret_def = !ty::type_is_bot(ret_ty) && !ty::type_is_nil(ret_ty);
         let x86_64 = x86_64_tys(llargtys, llretty, ret_def);
         do decl_x86_64_fn(x86_64) |fnty| {
-            register_fn_fuller(ccx, sp, path, node_id,
+            register_fn_fuller(ccx, sp, /*bad*/copy path, node_id,
                                t, lib::llvm::CCallConv, fnty)
         }
     } else {
@@ -1272,7 +1538,9 @@ fn abi_of_foreign_fn(ccx: @crate_ctxt, i: @ast::foreign_item)
       },
       Some(_) => match attr::foreign_abi(i.attrs) {
         either::Right(abi) => abi,
-        either::Left(msg) => ccx.sess.span_fatal(i.span, msg)
+        either::Left(ref msg) => {
+            ccx.sess.span_fatal(i.span, (/*bad*/copy *msg))
+        }
       }
     }
 }

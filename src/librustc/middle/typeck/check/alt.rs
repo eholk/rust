@@ -1,6 +1,25 @@
+// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
+
+use middle::pat_util::{pat_is_binding, pat_is_const};
+use middle::pat_util::{pat_is_variant_or_struct};
+use middle::ty;
+use middle::typeck::check::demand;
+
+use core::vec;
+use std::map::HashMap;
+use syntax::ast;
+use syntax::ast_util::walk_pat;
+use syntax::ast_util;
 use syntax::print::pprust;
-use syntax::ast_util::{walk_pat};
-use pat_util::{pat_is_binding, pat_is_const, pat_is_variant_or_struct};
 
 fn check_alt(fcx: @fn_ctxt,
              expr: @ast::expr,
@@ -11,12 +30,11 @@ fn check_alt(fcx: @fn_ctxt,
 
     let pattern_ty = fcx.infcx().next_ty_var();
     bot = check_expr_with(fcx, discrim, pattern_ty);
-    let is_lvalue = ty::expr_is_lval(tcx, fcx.ccx.method_map, discrim);
 
     // Typecheck the patterns first, so that we get types for all the
     // bindings.
     for arms.each |arm| {
-        let pcx = {
+        let pcx = pat_ctxt {
             fcx: fcx,
             map: pat_id_map(tcx.def_map, arm.pats[0]),
             alt_region: ty::re_scope(expr.id),
@@ -24,10 +42,6 @@ fn check_alt(fcx: @fn_ctxt,
         };
 
         for arm.pats.each |p| { check_pat(pcx, *p, pattern_ty);}
-        check_legality_of_move_bindings(fcx,
-                                        is_lvalue,
-                                        arm.guard.is_some(),
-                                        arm.pats);
     }
 
     // Now typecheck the blocks.
@@ -48,76 +62,15 @@ fn check_alt(fcx: @fn_ctxt,
     return bot;
 }
 
-fn check_legality_of_move_bindings(fcx: @fn_ctxt,
-                                   is_lvalue: bool,
-                                   has_guard: bool,
-                                   pats: &[@ast::pat])
-{
-    let tcx = fcx.tcx();
-    let def_map = tcx.def_map;
-    let mut by_ref = None;
-    let mut any_by_move = false;
-    for pats.each |pat| {
-        do pat_util::pat_bindings(def_map, *pat) |bm, _id, span, _path| {
-            match bm {
-                ast::bind_by_ref(_) | ast::bind_by_implicit_ref => {
-                    by_ref = Some(span);
-                }
-                ast::bind_by_move => {
-                    any_by_move = true;
-                }
-                _ => { }
-            }
-        }
-    }
-
-    if !any_by_move { return; } // pointless micro-optimization
-    for pats.each |pat| {
-        do walk_pat(*pat) |p| {
-            if pat_is_binding(def_map, p) {
-                match p.node {
-                    ast::pat_ident(ast::bind_by_move, _, sub) => {
-                        // check legality of moving out of the enum
-                        if sub.is_some() {
-                            tcx.sess.span_err(
-                                p.span,
-                                ~"cannot bind by-move with sub-bindings");
-                        } else if has_guard {
-                            tcx.sess.span_err(
-                                p.span,
-                                ~"cannot bind by-move into a pattern guard");
-                        } else if by_ref.is_some() {
-                            tcx.sess.span_err(
-                                p.span,
-                                ~"cannot bind by-move and by-ref \
-                                  in the same pattern");
-                            tcx.sess.span_note(
-                                by_ref.get(),
-                                ~"by-ref binding occurs here");
-                        } else if is_lvalue {
-                            tcx.sess.span_err(
-                                p.span,
-                                ~"cannot bind by-move when \
-                                  matching an lvalue");
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-
-type pat_ctxt = {
+struct pat_ctxt {
     fcx: @fn_ctxt,
     map: PatIdMap,
     alt_region: ty::Region,   // Region for the alt as a whole
     block_region: ty::Region, // Region for the block of the arm
-};
+}
 
 fn check_pat_variant(pcx: pat_ctxt, pat: @ast::pat, path: @ast::path,
-                     subpats: Option<~[@ast::pat]>, expected: ty::t) {
+                     +subpats: Option<~[@ast::pat]>, expected: ty::t) {
 
     // Typecheck the path.
     let fcx = pcx.fcx;
@@ -151,12 +104,21 @@ fn check_pat_variant(pcx: pat_ctxt, pat: @ast::pat, path: @ast::path,
                 let vinfo =
                     ty::enum_variant_with_id(
                         tcx, v_def_ids.enm, v_def_ids.var);
-                vinfo.args.map(|t| { ty::subst(tcx, expected_substs, *t) })
+                let var_tpt = ty::lookup_item_type(tcx, v_def_ids.var);
+                vinfo.args.map(|t| {
+                    if var_tpt.bounds.len() == expected_substs.tps.len() {
+                        ty::subst(tcx, expected_substs, *t)
+                    }
+                    else {
+                        *t // In this case, an error was already signaled
+                           // anyway
+                    }
+                })
             };
 
             kind_name = "variant";
         }
-        ty::ty_class(struct_def_id, ref expected_substs) => {
+        ty::ty_struct(struct_def_id, ref expected_substs) => {
             // Assign the pattern the type of the struct.
             let struct_tpt = ty::lookup_item_type(tcx, struct_def_id);
             instantiate_path(pcx.fcx, path, struct_tpt, pat.span, pat.id,
@@ -168,7 +130,7 @@ fn check_pat_variant(pcx: pat_ctxt, pat: @ast::pat, path: @ast::path,
             demand::suptype(fcx, pat.span, pat_ty, expected);
 
             // Get the expected types of the arguments.
-            let class_fields = ty::class_items_as_fields(
+            let class_fields = ty::struct_fields(
                 tcx, struct_def_id, expected_substs);
             arg_types = class_fields.map(|field| field.mt.ty);
 
@@ -189,7 +151,7 @@ fn check_pat_variant(pcx: pat_ctxt, pat: @ast::pat, path: @ast::path,
     let subpats_len;
     match subpats {
         None => subpats_len = arg_len,
-        Some(subpats) => subpats_len = subpats.len()
+        Some(ref subpats) => subpats_len = subpats.len()
     }
 
     if arg_len > 0u {
@@ -240,13 +202,13 @@ fn check_struct_pat_fields(pcx: pat_ctxt,
     let tcx = pcx.fcx.ccx.tcx;
 
     // Index the class fields.
-    let field_map = std::map::HashMap();
+    let field_map = HashMap();
     for class_fields.eachi |i, class_field| {
         field_map.insert(class_field.ident, i);
     }
 
     // Typecheck each field.
-    let found_fields = std::map::HashMap();
+    let found_fields = HashMap();
     for fields.each |field| {
         match field_map.find(field.ident) {
             Some(index) => {
@@ -283,20 +245,20 @@ fn check_struct_pat_fields(pcx: pat_ctxt,
 
 fn check_struct_pat(pcx: pat_ctxt, pat_id: ast::node_id, span: span,
                     expected: ty::t, path: @ast::path,
-                    fields: ~[ast::field_pat], etc: bool,
+                    +fields: ~[ast::field_pat], etc: bool,
                     class_id: ast::def_id, substitutions: &ty::substs) {
     let fcx = pcx.fcx;
     let tcx = pcx.fcx.ccx.tcx;
 
-    let class_fields = ty::lookup_class_fields(tcx, class_id);
+    let class_fields = ty::lookup_struct_fields(tcx, class_id);
 
     // Check to ensure that the struct is the one specified.
     match tcx.def_map.find(pat_id) {
-        Some(ast::def_class(supplied_def_id))
+        Some(ast::def_struct(supplied_def_id))
                 if supplied_def_id == class_id => {
             // OK.
         }
-        Some(ast::def_class(*)) | Some(ast::def_variant(*)) => {
+        Some(ast::def_struct(*)) | Some(ast::def_variant(*)) => {
             let name = pprust::path_to_str(path, tcx.sess.intr());
             tcx.sess.span_err(span,
                               fmt!("mismatched types: expected `%s` but \
@@ -324,7 +286,7 @@ fn check_struct_like_enum_variant_pat(pcx: pat_ctxt,
                                       span: span,
                                       expected: ty::t,
                                       path: @ast::path,
-                                      fields: ~[ast::field_pat],
+                                      +fields: ~[ast::field_pat],
                                       etc: bool,
                                       enum_id: ast::def_id,
                                       substitutions: &ty::substs) {
@@ -336,12 +298,12 @@ fn check_struct_like_enum_variant_pat(pcx: pat_ctxt,
         Some(ast::def_variant(found_enum_id, variant_id))
                 if found_enum_id == enum_id => {
             // Get the struct fields from this struct-like enum variant.
-            let class_fields = ty::lookup_class_fields(tcx, variant_id);
+            let class_fields = ty::lookup_struct_fields(tcx, variant_id);
 
             check_struct_pat_fields(pcx, span, path, fields, class_fields,
                                     variant_id, substitutions, etc);
         }
-        Some(ast::def_class(*)) | Some(ast::def_variant(*)) => {
+        Some(ast::def_struct(*)) | Some(ast::def_variant(*)) => {
             let name = pprust::path_to_str(path, tcx.sess.intr());
             tcx.sess.span_err(span,
                               fmt!("mismatched types: expected `%s` but \
@@ -361,7 +323,7 @@ fn check_pat(pcx: pat_ctxt, pat: @ast::pat, expected: ty::t) {
     let fcx = pcx.fcx;
     let tcx = pcx.fcx.ccx.tcx;
 
-    match pat.node {
+    match /*bad*/copy pat.node {
       ast::pat_wild => {
         fcx.write_ty(pat.id, expected);
       }
@@ -414,13 +376,7 @@ fn check_pat(pcx: pat_ctxt, pat: @ast::pat, expected: ty::t) {
             demand::eqtype(fcx, pat.span, region_ty, typ);
           }
           // otherwise the type of x is the expected type T
-          ast::bind_by_value => {
-            demand::eqtype(fcx, pat.span, expected, typ);
-          }
-          ast::bind_by_move => {
-            demand::eqtype(fcx, pat.span, expected, typ);
-          }
-          ast::bind_by_implicit_ref => {
+          ast::bind_by_value | ast::bind_by_move | ast::bind_infer => {
             demand::eqtype(fcx, pat.span, expected, typ);
           }
         }
@@ -485,7 +441,7 @@ fn check_pat(pcx: pat_ctxt, pat: @ast::pat, expected: ty::t) {
         // Grab the class data that we care about.
         let structure = structure_of(fcx, pat.span, expected);
         match structure {
-            ty::ty_class(cid, ref substs) => {
+            ty::ty_struct(cid, ref substs) => {
                 check_struct_pat(pcx, pat.id, pat.span, expected, path,
                                  fields, etc, cid, substs);
             }
@@ -576,7 +532,51 @@ fn check_pat(pcx: pat_ctxt, pat: @ast::pat, expected: ty::t) {
           }
         }
       }
+      ast::pat_vec(elts, tail) => {
+        let default_region_var =
+            fcx.infcx().next_region_var_with_lb(
+                pat.span, pcx.block_region
+            );
 
+        let (elt_type, region_var) = match structure_of(
+          fcx, pat.span, expected
+        ) {
+          ty::ty_evec(mt, vstore) => {
+            let region_var = match vstore {
+                ty::vstore_slice(r) => r,
+                ty::vstore_box | ty::vstore_uniq | ty::vstore_fixed(_) => {
+                    default_region_var
+                }
+            };
+            (mt, region_var)
+          }
+          ty::ty_unboxed_vec(mt) => {
+            (mt, default_region_var)
+          },
+          _ => {
+            tcx.sess.span_fatal(
+                pat.span,
+                fmt!("mismatched type: expected `%s` but found vector",
+                     fcx.infcx().ty_to_str(expected))
+            );
+          }
+        };
+        for elts.each |elt| {
+            check_pat(pcx, *elt, elt_type.ty);
+        }
+        fcx.write_ty(pat.id, expected);
+
+        match tail {
+            Some(tail_pat) => {
+                let slice_ty = ty::mk_evec(tcx,
+                    {ty: elt_type.ty, mutbl: elt_type.mutbl},
+                    ty::vstore_slice(region_var)
+                );
+                check_pat(pcx, tail_pat, slice_ty);
+            }
+            None => ()
+        }
+      }
     }
 }
 
