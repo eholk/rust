@@ -620,8 +620,17 @@ fn incr_refcnt_of_boxed(cx: block, box_ptr: ValueRef) {
 
 
 // Chooses the addrspace for newly declared types.
-fn declare_tydesc_addrspace(_ccx: @crate_ctxt, _t: ty::t) -> addrspace {
-    return default_addrspace;
+fn declare_tydesc_addrspace(ccx: @crate_ctxt, t: ty::t) -> addrspace {
+    if !ty::type_needs_drop(ccx.tcx, t) {
+        return default_addrspace;
+    } else if ty::type_is_immediate(t) {
+        // For immediate types, we don't actually need an addrspace, because
+        // e.g. boxed types include pointers to their contents which are
+        // already correctly tagged with addrspaces.
+        return default_addrspace;
+    } else {
+        return (ccx.next_addrspace)();
+    }
 }
 
 // Generates the declaration for (but doesn't emit) a type descriptor.
@@ -790,5 +799,17 @@ fn emit_tydescs(ccx: @crate_ctxt) {
         llvm::LLVMSetInitializer(gvar, tydesc);
         llvm::LLVMSetGlobalConstant(gvar, True);
         lib::llvm::SetLinkage(gvar, lib::llvm::InternalLinkage);
+
+        // Index tydesc by addrspace.
+        if ti.addrspace > gc_box_addrspace {
+            let llty = T_ptr(ccx.tydesc_type);
+            let addrspace_name = fmt!("_gc_addrspace_metadata_%u",
+                                      ti.addrspace as uint);
+            let addrspace_gvar = str::as_c_str(addrspace_name, |buf| {
+                llvm::LLVMAddGlobal(ccx.llmod, llty, buf)
+            });
+            lib::llvm::SetLinkage(addrspace_gvar, lib::llvm::InternalLinkage);
+            llvm::LLVMSetInitializer(addrspace_gvar, gvar);
+        }
     };
 }
