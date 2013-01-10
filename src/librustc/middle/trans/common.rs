@@ -75,6 +75,17 @@ type addrspace = c_uint;
 //    1 is for opaque GC'd boxes.
 //    >= 2 are for specific types (e.g. resources).
 const default_addrspace: addrspace = 0;
+// Start the rest of the address spaces at 6, since nvptx uses the first 5 for
+// its own purposes.
+const gc_box_addrspace: addrspace = 6;
+
+const nvptx_global_addrspace: addrspace = 1;
+
+type addrspace_gen = fn@() -> addrspace;
+fn new_addrspace_gen() -> addrspace_gen {
+    let i = @mut gc_box_addrspace;
+    return fn@() -> addrspace { *i += 1; *i };
+}
 
 type tydesc_info =
     {ty: ty::t,
@@ -185,6 +196,7 @@ struct crate_ctxt {
      module_data: HashMap<~str, ValueRef>,
      lltypes: HashMap<ty::t, TypeRef>,
      names: namegen,
+     next_addrspace: addrspace_gen,
      symbol_hasher: @hash::State,
      type_hashcodes: HashMap<ty::t, ~str>,
      type_short_names: HashMap<ty::t, ~str>,
@@ -371,10 +383,19 @@ fn cleanup_type(cx: ty::ctxt, ty: ty::t) -> cleantype {
 // but have trouble knowing where non-immediates are on the stack. For
 // non-immediates, we must add an additional level of indirection, which
 // allows us to alloca a pointer with the right addrspace.
-fn root_for_cleanup(_bcx: block, v: ValueRef, _t: ty::t)
+fn root_for_cleanup(bcx: block, v: ValueRef, t: ty::t)
     -> {root: ValueRef, rooted: bool} {
+    let ccx = bcx.ccx();
 
-    {root: v, rooted: false}
+    let addrspace = base::get_tydesc(ccx, t).addrspace;
+    if addrspace > gc_box_addrspace {
+        let llty = type_of::type_of_rooted(ccx, t);
+        let root = base::alloca(bcx, llty);
+        build::Store(bcx, build::PointerCast(bcx, v, llty), root);
+        {root: root, rooted: true}
+    } else {
+        {root: v, rooted: false}
+    }
 }
 
 fn add_clean(bcx: block, val: ValueRef, t: ty::t) {
@@ -795,8 +816,14 @@ fn T_ptr(t: TypeRef) -> TypeRef {
     return llvm::LLVMPointerType(t, default_addrspace);
 }
 
-fn T_rptr(_sess: session::Session, t: TypeRef) -> TypeRef {
-    T_root(t, default_addrspace)
+fn T_rptr(sess: session::Session, t: TypeRef) -> TypeRef {
+    let addrspace = if (sess.opts.debugging_opts & session::ptx) != 0 {
+        nvptx_global_addrspace
+    } else {
+        default_addrspace
+    };
+
+    T_root(t, addrspace)
 }
 
 fn T_root(t: TypeRef, addrspace: addrspace) -> TypeRef {
@@ -932,7 +959,7 @@ fn T_box(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
 }
 
 fn T_box_ptr(t: TypeRef) -> TypeRef {
-    return llvm::LLVMPointerType(t, default_addrspace);
+    return llvm::LLVMPointerType(t, gc_box_addrspace);
 }
 
 fn T_opaque_box(cx: @crate_ctxt) -> TypeRef {
@@ -940,7 +967,11 @@ fn T_opaque_box(cx: @crate_ctxt) -> TypeRef {
 }
 
 fn T_opaque_box_ptr(cx: @crate_ctxt) -> TypeRef {
-    return T_box_ptr(T_opaque_box(cx));
+    if (cx.sess.opts.debugging_opts & session::ptx) == 0 {
+        return T_box_ptr(T_opaque_box(cx));
+    } else {
+        llvm::LLVMPointerType(T_opaque_box(cx), nvptx_global_addrspace)
+    }
 }
 
 fn T_unique(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
@@ -948,7 +979,7 @@ fn T_unique(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
 }
 
 fn T_unique_ptr(t: TypeRef) -> TypeRef {
-    return llvm::LLVMPointerType(t, default_addrspace);
+    return llvm::LLVMPointerType(t, gc_box_addrspace);
 }
 
 fn T_port(cx: @crate_ctxt, _t: TypeRef) -> TypeRef {
