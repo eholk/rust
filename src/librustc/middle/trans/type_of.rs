@@ -75,11 +75,7 @@ fn type_of_kernel_fn_from_ty(cx: @crate_ctxt, fty: ty::t) -> TypeRef {
 
     let mut atys: ~[TypeRef] = ~[];
 
-    let addrspace = if (cx.sess.opts.debugging_opts & session::ptx) != 0 {
-        common::nvptx_global_addrspace
-    } else {
-        default_addrspace
-    };
+    let addrspace = default_addrspace;
 
     // Arg 0: Output pointer.
     atys.push(T_root(type_of(cx, output), addrspace));

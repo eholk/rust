@@ -316,8 +316,8 @@ fn malloc_raw_dyn(bcx: block,
 fn non_gc_box_cast(bcx: block, val: ValueRef) -> ValueRef {
     debug!("non_gc_box_cast");
     add_comment(bcx, ~"non_gc_box_cast");
-    assert(llvm::LLVMGetPointerAddressSpace(val_ty(val)) == gc_box_addrspace
-           || bcx.unreachable);
+    //assert(llvm::LLVMGetPointerAddressSpace(val_ty(val)) == gc_box_addrspace
+    //       || bcx.unreachable);
     let non_gc_t = T_ptr(llvm::LLVMGetElementType(val_ty(val)));
     PointerCast(bcx, val, non_gc_t)
 }
@@ -2883,7 +2883,6 @@ fn trans_crate(sess: session::Session,
           module_data: HashMap(),
           lltypes: ty::new_ty_hash(),
           names: new_namegen(sess.parse_sess.interner),
-          next_addrspace: new_addrspace_gen(),
           symbol_hasher: symbol_hasher,
           type_hashcodes: ty::new_ty_hash(),
           type_short_names: ty::new_ty_hash(),
