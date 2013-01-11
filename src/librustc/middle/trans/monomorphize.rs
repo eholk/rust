@@ -22,7 +22,7 @@ use middle::trans::foreign;
 use middle::trans::machine;
 use middle::trans::meth;
 use middle::trans::shape;
-use middle::trans::type_of::type_of_fn_from_ty;
+use middle::trans::type_of::{type_of_fn_from_ty, type_of_kernel_fn_from_ty};
 use middle::trans::type_of;
 use middle::trans::type_use;
 use middle::ty::{FnTyBase, FnMeta, FnSig};

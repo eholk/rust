@@ -2205,12 +2205,19 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
               }
               ast::item_fn(_, purity, _, _) => {
                   if attr::attrs_contains_name(/*bad*/copy i.attrs, ~"kernel")
+                      || attr::attrs_contains_name(/*bad*/copy i.attrs,
+                                                   ~"device")
                   {
+                      let cc = if attr::attrs_contains_name(
+                          /*bad*/copy i.attrs, ~"kernel") {
+                          PTXKernel
+                      } else { PTXDevice };
+
                       let t = ty::node_id_to_type(ccx.tcx, i.id);
                       let llfty = type_of_kernel_fn_from_ty(ccx, t);
                       let llfn = register_fn_fuller(ccx, i.span, my_path,
                                                     i.id, t,
-                                                    PTXKernel, llfty);
+                                                    cc, llfty);
 
                       set_inline_hint_if_appr(/*bad*/copy i.attrs, llfn);
                       llfn
@@ -2222,11 +2229,6 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
                                                        my_path, i.id)
                       };
                       set_inline_hint_if_appr(/*bad*/copy i.attrs, llfn);
-
-                      if attr::attrs_contains_name(/*bad*/copy i.attrs,
-                                                   ~"device") {
-                          lib::llvm::SetFunctionCallConv(llfn, PTXDevice);
-                      }
 
                       llfn
                   }
