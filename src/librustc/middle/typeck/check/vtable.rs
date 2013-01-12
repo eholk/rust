@@ -8,23 +8,30 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use middle::resolve;
 use middle::ty;
 use middle::typeck::check::{fn_ctxt, impl_self_ty};
-use middle::typeck::infer::{fixup_err_to_str, infer_ctxt};
+use middle::typeck::check::{structurally_resolved_type};
+use middle::typeck::infer::{fixup_err_to_str, InferCtxt};
 use middle::typeck::infer::{resolve_and_force_all_but_regions, resolve_type};
 use middle::typeck::infer;
+use middle::typeck::{crate_ctxt, vtable_origin, vtable_param, vtable_res};
+use middle::typeck::{vtable_static, vtable_trait};
 use util::common::indenter;
+use util::ppaux::tys_to_str;
 use util::ppaux;
 
 use core::result;
 use core::uint;
 use core::vec;
 use result::{Result, Ok, Err};
+use std::map::HashMap;
 use syntax::ast;
 use syntax::ast_util;
 use syntax::codemap::span;
+use syntax::print::pprust::expr_to_str;
 use syntax::print::pprust;
 use syntax::visit;
 
@@ -56,7 +63,7 @@ struct LocationInfo {
 /// callback function to call in case of type error.
 struct VtableContext {
     ccx: @crate_ctxt,
-    infcx: infer::infer_ctxt
+    infcx: @infer::InferCtxt
 }
 
 impl VtableContext {
@@ -678,8 +685,8 @@ fn early_resolve_expr(ex: @ast::expr, &&fcx: @fn_ctxt, is_early: bool) {
                             ex.span,
                             fmt!("failed to find an implementation of trait \
                                   %s for %s",
-                                 ppaux::ty_to_str(fcx.tcx(), target_ty),
-                                 ppaux::ty_to_str(fcx.tcx(), ty)));
+                                 fcx.infcx().ty_to_str(target_ty),
+                                 fcx.infcx().ty_to_str(ty)));
                     }
                 }
                 Some(vtable) => {
@@ -707,7 +714,7 @@ fn resolve_expr(ex: @ast::expr, &&fcx: @fn_ctxt, v: visit::vt<@fn_ctxt>) {
 // Detect points where a trait-bounded type parameter is
 // instantiated, resolve the impls for the parameters.
 fn resolve_in_block(fcx: @fn_ctxt, bl: ast::blk) {
-    visit::visit_block(bl, fcx, visit::mk_vt(@{
+    visit::visit_block(bl, fcx, visit::mk_vt(@visit::Visitor {
         visit_expr: resolve_expr,
         visit_item: fn@(_i: @ast::item, &&_e: @fn_ctxt,
                         _v: visit::vt<@fn_ctxt>) {},

@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use middle::const_eval::{compare_const_vals, lookup_const_by_id};
 use middle::const_eval::{eval_const_expr, const_val, const_int, const_bool};
@@ -37,7 +38,7 @@ struct MatchCheckCtxt {
 
 fn check_crate(tcx: ty::ctxt, method_map: method_map, crate: @crate) {
     let cx = @MatchCheckCtxt { tcx: tcx, method_map: method_map };
-    visit::visit_crate(*crate, (), visit::mk_vt(@{
+    visit::visit_crate(*crate, (), visit::mk_vt(@visit::Visitor {
         visit_expr: |a,b,c| check_expr(cx, a, b, c),
         visit_local: |a,b,c| check_local(cx, a, b, c),
         visit_fn: |kind, decl, body, sp, id, e, v|
@@ -274,7 +275,7 @@ fn is_useful(cx: @MatchCheckCtxt, +m: matrix, +v: ~[@pat]) -> useful {
             }
           }
           Some(ref ctor) => {
-            match is_useful(cx, vec::filter_map(m, |r| default(cx, *r)),
+            match is_useful(cx, vec::filter_map(m, |r| default(cx, copy *r)),
                             vec::tail(v)) {
               useful_ => useful(left_ty, (/*bad*/copy *ctor)),
               ref u => (/*bad*/copy *u)
@@ -291,7 +292,8 @@ fn is_useful(cx: @MatchCheckCtxt, +m: matrix, +v: ~[@pat]) -> useful {
 
 fn is_useful_specialized(cx: @MatchCheckCtxt, m: matrix, +v: ~[@pat],
                          +ctor: ctor, arity: uint, lty: ty::t) -> useful {
-    let ms = vec::filter_map(m, |r| specialize(cx, *r, ctor, arity, lty));
+    let ms = vec::filter_map(m, |r| specialize(cx, copy *r,
+                                               ctor, arity, lty));
     let could_be_useful = is_useful(
         cx, ms, specialize(cx, v, ctor, arity, lty).get());
     match could_be_useful {
@@ -691,7 +693,10 @@ fn is_refutable(cx: @MatchCheckCtxt, pat: &pat) -> bool {
         is_refutable(cx, sub)
       }
       pat_wild | pat_ident(_, _, None) => { false }
-      pat_lit(@{node: expr_lit(@{node: lit_nil, _}), _}) => { false } // "()"
+      pat_lit(@{node: expr_lit(@spanned { node: lit_nil, _}), _}) => {
+        // "()"
+        false
+      }
       pat_lit(_) | pat_range(_, _) => { true }
       pat_rec(fields, _) => {
         fields.any(|f| is_refutable(cx, f.pat))
@@ -793,7 +798,7 @@ fn check_legality_of_move_bindings(cx: @MatchCheckCtxt,
 
         // Now check to ensure that any move binding is not behind an @ or &.
         // This is always illegal.
-        let vt = visit::mk_vt(@{
+        let vt = visit::mk_vt(@visit::Visitor {
             visit_pat: |pat, behind_bad_pointer, v| {
                 let error_out = || {
                     cx.tcx.sess.span_err(pat.span, ~"by-move pattern \

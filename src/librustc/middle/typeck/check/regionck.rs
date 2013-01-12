@@ -27,6 +27,7 @@ this point a bit better.
 
 */
 
+use core::prelude::*;
 
 use middle::freevars::get_freevars;
 use middle::pat_util::pat_bindings;
@@ -34,13 +35,17 @@ use middle::ty::{encl_region, re_scope};
 use middle::ty::{ty_fn_proto, vstore_box, vstore_fixed, vstore_slice};
 use middle::ty::{vstore_uniq};
 use middle::ty;
-use middle::typeck::infer::{resolve_and_force_all_but_regions, fres};
+use middle::typeck::check::fn_ctxt;
+use middle::typeck::check::lookup_def;
+use middle::typeck::infer::{fres, resolve_and_force_all_but_regions};
+use middle::typeck::infer::{resolve_type};
 use util::ppaux::{note_and_explain_region, ty_to_str};
 
 use core::result;
 use syntax::ast::{ProtoBare, ProtoBox, ProtoUniq, ProtoBorrowed};
 use syntax::ast::{def_arg, def_binding, def_local, def_self, def_upvar};
 use syntax::ast;
+use syntax::codemap::span;
 use syntax::print::pprust;
 use syntax::visit;
 
@@ -109,7 +114,6 @@ fn regionck_expr(fcx: @fn_ctxt, e: @ast::expr) {
 }
 
 fn regionck_fn(fcx: @fn_ctxt,
-               _decl: ast::fn_decl,
                blk: ast::blk) {
     let rcx = rcx_({fcx:fcx, mut errors_reported: 0});
     let v = regionck_visitor();
@@ -118,12 +122,12 @@ fn regionck_fn(fcx: @fn_ctxt,
 }
 
 fn regionck_visitor() -> rvt {
-    visit::mk_vt(@{visit_item: visit_item,
-                   visit_stmt: visit_stmt,
-                   visit_expr: visit_expr,
-                   visit_block: visit_block,
-                   visit_local: visit_local,
-                   .. *visit::default_visitor()})
+    visit::mk_vt(@visit::Visitor {visit_item: visit_item,
+                                  visit_stmt: visit_stmt,
+                                  visit_expr: visit_expr,
+                                  visit_block: visit_block,
+                                  visit_local: visit_local,
+                                  .. *visit::default_visitor()})
 }
 
 fn visit_item(_item: @ast::item, &&_rcx: @rcx, _v: rvt) {

@@ -88,10 +88,14 @@ node twice.
 
 */
 
+use core::prelude::*;
+
+use ast;
 use ast_util;
 use attr;
 use codemap::span;
 use ext::base::*;
+use parse;
 
 use core::vec;
 use std::map;
@@ -117,7 +121,7 @@ fn expand_auto_encode(
     }
 
     fn filter_attrs(item: @ast::item) -> @ast::item {
-        @{attrs: vec::filter(item.attrs, |a| !is_auto_encode(a)),
+        @{attrs: item.attrs.filtered(|a| !is_auto_encode(a)),
           .. *item}
     }
 
@@ -181,7 +185,7 @@ fn expand_auto_decode(
     }
 
     fn filter_attrs(item: @ast::item) -> @ast::item {
-        @{attrs: vec::filter(item.attrs, |a| !is_auto_decode(a)),
+        @{attrs: item.attrs.filtered(|a| !is_auto_decode(a)),
           .. *item}
     }
 
@@ -241,7 +245,7 @@ priv impl ext_ctxt {
         path: @ast::path,
         bounds: @~[ast::ty_param_bound]
     ) -> ast::ty_param {
-        let bound = ast::ty_param_bound(@{
+        let bound = ast::TraitTyParamBound(@{
             id: self.next_id(),
             node: ast::ty_path(path, self.next_id()),
             span: span,
@@ -295,8 +299,8 @@ priv impl ext_ctxt {
     }
 
     fn stmt(expr: @ast::expr) -> @ast::stmt {
-        @{node: ast::stmt_semi(expr, self.next_id()),
-          span: expr.span}
+        @ast::spanned { node: ast::stmt_semi(expr, self.next_id()),
+                       span: expr.span }
     }
 
     fn lit_str(span: span, s: @~str) -> @ast::expr {
@@ -306,8 +310,8 @@ priv impl ext_ctxt {
                 self.expr(
                     span,
                     ast::expr_lit(
-                        @{node: ast::lit_str(s),
-                          span: span})),
+                        @ast::spanned { node: ast::lit_str(s),
+                                        span: span})),
                 ast::expr_vstore_uniq))
     }
 
@@ -315,8 +319,8 @@ priv impl ext_ctxt {
         self.expr(
             span,
             ast::expr_lit(
-                @{node: ast::lit_uint(i as u64, ast::ty_u),
-                  span: span}))
+                @ast::spanned { node: ast::lit_uint(i as u64, ast::ty_u),
+                                span: span}))
     }
 
     fn lambda(blk: ast::blk) -> @ast::expr {
@@ -326,21 +330,21 @@ priv impl ext_ctxt {
     }
 
     fn blk(span: span, stmts: ~[@ast::stmt]) -> ast::blk {
-        {node: {view_items: ~[],
-                stmts: stmts,
-                expr: None,
-                id: self.next_id(),
-                rules: ast::default_blk},
-         span: span}
+        ast::spanned { node: { view_items: ~[],
+                               stmts: stmts,
+                               expr: None,
+                               id: self.next_id(),
+                               rules: ast::default_blk},
+                       span: span }
     }
 
     fn expr_blk(expr: @ast::expr) -> ast::blk {
-        {node: {view_items: ~[],
-                stmts: ~[],
-                expr: Some(expr),
-                id: self.next_id(),
-                rules: ast::default_blk},
-         span: expr.span}
+        ast::spanned { node: { view_items: ~[],
+                               stmts: ~[],
+                               expr: Some(expr),
+                               id: self.next_id(),
+                               rules: ast::default_blk},
+                       span: expr.span }
     }
 
     fn expr_path(span: span, strs: ~[ast::ident]) -> @ast::expr {
@@ -393,7 +397,7 @@ fn mk_impl(
     let mut trait_tps = vec::append(
         ~[ty_param],
          do tps.map |tp| {
-            let t_bound = ast::ty_param_bound(@{
+            let t_bound = ast::TraitTyParamBound(@{
                 id: cx.next_id(),
                 node: ast::ty_path(path, cx.next_id()),
                 span: span,
@@ -421,7 +425,7 @@ fn mk_impl(
     @{
         // This is a new-style impl declaration.
         // XXX: clownshoes
-        ident: ast::token::special_idents::clownshoes_extensions,
+        ident: parse::token::special_idents::clownshoes_extensions,
         attrs: ~[],
         id: cx.next_id(),
         node: ast::item_impl(trait_tps, opt_trait, ty, ~[f(ty)]),
@@ -566,7 +570,8 @@ fn mk_ser_method(
         ident: cx.ident_of(~"encode"),
         attrs: ~[],
         tps: ~[],
-        self_ty: { node: ast::sty_region(ast::m_imm), span: span },
+        self_ty: ast::spanned { node: ast::sty_region(ast::m_imm),
+                                span: span },
         purity: ast::impure_fn,
         decl: ser_decl,
         body: ser_body,
@@ -620,7 +625,8 @@ fn mk_deser_method(
         ident: cx.ident_of(~"decode"),
         attrs: ~[],
         tps: ~[],
-        self_ty: { node: ast::sty_static, span: span },
+        self_ty: ast::spanned { node: ast::sty_static,
+                                span: span },
         purity: ast::impure_fn,
         decl: deser_decl,
         body: deser_body,
@@ -858,7 +864,7 @@ fn mk_deser_fields(
             ]
         );
 
-        {
+        ast::spanned {
             node: { mutbl: field.mutbl, ident: field.ident, expr: expr },
             span: span,
         }

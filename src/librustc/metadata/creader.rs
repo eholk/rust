@@ -11,6 +11,8 @@
 
 //! Validates all used crates and extern libraries and loads their metadata
 
+use core::prelude::*;
+
 use metadata::cstore;
 use metadata::common::*;
 use metadata::decoder;
@@ -50,10 +52,10 @@ fn read_crates(diag: span_handler,
               mut next_crate_num: 1,
               intr: intr};
     let v =
-        visit::mk_simple_visitor(@{visit_view_item:
-                                       |a| visit_view_item(e, a),
-                                   visit_item: |a| visit_item(e, a)
-                                   ,.. *visit::default_simple_visitor()});
+        visit::mk_simple_visitor(@visit::SimpleVisitor {
+            visit_view_item: |a| visit_view_item(e, a),
+            visit_item: |a| visit_item(e, a),
+            .. *visit::default_simple_visitor()});
     visit::visit_crate(crate, (), v);
     dump_crates(e.crate_cache);
     warn_if_multiple_versions(e, diag, e.crate_cache.get());
@@ -84,7 +86,8 @@ fn warn_if_multiple_versions(e: env, diag: span_handler,
             /*bad*/copy *crate_cache.last().metas);
         let (matches, non_matches) =
             partition(crate_cache.map_to_vec(|&entry| {
-                let othername = loader::crate_name_from_metas(*entry.metas);
+                let othername = loader::crate_name_from_metas(
+                    copy *entry.metas);
                 if name == othername {
                     Left(entry)
                 } else {
@@ -144,8 +147,7 @@ fn visit_item(e: env, i: @ast::item) {
 
         let cstore = e.cstore;
         let mut already_added = false;
-        let link_args = attr::find_attrs_by_name(/*bad*/copy i.attrs,
-                                                 ~"link_args");
+        let link_args = attr::find_attrs_by_name(i.attrs, "link_args");
 
         match fm.sort {
           ast::named => {

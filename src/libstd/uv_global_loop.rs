@@ -27,7 +27,7 @@ use core::task;
 use core::vec;
 
 extern mod rustrt {
-    fn rust_uv_get_kernel_global_chan_ptr() -> *libc::uintptr_t;
+    unsafe fn rust_uv_get_kernel_global_chan_ptr() -> *libc::uintptr_t;
 }
 
 /**
@@ -123,8 +123,11 @@ fn spawn_loop() -> IoTask {
 
 #[cfg(test)]
 mod test {
+    use core::prelude::*;
+
     use uv::iotask;
     use uv::ll;
+    use uv_global_loop::*;
 
     use core::iter;
     use core::libc;

@@ -13,13 +13,15 @@
 // To start with, it will be use dummy spans, but it might someday do
 // something smarter.
 
+use core::prelude::*;
+
 use ast::{ident, node_id};
 use ast;
 use ast_util::{ident_to_path, respan, dummy_sp};
 use ast_util;
 use attr;
 use codemap::span;
-use ext::base::mk_ctxt;
+use ext::base::{ext_ctxt, mk_ctxt};
 use ext::quote::rt::*;
 
 use core::vec;
@@ -112,9 +114,11 @@ trait ext_ctxt_ast_builder {
 
 impl ext_ctxt: ext_ctxt_ast_builder {
     fn ty_option(ty: @ast::Ty) -> @ast::Ty {
-        self.ty_path_ast_builder(path(~[self.ident_of(~"Option")],
-                                      dummy_sp())
-                                 .add_ty(ty))
+        self.ty_path_ast_builder(path_global(~[
+            self.ident_of(~"core"),
+            self.ident_of(~"option"),
+            self.ident_of(~"Option")
+        ], dummy_sp()).add_ty(ty))
     }
 
     fn block_expr(b: ast::blk) -> @ast::expr {
@@ -132,8 +136,8 @@ impl ext_ctxt: ext_ctxt_ast_builder {
     }
 
     fn stmt_expr(e: @ast::expr) -> @ast::stmt {
-        @{node: ast::stmt_expr(e, self.next_id()),
-          span: dummy_sp()}
+        @spanned { node: ast::stmt_expr(e, self.next_id()),
+                   span: dummy_sp()}
     }
 
     fn stmt_let(ident: ident, e: @ast::expr) -> @ast::stmt {
@@ -142,8 +146,8 @@ impl ext_ctxt: ext_ctxt_ast_builder {
     }
 
     fn field_imm(name: ident, e: @ast::expr) -> ast::field {
-        {node: {mutbl: ast::m_imm, ident: name, expr: e},
-         span: dummy_sp()}
+        spanned { node: { mutbl: ast::m_imm, ident: name, expr: e },
+                  span: dummy_sp()}
     }
 
     fn rec(+fields: ~[ast::field]) -> @ast::expr {
@@ -154,8 +158,8 @@ impl ext_ctxt: ext_ctxt_ast_builder {
     }
 
     fn ty_field_imm(name: ident, ty: @ast::Ty) -> ast::ty_field {
-        {node: {ident: name, mt: { ty: ty, mutbl: ast::m_imm } },
-          span: dummy_sp()}
+        spanned { node: { ident: name, mt: { ty: ty, mutbl: ast::m_imm } },
+                  span: dummy_sp() }
     }
 
     fn ty_rec(+fields: ~[ast::ty_field]) -> @ast::Ty {
@@ -195,8 +199,7 @@ impl ext_ctxt: ext_ctxt_ast_builder {
                    id: self.next_id(),
                    rules: ast::default_blk};
 
-        {node: blk,
-         span: dummy_sp()}
+        spanned { node: blk, span: dummy_sp() }
     }
 
     fn expr_block(e: @ast::expr) -> ast::blk {
@@ -271,22 +274,49 @@ impl ext_ctxt: ext_ctxt_ast_builder {
                +tys: ~[@ast::Ty]) -> ast::variant {
         let args = tys.map(|ty| {ty: *ty, id: self.next_id()});
 
-        {node: {name: name,
-                attrs: ~[],
-                kind: ast::tuple_variant_kind(args),
-                id: self.next_id(),
-                disr_expr: None,
-                vis: ast::public},
-         span: span}
+        spanned { node: { name: name,
+                          attrs: ~[],
+                          kind: ast::tuple_variant_kind(args),
+                          id: self.next_id(),
+                          disr_expr: None,
+                          vis: ast::public},
+                  span: span}
     }
 
     fn item_mod(name: ident,
                 span: span,
                 +items: ~[@ast::item]) -> @ast::item {
+        // XXX: Total hack: import `core::kinds::Owned` to work around a
+        // parser bug whereby `fn f<T: ::kinds::Owned>` doesn't parse.
+        let vi = ast::view_item_import(~[
+            @ast::spanned {
+                node: ast::view_path_simple(
+                    self.ident_of(~"Owned"),
+                    path(
+                        ~[
+                            self.ident_of(~"core"),
+                            self.ident_of(~"kinds"),
+                            self.ident_of(~"Owned")
+                        ],
+                        ast_util::dummy_sp()
+                    ),
+                    ast::type_value_ns,
+                    self.next_id()
+                ),
+                span: ast_util::dummy_sp()
+            }
+        ]);
+        let vi = @{
+            node: vi,
+            attrs: ~[],
+            vis: ast::private,
+            span: ast_util::dummy_sp()
+        };
+
         self.item(name,
                   span,
                   ast::item_mod({
-                      view_items: ~[],
+                      view_items: ~[vi],
                       items: items}))
     }
 

@@ -562,7 +562,12 @@ Structs are quite similar to C structs and are even laid out the same way in
 memory (so you can read from a Rust struct in C, and vice-versa). Use the dot
 operator to access struct fields, as in `mypoint.x`.
 
-Fields that you want to mutate must be explicitly marked `mut`.
+Inherited mutability means that any field of a struct may be mutable, if the
+struct is in a mutable slot (or a field of a struct in a mutable slot, and
+so forth).
+
+A struct that is not mutable due to inherited mutability may declare some
+of its fields nevertheless mutable, using the `mut` keyword.
 
 ~~~~
 struct Stack {
@@ -572,7 +577,8 @@ struct Stack {
 ~~~~
 
 With a value of such a type, you can do `mystack.head += 1`. If `mut` were
-omitted from the type, such an assignment would result in a type error.
+omitted from the type, such an assignment to a struct without inherited
+mutability would result in a type error.
 
 `match` patterns destructure structs. The basic syntax is
 `Name { fieldname: pattern, ... }`:
@@ -840,76 +846,6 @@ as in this example that unpacks the first value from a tuple and returns it.
 ~~~
 fn first((value, _): (int, float)) -> int { value }
 ~~~
-
-
-# The Rust memory model
-
-At this junction, let's take a detour to explain the concepts involved
-in Rust's memory model. We've seen some of Rust's pointer sigils (`@`,
-`~`, and `&`) float by in a few examples, and we aren't going to get
-much further without explaining them. Rust has a very particular
-approach to memory management that plays a significant role in shaping
-the subjective experience of programming in the
-language. Understanding the memory landscape will illuminate several
-of Rust's unique features as we encounter them.
-
-Rust has three competing goals that inform its view of memory:
-
-* Memory safety: Memory that the Rust language can observe must be
-  guaranteed to be valid. Under normal circumstances, it must be
-  impossible for Rust to trigger a segmentation fault or leak memory.
-* Performance: High-performance low-level code must be able to use
-  a number of different allocation strategies. Tracing garbage collection must be
-  optional and, if it is not desired, memory safety must not be compromised.
-  Less performance-critical, high-level code should be able to employ a single,
-  garbage-collection-based, heap allocation strategy.
-* Concurrency: Rust code must be free of in-memory data races. (Note that other
-  types of races are still possible.)
-
-## How performance considerations influence the memory model
-
-Most languages that offer strong memory safety guarantees rely on a
-garbage-collected heap to manage all of the objects. This approach is
-straightforward both in concept and in implementation, but has
-significant costs. Languages that follow this path tend to
-aggressively pursue ways to ameliorate allocation costs (think the
-Java Virtual Machine). Rust supports this strategy with _managed
-boxes_: memory allocated on the heap whose lifetime is managed
-by the garbage collector.
-
-By comparison, languages like C++ offer very precise control over
-where objects are allocated. In particular, it is common to allocate them
-directly on the stack, avoiding expensive heap allocation. In Rust
-this is possible as well, and the compiler uses a [clever _pointer
-lifetime analysis_][borrow] to ensure that no variable can refer to stack
-objects after they are destroyed.
-
-[borrow]: tutorial-borrowed-ptr.html
-
-## How concurrency considerations influence the memory model
-
-Memory safety in a concurrent environment involves avoiding race
-conditions between two threads of execution accessing the same
-memory. Even high-level languages often require programmers to make
-correct use of locking to ensure that a program is free of races.
-
-Rust starts from the position that memory cannot be shared between
-tasks. Experience in other languages has proven that isolating each
-task's heap from the others is a reliable strategy and one that is
-easy for programmers to reason about. Heap isolation has the
-additional benefit that garbage collection must only be done
-per-heap. Rust never "stops the world" to reclaim memory.
-
-Complete isolation of heaps between tasks would, however, mean that
-any data transferred between tasks must be copied. While this is a
-fine and useful way to implement communication between tasks, it is
-also very inefficient for large data structures. To reduce the amount
-of copying, Rust also uses a global _exchange heap_. Objects allocated
-in the exchange heap have _ownership semantics_, meaning that there is
-only a single variable that refers to them. For this reason, they are
-referred to as _owned boxes_. All tasks may allocate objects on the
-exchange heap, then transfer ownership of those objects to other
-tasks, avoiding expensive copies.
 
 # Boxes and pointers
 
@@ -2284,6 +2220,10 @@ struct level. Note that fields and methods are _public_ by default.
 ~~~
 mod farm {
 # use farm;
+# pub type Chicken = int;
+# type Cow = int;
+# enum Human = int;
+# impl Human { fn rest(&self) { } }
 # pub fn make_me_a_farm() -> farm::Farm { farm::Farm { chickens: ~[], cows: ~[], farmer: Human(0) } }
     pub struct Farm {
         priv mut chickens: ~[Chicken],
@@ -2310,12 +2250,8 @@ fn main() {
      farm::feed_animals(&f);
      f.farmer.rest();
 }
-# type Chicken = int;
-# type Cow = int;
-# enum Human = int;
 # fn make_me_a_farm() -> farm::Farm { farm::make_me_a_farm() }
-# fn make_me_a_chicken() -> Chicken { 0 }
-# impl Human { fn rest(&self) { } }
+# fn make_me_a_chicken() -> farm::Chicken { 0 }
 ~~~
 
 ## Crates

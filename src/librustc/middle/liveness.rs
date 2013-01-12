@@ -103,6 +103,8 @@
  *   to return explicitly.
  */
 
+use core::prelude::*;
+
 use middle::capture::{cap_move, cap_drop, cap_copy, cap_ref};
 use middle::capture;
 use middle::pat_util;
@@ -205,7 +207,7 @@ fn live_node_kind_to_str(lnk: LiveNodeKind, cx: ty::ctxt) -> ~str {
 fn check_crate(tcx: ty::ctxt,
                method_map: typeck::method_map,
                crate: @crate) -> last_use_map {
-    let visitor = visit::mk_vt(@{
+    let visitor = visit::mk_vt(@visit::Visitor {
         visit_fn: visit_fn,
         visit_local: visit_local,
         visit_expr: visit_expr,
@@ -487,7 +489,7 @@ fn visit_fn(fk: visit::fn_kind, decl: fn_decl, body: blk,
     let entry_ln = (*lsets).compute(decl, body);
 
     // check for various error conditions
-    let check_vt = visit::mk_vt(@{
+    let check_vt = visit::mk_vt(@visit::Visitor {
         visit_fn: check_fn,
         visit_local: check_local,
         visit_expr: check_expr,

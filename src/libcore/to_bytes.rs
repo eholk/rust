@@ -20,6 +20,7 @@ The `ToBytes` and `IterBytes` traits
 
 use io;
 use io::Writer;
+use option::{None, Option, Some};
 use str;
 
 pub type Cb = fn(buf: &[const u8]) -> bool;
@@ -171,6 +172,8 @@ impl char: IterBytes {
 
 #[cfg(target_word_size = "32")]
 pub mod x32 {
+    use to_bytes::{Cb, IterBytes};
+
     pub impl uint: IterBytes {
         #[inline(always)]
         pure fn iter_bytes(&self, lsb0: bool, f: Cb) {
@@ -181,6 +184,8 @@ pub mod x32 {
 
 #[cfg(target_word_size = "64")]
 pub mod x64 {
+    use to_bytes::{Cb, IterBytes};
+
     pub impl uint: IterBytes {
         #[inline(always)]
         pure fn iter_bytes(&self, lsb0: bool, f: Cb) {

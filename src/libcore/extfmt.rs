@@ -82,6 +82,7 @@ debug!("hello, %s!", "world");
 
 use cmp::Eq;
 use option::{Some, None};
+use prelude::*;
 use str;
 
 /*
@@ -99,6 +100,7 @@ use str;
 #[doc(hidden)]
 pub mod ct {
     use char;
+    use prelude::*;
     use str;
     use vec;
 
@@ -433,12 +435,14 @@ pub mod ct {
 
     #[test]
     #[should_fail]
+    #[ignore(cfg(windows))]
     fn test_parse_type_missing() {
         parse_type("", 0, 0, die);
     }
 
     #[test]
     #[should_fail]
+    #[ignore(cfg(windows))]
     fn test_parse_type_unknown() {
         parse_type("!", 0, 1, die);
     }

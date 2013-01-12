@@ -16,6 +16,7 @@
 // and methods are represented as just a fn ptr and not a full
 // closure.
 
+use core::prelude::*;
 
 use lib::llvm::ValueRef;
 use middle::trans::base::{get_item_val, trans_external_path};
@@ -365,7 +366,8 @@ fn trans_rtcall_or_lang_call_with_type_params(bcx: block,
         bcx, None, fty, rty,
         |bcx| {
             let callee =
-                trans_fn_ref_with_vtables_to_callee(bcx, did, 0, type_params,
+                trans_fn_ref_with_vtables_to_callee(bcx, did, 0,
+                                                    copy type_params,
                                                     None);
 
             let new_llval;
@@ -389,7 +391,7 @@ fn trans_rtcall_or_lang_call_with_type_params(bcx: block,
 
 fn body_contains_ret(body: ast::blk) -> bool {
     let cx = {mut found: false};
-    visit::visit_block(body, cx, visit::mk_vt(@{
+    visit::visit_block(body, cx, visit::mk_vt(@visit::Visitor {
         visit_item: |_i, _cx, _v| { },
         visit_expr: |e: @ast::expr, cx: {mut found: bool}, v| {
             if !cx.found {
@@ -438,25 +440,27 @@ fn trans_call_inner(
             Some(flag)
         } else { None };
 
-        let (llfn, llenv) = match callee.data {
-            Fn(d) => {
-                (d.llfn, llvm::LLVMGetUndef(T_opaque_box_ptr(ccx)))
-            }
-            Method(d) => {
-                // Weird but true: we pass self in the *environment* slot!
-                let llself = PointerCast(bcx, d.llself,
-                                         T_opaque_box_ptr(ccx));
-                (d.llfn, llself)
-            }
-            Closure(d) => {
-                // Closures are represented as (llfn, llclosure) pair:
-                // load the requisite values out.
-                let pair = d.to_ref_llval(bcx);
-                let llfn = GEPi(bcx, pair, [0u, abi::fn_field_code]);
-                let llfn = Load(bcx, llfn);
-                let llenv = GEPi(bcx, pair, [0u, abi::fn_field_box]);
-                let llenv = Load(bcx, llenv);
-                (llfn, llenv)
+        let (llfn, llenv) = unsafe {
+            match callee.data {
+                Fn(d) => {
+                    (d.llfn, llvm::LLVMGetUndef(T_opaque_box_ptr(ccx)))
+                }
+                Method(d) => {
+                    // Weird but true: we pass self in the *environment* slot!
+                    let llself = PointerCast(bcx, d.llself,
+                                             T_opaque_box_ptr(ccx));
+                    (d.llfn, llself)
+                }
+                Closure(d) => {
+                    // Closures are represented as (llfn, llclosure) pair:
+                    // load the requisite values out.
+                    let pair = d.to_ref_llval(bcx);
+                    let llfn = GEPi(bcx, pair, [0u, abi::fn_field_code]);
+                    let llfn = Load(bcx, llfn);
+                    let llenv = GEPi(bcx, pair, [0u, abi::fn_field_box]);
+                    let llenv = Load(bcx, llenv);
+                    (llfn, llenv)
+                }
             }
         };
 
@@ -491,8 +495,10 @@ fn trans_call_inner(
         bcx = base::invoke(bcx, llfn, llargs);
         match dest { // drop the value if it is not being saved.
             expr::Ignore => {
-                if llvm::LLVMIsUndef(llretslot) != lib::llvm::True {
-                    bcx = glue::drop_ty(bcx, llretslot, ret_ty);
+                unsafe {
+                    if llvm::LLVMIsUndef(llretslot) != lib::llvm::True {
+                        bcx = glue::drop_ty(bcx, llretslot, ret_ty);
+                    }
                 }
             }
             expr::SaveIn(_) => { }
@@ -543,7 +549,9 @@ fn trans_args(cx: block,
         expr::SaveIn(dst) => dst,
         expr::Ignore => {
             if ty::type_is_nil(retty) {
-                llvm::LLVMGetUndef(T_ptr(T_nil()))
+                unsafe {
+                    llvm::LLVMGetUndef(T_ptr(T_nil()))
+                }
             } else {
                 alloc_ty(bcx, retty)
             }
@@ -660,7 +668,9 @@ fn trans_arg_expr(bcx: block,
         // be inspected. It's important for the value
         // to have type lldestty (the callee's expected type).
         let llformal_ty = type_of::type_of(ccx, formal_ty.ty);
-        val = llvm::LLVMGetUndef(llformal_ty);
+        unsafe {
+            val = llvm::LLVMGetUndef(llformal_ty);
+        }
     } else {
         // FIXME(#3548) use the adjustments table
         match autoref_arg {

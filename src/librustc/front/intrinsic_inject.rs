@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use driver::session::Session;
 use syntax::parse;
@@ -35,6 +36,9 @@ fn inject_intrinsic(sess: Session, crate: @ast::crate) -> @ast::crate {
 
     let items = vec::append(~[item], crate.node.module.items);
 
-    return @{node: {module: { items: items ,.. /*bad*/copy crate.node.module }
-                 ,.. /*bad*/copy crate.node} ,.. /*bad*/copy *crate }
+    @ast::spanned {
+        node: { module: { items: items ,.. /*bad*/copy crate.node.module },
+                .. /*bad*/copy crate.node},
+        .. /*bad*/copy *crate
+    }
 }

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 //! High-level interface to libuv's TCP functionality
-// XXX Need FFI fixes
+// FIXME #4425: Need FFI fixes
 #[allow(deprecated_mode)];
 
 use future;
@@ -24,6 +24,7 @@ use core::io;
 use core::libc::size_t;
 use core::libc;
 use core::oldcomm;
+use core::prelude::*;
 use core::ptr;
 use core::result::{Result};
 use core::result;
@@ -32,9 +33,10 @@ use core::vec;
 
 #[nolink]
 extern mod rustrt {
-    fn rust_uv_current_kernel_malloc(size: libc::c_uint) -> *libc::c_void;
-    fn rust_uv_current_kernel_free(mem: *libc::c_void);
-    fn rust_uv_helper_uv_tcp_t_size() -> libc::c_uint;
+    unsafe fn rust_uv_current_kernel_malloc(size: libc::c_uint)
+                                         -> *libc::c_void;
+    unsafe fn rust_uv_current_kernel_free(mem: *libc::c_void);
+    unsafe fn rust_uv_helper_uv_tcp_t_size() -> libc::c_uint;
 }
 
 /**
@@ -86,7 +88,7 @@ pub type TcpErrData = {
     err_msg: ~str
 };
 /// Details returned as part of a `result::err` result from `tcp::listen`
-enum TcpListenErrData {
+pub enum TcpListenErrData {
     /**
      * Some unplanned-for error. The first and second fields correspond
      * to libuv's `err_name` and `err_msg` fields, respectively.
@@ -374,7 +376,7 @@ pub fn read_stop(sock: &TcpSocket,
  * * `timeout_msecs` - a `uint` value, in msecs, to wait before dropping the
  * read attempt. Pass `0u` to wait indefinitely
  */
-fn read(sock: &TcpSocket, timeout_msecs: uint)
+pub fn read(sock: &TcpSocket, timeout_msecs: uint)
     -> result::Result<~[u8],TcpErrData> {
     let socket_data = ptr::addr_of(&(*(sock.socket_data)));
     read_common_impl(socket_data, timeout_msecs)
@@ -1269,13 +1271,17 @@ type TcpBufferedSocketData = {
 };
 
 //#[cfg(test)]
-mod test {
-    use net;
+pub mod test {
     use net::ip;
+    use net::tcp::{GenericListenErr, TcpConnectErrData, TcpListenErrData};
+    use net::tcp::{connect, accept, read, listen, TcpSocket, socket_buf};
+    use net;
+    use uv::iotask::IoTask;
     use uv;
 
     use core::io;
     use core::oldcomm;
+    use core::prelude::*;
     use core::result;
     use core::str;
     use core::task;
@@ -1285,11 +1291,14 @@ mod test {
     #[cfg(target_os="win32")]
     #[cfg(target_os="darwin")]
     #[cfg(target_os="linux")]
-    mod tcp_ipv4_server_and_client_test {
+    pub mod tcp_ipv4_server_and_client_test {
         #[cfg(target_arch="x86_64")]
-        mod impl64 {
+        pub mod impl64 {
+            use net::tcp::test::*;
+
             #[test]
             fn test_gl_tcp_server_and_client_ipv4() unsafe {
+                use net::tcp::test::tcp_ipv4_server_and_client_test::*;
                 impl_gl_tcp_ipv4_server_and_client();
             }
             #[test]
@@ -1318,7 +1327,9 @@ mod test {
             }
         }
         #[cfg(target_arch="x86")]
-        mod impl32 {
+        pub mod impl32 {
+            use net::tcp::test::*;
+
             #[test]
             #[ignore(cfg(target_os = "linux"))]
             fn test_gl_tcp_server_and_client_ipv4() unsafe {
@@ -1352,7 +1363,7 @@ mod test {
             }
         }
     }
-    fn impl_gl_tcp_ipv4_server_and_client() {
+    pub fn impl_gl_tcp_ipv4_server_and_client() {
         let hl_loop = uv::global_loop::get();
         let server_ip = ~"127.0.0.1";
         let server_port = 8888u;
@@ -1398,7 +1409,7 @@ mod test {
         assert str::contains(actual_req, expected_req);
         assert str::contains(actual_resp, expected_resp);
     }
-    fn impl_gl_tcp_ipv4_get_peer_addr() {
+    pub fn impl_gl_tcp_ipv4_get_peer_addr() {
         let hl_loop = uv::global_loop::get();
         let server_ip = ~"127.0.0.1";
         let server_port = 8887u;
@@ -1445,7 +1456,7 @@ mod test {
             client_ch.send(str::from_bytes(read_result.get()));
         };
     }
-    fn impl_gl_tcp_ipv4_client_error_connection_refused() {
+    pub fn impl_gl_tcp_ipv4_client_error_connection_refused() {
         let hl_loop = uv::global_loop::get();
         let server_ip = ~"127.0.0.1";
         let server_port = 8889u;
@@ -1465,7 +1476,7 @@ mod test {
           _ => fail ~"unknown error.. expected connection_refused"
         }
     }
-    fn impl_gl_tcp_ipv4_server_address_in_use() {
+    pub fn impl_gl_tcp_ipv4_server_address_in_use() {
         let hl_loop = uv::global_loop::get();
         let server_ip = ~"127.0.0.1";
         let server_port = 8890u;
@@ -1516,7 +1527,7 @@ mod test {
           }
         }
     }
-    fn impl_gl_tcp_ipv4_server_access_denied() {
+    pub fn impl_gl_tcp_ipv4_server_access_denied() {
         let hl_loop = uv::global_loop::get();
         let server_ip = ~"127.0.0.1";
         let server_port = 80u;
@@ -1535,9 +1546,7 @@ mod test {
           }
         }
     }
-    fn impl_gl_tcp_ipv4_server_client_reader_writer() {
-        /*
-         XXX: Causes an ICE.
+    pub fn impl_gl_tcp_ipv4_server_client_reader_writer() {
 
         let iotask = uv::global_loop::get();
         let server_ip = ~"127.0.0.1";
@@ -1545,14 +1554,14 @@ mod test {
         let expected_req = ~"ping";
         let expected_resp = ~"pong";
 
-        let server_result_po = core::comm::port::<~str>();
-        let server_result_ch = core::comm::chan(server_result_po);
+        let server_result_po = oldcomm::Port::<~str>();
+        let server_result_ch = oldcomm::Chan(&server_result_po);
 
-        let cont_po = core::comm::port::<()>();
-        let cont_ch = core::comm::chan(cont_po);
+        let cont_po = oldcomm::Port::<()>();
+        let cont_ch = oldcomm::Chan(&cont_po);
         // server
         do task::spawn_sched(task::ManualThreads(1u)) {
-            let actual_req = do comm::listen |server_ch| {
+            let actual_req = do oldcomm::listen |server_ch| {
                 run_tcp_test_server(
                     server_ip,
                     server_port,
@@ -1563,32 +1572,31 @@ mod test {
             };
             server_result_ch.send(actual_req);
         };
-        core::comm::recv(cont_po);
+        oldcomm::recv(cont_po);
         // client
         let server_addr = ip::v4::parse_addr(server_ip);
         let conn_result = connect(server_addr, server_port, iotask);
-        if result::is_err(conn_result) {
+        if result::is_err(&conn_result) {
             assert false;
         }
         let sock_buf = @socket_buf(result::unwrap(conn_result));
         buf_write(sock_buf, expected_req);
 
         // so contrived!
-        let actual_resp = do str::as_bytes(expected_resp) |resp_buf| {
-            buf_read(sock_buf, vec::len(resp_buf))
+        let actual_resp = do str::as_bytes(&expected_resp) |resp_buf| {
+            buf_read(sock_buf, resp_buf.len())
         };
 
-        let actual_req = core::comm::recv(server_result_po);
+        let actual_req = oldcomm::recv(server_result_po);
         log(debug, fmt!("REQ: expected: '%s' actual: '%s'",
                        expected_req, actual_req));
         log(debug, fmt!("RESP: expected: '%s' actual: '%s'",
                        expected_resp, actual_resp));
         assert str::contains(actual_req, expected_req);
         assert str::contains(actual_resp, expected_resp);
-        */
     }
 
-    fn impl_tcp_socket_impl_reader_handles_eof() {
+    pub fn impl_tcp_socket_impl_reader_handles_eof() {
         use core::io::{Reader,ReaderUtil};
 
         let hl_loop = uv::global_loop::get();

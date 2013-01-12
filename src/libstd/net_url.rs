@@ -19,6 +19,7 @@ use core::dvec::DVec;
 use core::from_str::FromStr;
 use core::io::{Reader, ReaderUtil};
 use core::io;
+use core::prelude::*;
 use core::send_map::linear::LinearMap;
 use core::send_map;
 use core::str;
@@ -735,6 +736,10 @@ impl Url: to_bytes::IterBytes {
 #[cfg(test)]
 mod tests {
     #[legacy_exports];
+
+    use core::prelude::*;
+
+    use net_url::*;
     use net_url::UserInfo;
 
     use core::result;
@@ -1072,13 +1077,16 @@ mod tests {
 
     #[test]
     fn test_decode_form_urlencoded() {
-        // XXX: Broken.
-        /*assert decode_form_urlencoded(~[]).len() == 0;
+        // FIXME #4449: Commented out because this causes an ICE, but only
+        // on FreeBSD
+        /*
+        assert decode_form_urlencoded(~[]).len() == 0;
 
         let s = str::to_bytes("a=1&foo+bar=abc&foo+bar=12+%3D+34");
         let form = decode_form_urlencoded(s);
         assert form.len() == 2;
         assert form.get_ref(&~"a") == &~[~"1"];
-        assert form.get_ref(&~"foo bar") == &~[~"abc", ~"12 = 34"];*/
+        assert form.get_ref(&~"foo bar") == &~[~"abc", ~"12 = 34"];
+        */
     }
 }

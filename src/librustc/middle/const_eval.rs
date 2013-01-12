@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use middle::resolve;
 use middle::ty;
@@ -206,7 +207,7 @@ fn lookup_constness(tcx: ty::ctxt, e: @expr) -> constness {
 fn process_crate(crate: @ast::crate,
                  def_map: resolve::DefMap,
                  tcx: ty::ctxt) {
-    let v = visit::mk_simple_visitor(@{
+    let v = visit::mk_simple_visitor(@visit::SimpleVisitor {
         visit_expr_post: |e| { classify(e, def_map, tcx); },
         .. *visit::default_simple_visitor()
     });

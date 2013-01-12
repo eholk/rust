@@ -27,6 +27,7 @@ use cmp::{Eq, Ord};
 use libc;
 use libc::size_t;
 use io::WriterUtil;
+use option::{None, Option, Some};
 use ptr;
 use str;
 use to_str::ToStr;
@@ -1949,6 +1950,7 @@ pub mod raw {
     use libc;
     use ptr;
     use str::raw;
+    use str::{as_buf, is_utf8, len, reserve_at_least};
     use vec;
 
     /// Create a Rust string from a null-terminated *u8 buffer
@@ -2129,6 +2131,9 @@ impl ~str: Trimmable {
 
 #[cfg(notest)]
 pub mod traits {
+    use ops::Add;
+    use str::append;
+
     impl ~str : Add<&str,~str> {
         #[inline(always)]
         pure fn add(&self, rhs: & &self/str) -> ~str {
@@ -2308,10 +2313,11 @@ impl &str: StrSlice {
 #[cfg(test)]
 mod tests {
     use char;
+    use debug;
     use libc::c_char;
     use libc;
     use ptr;
-    use str::raw;
+    use str::*;
     use vec;
 
     #[test]
@@ -2668,9 +2674,11 @@ mod tests {
 
     #[test]
     fn test_to_lower() {
-        assert ~"" == map(~"", |c| libc::tolower(c as c_char) as char);
-        assert ~"ymca" == map(~"YMCA",
-                             |c| libc::tolower(c as c_char) as char);
+        unsafe {
+            assert ~"" == map(~"", |c| libc::tolower(c as c_char) as char);
+            assert ~"ymca" == map(~"YMCA",
+                                 |c| libc::tolower(c as c_char) as char);
+        }
     }
 
     #[test]
@@ -3186,9 +3194,11 @@ mod tests {
 
     #[test]
     fn test_map() {
-        assert ~"" == map(~"", |c| libc::toupper(c as c_char) as char);
-        assert ~"YMCA" == map(~"ymca",
-                              |c| libc::toupper(c as c_char) as char);
+        unsafe {
+            assert ~"" == map(~"", |c| libc::toupper(c as c_char) as char);
+            assert ~"YMCA" == map(~"ymca",
+                                  |c| libc::toupper(c as c_char) as char);
+        }
     }
 
     #[test]

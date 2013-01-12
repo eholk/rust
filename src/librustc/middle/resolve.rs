@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use driver::session::Session;
 use metadata::csearch::{each_path, get_method_names_if_trait};
@@ -21,8 +22,8 @@ use middle::pat_util::{pat_bindings};
 use core::cmp;
 use core::str;
 use core::vec;
-use syntax::ast::{_mod, add, arm, binding_mode, bitand, bitor, bitxor, blk};
-use syntax::ast::{capture_clause};
+use syntax::ast::{RegionTyParamBound, TraitTyParamBound, _mod, add, arm};
+use syntax::ast::{binding_mode, bitand, bitor, bitxor, blk, capture_clause};
 use syntax::ast::{crate, crate_num, decl_item, def, def_arg, def_binding};
 use syntax::ast::{def_const, def_foreign_mod, def_fn, def_id, def_label};
 use syntax::ast::{def_local, def_mod, def_prim_ty, def_region, def_self};
@@ -63,7 +64,7 @@ use syntax::parse::token::ident_interner;
 use syntax::parse::token::special_idents;
 use syntax::print::pprust::{pat_to_str, path_to_str};
 use syntax::codemap::span;
-use syntax::visit::{default_visitor, fk_method, mk_vt, visit_block};
+use syntax::visit::{default_visitor, fk_method, mk_vt, Visitor, visit_block};
 use syntax::visit::{visit_crate, visit_expr, visit_expr_opt, visit_fn};
 use syntax::visit::{visit_foreign_item, visit_item, visit_method_helper};
 use syntax::visit::{visit_mod, visit_ty, vt};
@@ -849,6 +850,8 @@ fn Resolver(session: Session, lang_items: LanguageItems,
         current_trait_refs: None,
 
         self_ident: special_idents::self_,
+        type_self_ident: special_idents::type_self,
+
         primitive_type_table: @PrimitiveTypeTable(session.
                                                   parse_sess.interner),
 
@@ -904,6 +907,8 @@ struct Resolver {
 
     // The ident for the keyword "self".
     self_ident: ident,
+    // The ident for the non-keyword "Self".
+    type_self_ident: ident,
 
     // The idents for the primitive types.
     primitive_type_table: @PrimitiveTypeTable,
@@ -946,7 +951,7 @@ impl Resolver {
     fn build_reduced_graph(this: @Resolver) {
         let initial_parent =
             ModuleReducedGraphParent((*self.graph_root).get_module());
-        visit_crate(*self.crate, initial_parent, mk_vt(@{
+        visit_crate(*self.crate, initial_parent, mk_vt(@Visitor {
             visit_item: |item, context, visitor|
                 (*this).build_reduced_graph_for_item(item, context, visitor),
 
@@ -3075,77 +3080,6 @@ impl Resolver {
                self.module_to_str(containing_module));
 
         return Success(PrefixFound(containing_module, i));
-
-        /*
-        // If we reached the end, return the containing module.
-        if i == module_path.len() {
-            return ModulePrefixResult {
-                result: Success(containing_module),
-                prefix_len: i
-            };
-        }
-
-        // Is the containing module the current module? If so, we allow
-        // globs to be unresolved.
-        let allow_globs = core::managed::ptr_eq(containing_module, module_);
-
-        let name = module_path.get_elt(i);
-        i += 1;
-
-        let resolve_result = self.resolve_name_in_module(containing_module,
-                                                         name,
-                                                         TypeNS,
-                                                         Xray,
-                                                         allow_globs);
-        match resolve_result {
-            Success(target) => {
-                match target.bindings.type_def {
-                    Some(ref type_def) => {
-                        match (*type_def).module_def {
-                            None => {
-                                error!("!!! (resolving crate-relative \
-                                        module) module wasn't actually a \
-                                        module!");
-                                return ModulePrefixResult {
-                                    result: Failed,
-                                    prefix_len: i
-                                };
-                            }
-                            Some(module_def) => {
-                                return ModulePrefixResult {
-                                    result: Success(module_def),
-                                    prefix_len: i
-                                };
-                            }
-                        }
-                    }
-                    None => {
-                        error!("!!! (resolving crate-relative module) module
-                                wasn't actually a module!");
-                        return ModulePrefixResult {
-                            result: Failed,
-                            prefix_len: i
-                        };
-                    }
-                }
-            }
-            Indeterminate => {
-                debug!("(resolving crate-relative module) indeterminate; \
-                        bailing");
-                return ModulePrefixResult {
-                    result: Indeterminate,
-                    prefix_len: i
-                };
-            }
-            Failed => {
-                debug!("(resolving crate-relative module) failed to resolve");
-                return ModulePrefixResult {
-                    result: Failed,
-                    prefix_len: i
-                };
-            }
-        }
-        */
     }
 
     fn name_is_exported(module_: @Module, name: ident) -> bool {
@@ -3165,7 +3099,6 @@ impl Resolver {
                               xray: XrayFlag,
                               allow_globs: bool)
                            -> ResolveResult<Target> {
-
         debug!("(resolving name in module) resolving `%s` in `%s`",
                self.session.str_of(name),
                self.module_to_str(module_));
@@ -3790,7 +3723,7 @@ impl Resolver {
     fn resolve_crate(@self) {
         debug!("(resolving crate) starting");
 
-        visit_crate(*self.crate, (), mk_vt(@{
+        visit_crate(*self.crate, (), mk_vt(@Visitor {
             visit_item: |item, _context, visitor|
                 self.resolve_item(item, visitor),
             visit_arm: |arm, _context, visitor|
@@ -3873,6 +3806,8 @@ impl Resolver {
                 let self_type_rib = @Rib(NormalRibKind);
                 (*self.type_ribs).push(self_type_rib);
                 self_type_rib.bindings.insert(self.self_ident,
+                                              dl_def(def_self_ty(item.id)));
+                self_type_rib.bindings.insert(self.type_self_ident,
                                               dl_def(def_self_ty(item.id)));
 
                 // Create a new rib for the trait-wide type parameters.
@@ -4182,8 +4117,11 @@ impl Resolver {
     fn resolve_type_parameters(type_parameters: ~[ty_param],
                                visitor: ResolveVisitor) {
         for type_parameters.each |type_parameter| {
-            for type_parameter.bounds.each |bound| {
-                self.resolve_type(**bound, visitor);
+            for type_parameter.bounds.each |&bound| {
+                match bound {
+                    TraitTyParamBound(ty) => self.resolve_type(ty, visitor),
+                    RegionTyParamBound => {}
+                }
             }
         }
     }
@@ -4818,7 +4756,7 @@ impl Resolver {
         }
 
         return self.resolve_item_by_identifier_in_lexical_scope(identifier,
-                                                             namespace);
+                                                                namespace);
     }
 
     // XXX: Merge me with resolve_name_in_module?
@@ -5035,7 +4973,7 @@ impl Resolver {
         match self.resolve_item_in_lexical_scope(self.current_module,
                                                  ident,
                                                  namespace,
-                                                 SearchThroughModules) {
+                                                 DontSearchThroughModules) {
             Success(target) => {
                 match (*target.bindings).def_for_namespace(namespace) {
                     None => {

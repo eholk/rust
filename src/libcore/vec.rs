@@ -16,10 +16,12 @@
 
 use cast;
 use cmp::{Eq, Ord};
+use iter::BaseIter;
 use iter;
+use kinds::Copy;
 use libc;
 use libc::size_t;
-use option::{Some, None};
+use option::{None, Option, Some};
 use ptr;
 use ptr::addr_of;
 use sys;
@@ -28,9 +30,9 @@ use vec;
 
 #[abi = "cdecl"]
 pub extern mod rustrt {
-    fn vec_reserve_shared(++t: *sys::TypeDesc,
-                          ++v: **raw::VecRepr,
-                          ++n: libc::size_t);
+    unsafe fn vec_reserve_shared(++t: *sys::TypeDesc,
+                                 ++v: **raw::VecRepr,
+                                 ++n: libc::size_t);
 }
 
 #[abi = "rust-intrinsic"]
@@ -403,6 +405,48 @@ pub fn rsplitn<T: Copy>(v: &[T], n: uint, f: fn(t: &T) -> bool) -> ~[~[T]] {
     result
 }
 
+/**
+ * Partitions a vector into two new vectors: those that satisfies the
+ * predicate, and those that do not.
+ */
+pub fn partition<T>(v: ~[T], f: fn(&T) -> bool) -> (~[T], ~[T]) {
+    let mut lefts  = ~[];
+    let mut rights = ~[];
+
+    // FIXME (#4355 maybe): using v.consume here crashes
+    // do v.consume |_, elt| {
+    do consume(v) |_, elt| {
+        if f(&elt) {
+            lefts.push(elt);
+        } else {
+            rights.push(elt);
+        }
+    }
+
+    (lefts, rights)
+}
+
+/**
+ * Partitions a vector into two new vectors: those that satisfies the
+ * predicate, and those that do not.
+ */
+pub pure fn partitioned<T: Copy>(v: &[T], f: fn(&T) -> bool) -> (~[T], ~[T]) {
+    let mut lefts  = ~[];
+    let mut rights = ~[];
+
+    for each(v) |elt| {
+        unsafe {
+            if f(elt) {
+                lefts.push(*elt);
+            } else {
+                rights.push(*elt);
+            }
+        }
+    }
+
+    (lefts, rights)
+}
+
 // Mutators
 
 /// Removes the first element from a vector and return it
@@ -519,7 +563,7 @@ pub fn pop<T>(v: &mut ~[T]) -> T {
     }
     let valptr = ptr::to_mut_unsafe_ptr(&mut v[ln - 1u]);
     unsafe {
-        // XXX: Should be rusti::uninit() - we don't need this zeroed
+        // FIXME #4204: Should be rusti::uninit() - we don't need this zeroed
         let mut val = rusti::init();
         val <-> *valptr;
         raw::set_len(v, ln - 1u);
@@ -592,7 +636,7 @@ pub fn push_all_move<T>(v: &mut ~[T], rhs: ~[T]) {
     unsafe {
         do as_mut_buf(rhs) |p, len| {
             for uint::range(0, len) |i| {
-                // XXX Should be rusti::uninit() - don't need to zero
+                // FIXME #4204 Should be rusti::uninit() - don't need to zero
                 let mut x = rusti::init();
                 x <-> *ptr::mut_offset(p, i);
                 push(v, x);
@@ -609,7 +653,7 @@ pub fn truncate<T>(v: &mut ~[T], newlen: uint) {
         unsafe {
             // This loop is optimized out for non-drop types.
             for uint::range(newlen, oldlen) |i| {
-                // XXX Should be rusti::uninit() - don't need to zero
+                // FIXME #4204 Should be rusti::uninit() - don't need to zero
                 let mut dropped = rusti::init();
                 dropped <-> *ptr::mut_offset(p, i);
             }
@@ -634,7 +678,7 @@ pub fn dedup<T: Eq>(v: &mut ~[T]) unsafe {
             // last_written < next_to_read < ln
             if *ptr::mut_offset(p, next_to_read) ==
                 *ptr::mut_offset(p, last_written) {
-                // XXX Should be rusti::uninit() - don't need to zero
+                // FIXME #4204 Should be rusti::uninit() - don't need to zero
                 let mut dropped = rusti::init();
                 dropped <-> *ptr::mut_offset(p, next_to_read);
             } else {
@@ -673,7 +717,7 @@ pub pure fn append_one<T>(lhs: ~[T], x: T) -> ~[T] {
 }
 
 #[inline(always)]
-pure fn append_mut<T: Copy>(lhs: ~[mut T], rhs: &[const T]) -> ~[mut T] {
+pub pure fn append_mut<T: Copy>(lhs: ~[mut T], rhs: &[const T]) -> ~[mut T] {
     to_mut(append(from_mut(lhs), rhs))
 }
 
@@ -811,7 +855,24 @@ pub pure fn filter_map<T, U: Copy>(v: &[T], f: fn(t: &T) -> Option<U>)
  * Apply function `f` to each element of `v` and return a vector containing
  * only those elements for which `f` returned true.
  */
-pub pure fn filter<T: Copy>(v: &[T], f: fn(t: &T) -> bool) -> ~[T] {
+pub fn filter<T>(v: ~[T], f: fn(t: &T) -> bool) -> ~[T] {
+    let mut result = ~[];
+    // FIXME (#4355 maybe): using v.consume here crashes
+    // do v.consume |_, elem| {
+    do consume(v) |_, elem| {
+        if f(&elem) { result.push(elem); }
+    }
+    result
+}
+
+/**
+ * Construct a new vector from the elements of a vector for which some
+ * predicate holds.
+ *
+ * Apply function `f` to each element of `v` and return a vector containing
+ * only those elements for which `f` returned true.
+ */
+pub pure fn filtered<T: Copy>(v: &[T], f: fn(t: &T) -> bool) -> ~[T] {
     let mut result = ~[];
     for each(v) |elem| {
         if f(elem) { unsafe { result.push(*elem); } }
@@ -1517,6 +1578,10 @@ impl<T: Ord> @[T] : Ord {
 
 #[cfg(notest)]
 pub mod traits {
+    use kinds::Copy;
+    use ops::Add;
+    use vec::{append, append_mut};
+
     impl<T: Copy> ~[T] : Add<&[const T],~[T]> {
         #[inline(always)]
         pure fn add(&self, rhs: & &self/[const T]) -> ~[T] {
@@ -1533,93 +1598,96 @@ pub mod traits {
 }
 
 pub trait ConstVector {
-    pure fn is_empty() -> bool;
-    pure fn is_not_empty() -> bool;
-    pure fn len() -> uint;
+    pure fn is_empty(&self) -> bool;
+    pure fn is_not_empty(&self) -> bool;
+    pure fn len(&self) -> uint;
 }
 
 /// Extension methods for vectors
 impl<T> &[const T]: ConstVector {
     /// Returns true if a vector contains no elements
     #[inline]
-    pure fn is_empty() -> bool { is_empty(self) }
+    pure fn is_empty(&self) -> bool { is_empty(*self) }
     /// Returns true if a vector contains some elements
     #[inline]
-    pure fn is_not_empty() -> bool { is_not_empty(self) }
+    pure fn is_not_empty(&self) -> bool { is_not_empty(*self) }
     /// Returns the length of a vector
     #[inline]
-    pure fn len() -> uint { len(self) }
+    pure fn len(&self) -> uint { len(*self) }
 }
 
 pub trait CopyableVector<T> {
-    pure fn head() -> T;
-    pure fn init() -> ~[T];
-    pure fn last() -> T;
-    pure fn slice(start: uint, end: uint) -> ~[T];
-    pure fn tail() -> ~[T];
+    pure fn head(&self) -> T;
+    pure fn init(&self) -> ~[T];
+    pure fn last(&self) -> T;
+    pure fn slice(&self, start: uint, end: uint) -> ~[T];
+    pure fn tail(&self) -> ~[T];
 }
 
 /// Extension methods for vectors
 impl<T: Copy> &[const T]: CopyableVector<T> {
     /// Returns the first element of a vector
     #[inline]
-    pure fn head() -> T { head(self) }
+    pure fn head(&self) -> T { head(*self) }
+
     /// Returns all but the last elemnt of a vector
     #[inline]
-    pure fn init() -> ~[T] { init(self) }
+    pure fn init(&self) -> ~[T] { init(*self) }
+
     /// Returns the last element of a `v`, failing if the vector is empty.
     #[inline]
-    pure fn last() -> T { last(self) }
+    pure fn last(&self) -> T { last(*self) }
+
     /// Returns a copy of the elements from [`start`..`end`) from `v`.
     #[inline]
-    pure fn slice(start: uint, end: uint) -> ~[T] { slice(self, start, end) }
+    pure fn slice(&self, start: uint, end: uint) -> ~[T] {
+        slice(*self, start, end)
+    }
+
     /// Returns all but the first element of a vector
     #[inline]
-    pure fn tail() -> ~[T] { tail(self) }
+    pure fn tail(&self) -> ~[T] { tail(*self) }
 }
 
 pub trait ImmutableVector<T> {
-    pure fn view(start: uint, end: uint) -> &self/[T];
-    pure fn foldr<U: Copy>(z: U, p: fn(t: &T, u: U) -> U) -> U;
-    pure fn map<U>(f: fn(t: &T) -> U) -> ~[U];
-    pure fn mapi<U>(f: fn(uint, t: &T) -> U) -> ~[U];
-    fn map_r<U>(f: fn(x: &T) -> U) -> ~[U];
-    pure fn alli(f: fn(uint, t: &T) -> bool) -> bool;
-    pure fn flat_map<U>(f: fn(t: &T) -> ~[U]) -> ~[U];
-    pure fn filter_map<U: Copy>(f: fn(t: &T) -> Option<U>) -> ~[U];
-}
-
-pub trait ImmutableEqVector<T: Eq> {
-    pure fn position(f: fn(t: &T) -> bool) -> Option<uint>;
-    pure fn position_elem(t: &T) -> Option<uint>;
-    pure fn rposition(f: fn(t: &T) -> bool) -> Option<uint>;
-    pure fn rposition_elem(t: &T) -> Option<uint>;
+    pure fn view(&self, start: uint, end: uint) -> &self/[T];
+    pure fn foldr<U: Copy>(&self, z: U, p: fn(t: &T, u: U) -> U) -> U;
+    pure fn map<U>(&self, f: fn(t: &T) -> U) -> ~[U];
+    pure fn mapi<U>(&self, f: fn(uint, t: &T) -> U) -> ~[U];
+    fn map_r<U>(&self, f: fn(x: &T) -> U) -> ~[U];
+    pure fn alli(&self, f: fn(uint, t: &T) -> bool) -> bool;
+    pure fn flat_map<U>(&self, f: fn(t: &T) -> ~[U]) -> ~[U];
+    pure fn filter_map<U: Copy>(&self, f: fn(t: &T) -> Option<U>) -> ~[U];
 }
 
 /// Extension methods for vectors
 impl<T> &[T]: ImmutableVector<T> {
     /// Return a slice that points into another slice.
-    pure fn view(start: uint, end: uint) -> &self/[T] {
-        view(self, start, end)
+    #[inline]
+    pure fn view(&self, start: uint, end: uint) -> &self/[T] {
+        view(*self, start, end)
     }
+
     /// Reduce a vector from right to left
     #[inline]
-    pure fn foldr<U: Copy>(z: U, p: fn(t: &T, u: U) -> U) -> U {
-        foldr(self, z, p)
+    pure fn foldr<U: Copy>(&self, z: U, p: fn(t: &T, u: U) -> U) -> U {
+        foldr(*self, z, p)
     }
+
     /// Apply a function to each element of a vector and return the results
     #[inline]
-    pure fn map<U>(f: fn(t: &T) -> U) -> ~[U] { map(self, f) }
+    pure fn map<U>(&self, f: fn(t: &T) -> U) -> ~[U] { map(*self, f) }
+
     /**
      * Apply a function to the index and value of each element in the vector
      * and return the results
      */
-    pure fn mapi<U>(f: fn(uint, t: &T) -> U) -> ~[U] {
-        mapi(self, f)
+    pure fn mapi<U>(&self, f: fn(uint, t: &T) -> U) -> ~[U] {
+        mapi(*self, f)
     }
 
     #[inline]
-    fn map_r<U>(f: fn(x: &T) -> U) -> ~[U] {
+    fn map_r<U>(&self, f: fn(x: &T) -> U) -> ~[U] {
         let mut r = ~[];
         let mut i = 0;
         while i < self.len() {
@@ -1634,16 +1702,16 @@ impl<T> &[T]: ImmutableVector<T> {
      *
      *     If the vector is empty, true is returned.
      */
-    pure fn alli(f: fn(uint, t: &T) -> bool) -> bool {
-        alli(self, f)
+    pure fn alli(&self, f: fn(uint, t: &T) -> bool) -> bool {
+        alli(*self, f)
     }
     /**
      * Apply a function to each element of a vector and return a concatenation
      * of each result vector
      */
     #[inline]
-    pure fn flat_map<U>(f: fn(t: &T) -> ~[U]) -> ~[U] {
-        flat_map(self, f)
+    pure fn flat_map<U>(&self, f: fn(t: &T) -> ~[U]) -> ~[U] {
+        flat_map(*self, f)
     }
     /**
      * Apply a function to each element of a vector and return the results
@@ -1652,9 +1720,16 @@ impl<T> &[T]: ImmutableVector<T> {
      * the resulting vector.
      */
     #[inline]
-    pure fn filter_map<U: Copy>(f: fn(t: &T) -> Option<U>) -> ~[U] {
-        filter_map(self, f)
+    pure fn filter_map<U: Copy>(&self, f: fn(t: &T) -> Option<U>) -> ~[U] {
+        filter_map(*self, f)
     }
+}
+
+pub trait ImmutableEqVector<T: Eq> {
+    pure fn position(&self, f: fn(t: &T) -> bool) -> Option<uint>;
+    pure fn position_elem(&self, t: &T) -> Option<uint>;
+    pure fn rposition(&self, f: fn(t: &T) -> bool) -> Option<uint>;
+    pure fn rposition_elem(&self, t: &T) -> Option<uint>;
 }
 
 impl<T: Eq> &[T]: ImmutableEqVector<T> {
@@ -1666,14 +1741,14 @@ impl<T: Eq> &[T]: ImmutableEqVector<T> {
      * elements then none is returned.
      */
     #[inline]
-    pure fn position(f: fn(t: &T) -> bool) -> Option<uint> {
-        position(self, f)
+    pure fn position(&self, f: fn(t: &T) -> bool) -> Option<uint> {
+        position(*self, f)
     }
 
     /// Find the first index containing a matching value
     #[inline]
-    pure fn position_elem(x: &T) -> Option<uint> {
-        position_elem(self, x)
+    pure fn position_elem(&self, x: &T) -> Option<uint> {
+        position_elem(*self, x)
     }
 
     /**
@@ -1684,21 +1759,21 @@ impl<T: Eq> &[T]: ImmutableEqVector<T> {
      * returned. If `f` matches no elements then none is returned.
      */
     #[inline]
-    pure fn rposition(f: fn(t: &T) -> bool) -> Option<uint> {
-        rposition(self, f)
+    pure fn rposition(&self, f: fn(t: &T) -> bool) -> Option<uint> {
+        rposition(*self, f)
     }
 
     /// Find the last index containing a matching value
     #[inline]
-    pure fn rposition_elem(t: &T) -> Option<uint> {
-        rposition_elem(self, t)
+    pure fn rposition_elem(&self, t: &T) -> Option<uint> {
+        rposition_elem(*self, t)
     }
 }
 
 pub trait ImmutableCopyableVector<T> {
-    pure fn filter(f: fn(t: &T) -> bool) -> ~[T];
-
-    pure fn rfind(f: fn(t: &T) -> bool) -> Option<T>;
+    pure fn filtered(&self, f: fn(&T) -> bool) -> ~[T];
+    pure fn rfind(&self, f: fn(t: &T) -> bool) -> Option<T>;
+    pure fn partitioned(&self, f: fn(&T) -> bool) -> (~[T], ~[T]);
 }
 
 /// Extension methods for vectors
@@ -1711,8 +1786,8 @@ impl<T: Copy> &[T]: ImmutableCopyableVector<T> {
      * containing only those elements for which `f` returned true.
      */
     #[inline]
-    pure fn filter(f: fn(t: &T) -> bool) -> ~[T] {
-        filter(self, f)
+    pure fn filtered(&self, f: fn(t: &T) -> bool) -> ~[T] {
+        filtered(*self, f)
     }
 
     /**
@@ -1723,10 +1798,21 @@ impl<T: Copy> &[T]: ImmutableCopyableVector<T> {
      * returned. If `f` matches no elements then none is returned.
      */
     #[inline]
-    pure fn rfind(f: fn(t: &T) -> bool) -> Option<T> { rfind(self, f) }
+    pure fn rfind(&self, f: fn(t: &T) -> bool) -> Option<T> {
+        rfind(*self, f)
+    }
+
+    /**
+     * Partitions the vector into those that satisfies the predicate, and
+     * those that do not.
+     */
+    #[inline]
+    pure fn partitioned(&self, f: fn(&T) -> bool) -> (~[T], ~[T]) {
+        partitioned(*self, f)
+    }
 }
 
-pub trait MutableVector<T> {
+pub trait OwnedVector<T> {
     fn push(&mut self, t: T);
     fn push_all_move(&mut self, rhs: ~[T]);
     fn pop(&mut self) -> T;
@@ -1737,85 +1823,121 @@ pub trait MutableVector<T> {
     fn swap_remove(&mut self, index: uint) -> T;
     fn truncate(&mut self, newlen: uint);
     fn retain(&mut self, f: pure fn(t: &T) -> bool);
+    fn consume(self, f: fn(uint, v: T));
+    fn filter(self, f: fn(t: &T) -> bool) -> ~[T];
+    fn partition(self, f: pure fn(&T) -> bool) -> (~[T], ~[T]);
 }
 
-pub trait MutableCopyableVector<T: Copy> {
+impl<T> ~[T]: OwnedVector<T> {
+    #[inline]
+    fn push(&mut self, t: T) {
+        push(self, t);
+    }
+
+    #[inline]
+    fn push_all_move(&mut self, rhs: ~[T]) {
+        push_all_move(self, rhs);
+    }
+
+    #[inline]
+    fn pop(&mut self) -> T {
+        pop(self)
+    }
+
+    #[inline]
+    fn shift(&mut self) -> T {
+        shift(self)
+    }
+
+    #[inline]
+    fn unshift(&mut self, x: T) {
+        unshift(self, x)
+    }
+
+    #[inline]
+    fn insert(&mut self, i: uint, x:T) {
+        insert(self, i, x)
+    }
+
+    #[inline]
+    fn remove(&mut self, i: uint) -> T {
+        remove(self, i)
+    }
+
+    #[inline]
+    fn swap_remove(&mut self, index: uint) -> T {
+        swap_remove(self, index)
+    }
+
+    #[inline]
+    fn truncate(&mut self, newlen: uint) {
+        truncate(self, newlen);
+    }
+
+    #[inline]
+    fn retain(&mut self, f: pure fn(t: &T) -> bool) {
+        retain(self, f);
+    }
+
+    #[inline]
+    fn consume(self, f: fn(uint, v: T)) {
+        consume(self, f)
+    }
+
+    #[inline]
+    fn filter(self, f: fn(&T) -> bool) -> ~[T] {
+        filter(self, f)
+    }
+
+    /**
+     * Partitions the vector into those that satisfies the predicate, and
+     * those that do not.
+     */
+    #[inline]
+    fn partition(self, f: fn(&T) -> bool) -> (~[T], ~[T]) {
+        partition(self, f)
+    }
+}
+
+pub trait OwnedCopyableVector<T: Copy> {
     fn push_all(&mut self, rhs: &[const T]);
     fn grow(&mut self, n: uint, initval: &T);
     fn grow_fn(&mut self, n: uint, op: iter::InitOp<T>);
     fn grow_set(&mut self, index: uint, initval: &T, val: T);
 }
 
-trait MutableEqVector<T: Eq> {
-    fn dedup(&mut self);
-}
-
-impl<T> ~[T]: MutableVector<T> {
-    fn push(&mut self, t: T) {
-        push(self, t);
-    }
-
-    fn push_all_move(&mut self, rhs: ~[T]) {
-        push_all_move(self, rhs);
-    }
-
-    fn pop(&mut self) -> T {
-        pop(self)
-    }
-
-    fn shift(&mut self) -> T {
-        shift(self)
-    }
-
-    fn unshift(&mut self, x: T) {
-        unshift(self, x)
-    }
-
-    fn insert(&mut self, i: uint, x:T) {
-        insert(self, i, x)
-    }
-
-    fn remove(&mut self, i: uint) -> T {
-        remove(self, i)
-    }
-
-    fn swap_remove(&mut self, index: uint) -> T {
-        swap_remove(self, index)
-    }
-
-    fn truncate(&mut self, newlen: uint) {
-        truncate(self, newlen);
-    }
-
-    fn retain(&mut self, f: pure fn(t: &T) -> bool) {
-        retain(self, f);
-    }
-}
-
-impl<T: Copy> ~[T]: MutableCopyableVector<T> {
+impl<T: Copy> ~[T]: OwnedCopyableVector<T> {
+    #[inline]
     fn push_all(&mut self, rhs: &[const T]) {
         push_all(self, rhs);
     }
 
+    #[inline]
     fn grow(&mut self, n: uint, initval: &T) {
         grow(self, n, initval);
     }
 
+    #[inline]
     fn grow_fn(&mut self, n: uint, op: iter::InitOp<T>) {
         grow_fn(self, n, op);
     }
 
+    #[inline]
     fn grow_set(&mut self, index: uint, initval: &T, val: T) {
         grow_set(self, index, initval, val);
     }
 }
 
-impl<T: Eq> ~[T]: MutableEqVector<T> {
+trait OwnedEqVector<T: Eq> {
+    fn dedup(&mut self);
+}
+
+impl<T: Eq> ~[T]: OwnedEqVector<T> {
+    #[inline]
     fn dedup(&mut self) {
         dedup(self)
     }
 }
-
 
 /**
 * Constructs a vector from an unsafe pointer to a buffer
@@ -1839,10 +1961,14 @@ pub struct UnboxedVecRepr {
 
 /// Unsafe operations
 pub mod raw {
+    use kinds::Copy;
     use managed;
+    use option::{None, Some};
     use option;
+    use ptr::addr_of;
     use ptr;
     use sys;
+    use vec::{UnboxedVecRepr, as_const_buf, as_mut_buf, len, with_capacity};
     use vec::rusti;
 
     /// The internal representation of a (boxed) vector
@@ -1992,8 +2118,9 @@ pub mod raw {
 pub mod bytes {
     use libc;
     use uint;
-    use vec;
+    use vec::len;
     use vec::raw;
+    use vec;
 
     /// Bytewise string comparison
     pub pure fn cmp(a: &~[u8], b: &~[u8]) -> int {
@@ -2280,8 +2407,9 @@ impl<A:Copy> @[A] : iter::CopyableNonstrictIter<A> {
 
 #[cfg(test)]
 mod tests {
+    use option::{None, Option, Some};
     use option;
-    use vec::raw;
+    use vec::*;
 
     fn square(n: uint) -> uint { return n * n; }
 
@@ -3061,6 +3189,26 @@ mod tests {
     }
 
     #[test]
+    fn test_partition() {
+        // FIXME (#4355 maybe): using v.partition here crashes
+        assert partition(~[], |x: &int| *x < 3) == (~[], ~[]);
+        assert partition(~[1, 2, 3], |x: &int| *x < 4) == (~[1, 2, 3], ~[]);
+        assert partition(~[1, 2, 3], |x: &int| *x < 2) == (~[1], ~[2, 3]);
+        assert partition(~[1, 2, 3], |x: &int| *x < 0) == (~[], ~[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_partitioned() {
+        assert (~[]).partitioned(|x: &int| *x < 3) == (~[], ~[]);
+        assert (~[1, 2, 3]).partitioned(|x: &int| *x < 4) ==
+               (~[1, 2, 3], ~[]);
+        assert (~[1, 2, 3]).partitioned(|x: &int| *x < 2) ==
+               (~[1], ~[2, 3]);
+        assert (~[1, 2, 3]).partitioned(|x: &int| *x < 0) ==
+               (~[], ~[1, 2, 3]);
+    }
+
+    #[test]
     #[should_fail]
     #[ignore(cfg(windows))]
     fn test_init_empty() {
@@ -3496,7 +3644,7 @@ mod tests {
     fn test_filter_fail() {
         let v = [(~0, @0), (~0, @0), (~0, @0), (~0, @0)];
         let mut i = 0;
-        do filter(v) |_elt| {
+        do v.filtered |_elt| {
             if i == 2 {
                 fail
             }
@@ -3724,7 +3872,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore(windows)]
+    #[ignore(cfg(windows))]
     #[should_fail]
     fn test_as_mut_buf_fail() {
         let v = [mut (~0, @0), (~0, @0), (~0, @0), (~0, @0)];
@@ -3735,6 +3883,7 @@ mod tests {
 
     #[test]
     #[should_fail]
+    #[ignore(cfg(windows))]
     fn test_memcpy_oob() unsafe {
         let a = [mut 1, 2, 3, 4];
         let b = [1, 2, 3, 4, 5];

@@ -53,6 +53,9 @@ Implicitly, all crates behave as if they included the following prologue:
 #[warn(vecs_implicitly_copyable)];
 #[deny(non_camel_case_types)];
 
+/* The Prelude. */
+
+pub mod prelude;
 
 /* Primitive types */
 
@@ -188,7 +191,7 @@ pub use tuple::{CopyableTuple, ImmutableTuple, ExtendedTupleOps};
 pub use str::{StrSlice, Trimmable};
 pub use vec::{ConstVector, CopyableVector, ImmutableVector};
 pub use vec::{ImmutableEqVector, ImmutableCopyableVector};
-pub use vec::{MutableVector, MutableCopyableVector};
+pub use vec::{OwnedVector, OwnedCopyableVector};
 pub use iter::{BaseIter, ExtendedIter, EqIter, CopyableIter};
 pub use iter::{CopyableOrderedIter, CopyableNonstrictIter, Times};
 
@@ -243,6 +246,8 @@ pub mod core {
 
     pub use cmp;
     pub use condition;
+    pub use option;
+    pub use kinds;
 }
 
 

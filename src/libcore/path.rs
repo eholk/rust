@@ -20,8 +20,10 @@ Cross-platform file path handling
 
 use cmp::Eq;
 use libc;
+use option::{None, Option, Some};
 use ptr;
 use str;
+use to_str::ToStr;
 
 #[deriving_eq]
 pub struct WindowsPath {
@@ -241,21 +243,25 @@ mod stat {
 
 impl Path {
     fn stat(&self) -> Option<libc::stat> {
-         do str::as_c_str(self.to_str()) |buf| {
-            let mut st = stat::arch::default_stat();
-            let r = libc::stat(buf, ptr::mut_addr_of(&st));
+        unsafe {
+             do str::as_c_str(self.to_str()) |buf| {
+                let mut st = stat::arch::default_stat();
+                let r = libc::stat(buf, ptr::mut_addr_of(&st));
 
-            if r == 0 { Some(move st) } else { None }
+                if r == 0 { Some(move st) } else { None }
+            }
         }
     }
 
     #[cfg(unix)]
     fn lstat(&self) -> Option<libc::stat> {
-         do str::as_c_str(self.to_str()) |buf| {
-            let mut st = stat::arch::default_stat();
-            let r = libc::lstat(buf, ptr::mut_addr_of(&st));
+        unsafe {
+            do str::as_c_str(self.to_str()) |buf| {
+                let mut st = stat::arch::default_stat();
+                let r = libc::lstat(buf, ptr::mut_addr_of(&st));
 
-            if r == 0 { Some(move st) } else { None }
+                if r == 0 { Some(move st) } else { None }
+            }
         }
     }
 
@@ -751,6 +757,8 @@ pub pure fn normalize(components: &[~str]) -> ~[~str] {
 // Various windows helpers, and tests for the impl.
 pub mod windows {
     use libc;
+    use option::{None, Option, Some};
+    use to_str::ToStr;
 
     #[inline(always)]
     pub pure fn is_sep(u: u8) -> bool {
@@ -793,7 +801,8 @@ pub mod windows {
 
 #[cfg(test)]
 mod tests {
-    use path::windows;
+    use option::{None, Some};
+    use path::{PosixPath, WindowsPath, windows};
     use str;
 
     #[test]

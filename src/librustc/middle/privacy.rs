@@ -12,6 +12,8 @@
 // A pass that checks to make sure private fields and methods aren't used
 // outside their scopes.
 
+use core::prelude::*;
+
 use middle::ty::{ty_struct, ty_enum};
 use middle::ty;
 use middle::typeck::{method_map, method_origin, method_param, method_self};
@@ -188,7 +190,7 @@ fn check_crate(tcx: ty::ctxt, method_map: &method_map, crate: @ast::crate) {
         }
     };
 
-    let visitor = visit::mk_vt(@{
+    let visitor = visit::mk_vt(@visit::Visitor {
         visit_mod: |the_module, span, node_id, method_map, visitor| {
             let n_added = add_privileged_items(the_module.items);
 

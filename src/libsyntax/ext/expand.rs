@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
+
 use ast::{crate, expr_, expr_mac, mac_invoc_tt};
 use ast::{tt_delim, tt_tok, item_mac, stmt_, stmt_mac, stmt_expr, stmt_semi};
 use ast;
@@ -154,7 +156,9 @@ fn expand_item_mac(exts: HashMap<~str, syntax_extension>,
                    fld: ast_fold) -> Option<@ast::item> {
 
     let (pth, tts) = match it.node {
-        item_mac({node: mac_invoc_tt(pth, ref tts), _}) => (pth, (*tts)),
+        item_mac(ast::spanned { node: mac_invoc_tt(pth, ref tts), _}) => {
+            (pth, (*tts))
+        }
         _ => cx.span_bug(it.span, ~"invalid item macro invocation")
     };
 
@@ -232,7 +236,8 @@ fn expand_stmt(exts: HashMap<~str, syntax_extension>, cx: ext_ctxt,
                 {call_site: sp, callie: {name: *extname, span: exp_sp}}));
             let expanded = match exp(cx, mac.span, tts) {
                 mr_expr(e) =>
-                    @{node: stmt_expr(e, cx.next_id()), span: e.span},
+                    @ast::spanned { node: stmt_expr(e, cx.next_id()),
+                                    span: e.span},
                 mr_any(_,_,stmt_mkr) => stmt_mkr(),
                 _ => cx.span_fatal(
                     pth.span,
@@ -317,13 +322,13 @@ fn expand_crate(parse_sess: parse::parse_sess,
     let exts = syntax_expander_table();
     let afp = default_ast_fold();
     let cx: ext_ctxt = mk_ctxt(parse_sess, cfg);
-    let f_pre =
-        @{fold_expr: |a,b,c| expand_expr(exts, cx, a, b, c, afp.fold_expr),
-          fold_mod: |a,b| expand_mod_items(exts, cx, a, b, afp.fold_mod),
-          fold_item: |a,b| expand_item(exts, cx, a, b, afp.fold_item),
-          fold_stmt: |a,b,c| expand_stmt(exts, cx, a, b, c, afp.fold_stmt),
-          new_span: |a| new_span(cx, a),
-          .. *afp};
+    let f_pre = @AstFoldFns {
+        fold_expr: |a,b,c| expand_expr(exts, cx, a, b, c, afp.fold_expr),
+        fold_mod: |a,b| expand_mod_items(exts, cx, a, b, afp.fold_mod),
+        fold_item: |a,b| expand_item(exts, cx, a, b, afp.fold_item),
+        fold_stmt: |a,b,c| expand_stmt(exts, cx, a, b, c, afp.fold_stmt),
+        new_span: |a| new_span(cx, a),
+        .. *afp};
     let f = make_fold(f_pre);
     let cm = parse_expr_from_source_str(~"<core-macros>",
                                         @core_macros(),

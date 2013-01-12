@@ -38,6 +38,7 @@ use libc::{c_char, c_void, c_int, c_uint, size_t, ssize_t};
 use libc::{mode_t, pid_t, FILE};
 use option;
 use option::{Some, None};
+use prelude::*;
 use private;
 use ptr;
 use str;
@@ -46,28 +47,35 @@ use task::TaskBuilder;
 use uint;
 use vec;
 
-pub use libc::{close, fclose};
+pub use libc::fclose;
 pub use os::consts::*;
 
 // FIXME: move these to str perhaps? #2620
 
-extern mod rustrt {
-    fn rust_get_argc() -> c_int;
-    fn rust_get_argv() -> **c_char;
-    fn rust_getcwd() -> ~str;
-    fn rust_path_is_dir(path: *libc::c_char) -> c_int;
-    fn rust_path_exists(path: *libc::c_char) -> c_int;
-    fn rust_list_files2(&&path: ~str) -> ~[~str];
-    fn rust_process_wait(handle: c_int) -> c_int;
-    fn last_os_error() -> ~str;
-    fn rust_set_exit_status(code: libc::intptr_t);
+pub fn close(fd: c_int) -> c_int {
+    unsafe {
+        libc::close(fd)
+    }
 }
 
+extern mod rustrt {
+    unsafe fn rust_get_argc() -> c_int;
+    unsafe fn rust_get_argv() -> **c_char;
+    unsafe fn rust_getcwd() -> ~str;
+    unsafe fn rust_path_is_dir(path: *libc::c_char) -> c_int;
+    unsafe fn rust_path_exists(path: *libc::c_char) -> c_int;
+    unsafe fn rust_list_files2(&&path: ~str) -> ~[~str];
+    unsafe fn rust_process_wait(handle: c_int) -> c_int;
+    unsafe fn last_os_error() -> ~str;
+    unsafe fn rust_set_exit_status(code: libc::intptr_t);
+}
 
-const tmpbuf_sz : uint = 1000u;
+pub const tmpbuf_sz : uint = 1000u;
 
 pub fn getcwd() -> Path {
-    Path(rustrt::rust_getcwd())
+    unsafe {
+        Path(rustrt::rust_getcwd())
+    }
 }
 
 pub fn as_c_charp<T>(s: &str, f: fn(*c_char) -> T) -> T {
@@ -91,32 +99,36 @@ pub mod win32 {
     use libc;
     use vec;
     use str;
+    use option::{None, Option};
     use option;
+    use os::tmpbuf_sz;
     use libc::types::os::arch::extra::DWORD;
 
     pub fn fill_utf16_buf_and_decode(f: fn(*mut u16, DWORD) -> DWORD)
         -> Option<~str> {
-        let mut n = tmpbuf_sz as DWORD;
-        let mut res = None;
-        let mut done = false;
-        while !done {
-            let buf = vec::to_mut(vec::from_elem(n as uint, 0u16));
-            do vec::as_mut_buf(buf) |b, _sz| {
-                let k : DWORD = f(b, tmpbuf_sz as DWORD);
-                if k == (0 as DWORD) {
-                    done = true;
-                } else if (k == n &&
-                           libc::GetLastError() ==
-                           libc::ERROR_INSUFFICIENT_BUFFER as DWORD) {
-                    n *= (2 as DWORD);
-                } else {
-                    let sub = vec::slice(buf, 0u, k as uint);
-                    res = option::Some(str::from_utf16(sub));
-                    done = true;
+        unsafe {
+            let mut n = tmpbuf_sz as DWORD;
+            let mut res = None;
+            let mut done = false;
+            while !done {
+                let buf = vec::to_mut(vec::from_elem(n as uint, 0u16));
+                do vec::as_mut_buf(buf) |b, _sz| {
+                    let k : DWORD = f(b, tmpbuf_sz as DWORD);
+                    if k == (0 as DWORD) {
+                        done = true;
+                    } else if (k == n &&
+                               libc::GetLastError() ==
+                               libc::ERROR_INSUFFICIENT_BUFFER as DWORD) {
+                        n *= (2 as DWORD);
+                    } else {
+                        let sub = vec::slice(buf, 0u, k as uint);
+                        res = option::Some(str::from_utf16(sub));
+                        done = true;
+                    }
                 }
             }
+            return res;
         }
-        return res;
     }
 
     pub fn as_utf16_p<T>(s: &str, f: fn(*u16) -> T) -> T {
@@ -144,12 +156,13 @@ mod global_env {
     use either;
     use libc;
     use oldcomm;
+    use option::Option;
     use private;
     use str;
     use task;
 
     extern mod rustrt {
-        fn rust_global_env_chan_ptr() -> *libc::uintptr_t;
+        unsafe fn rust_global_env_chan_ptr() -> *libc::uintptr_t;
     }
 
     enum Msg {
@@ -183,8 +196,8 @@ mod global_env {
     }
 
     fn get_global_env_chan() -> oldcomm::Chan<Msg> {
-        let global_ptr = rustrt::rust_global_env_chan_ptr();
         unsafe {
+            let global_ptr = rustrt::rust_global_env_chan_ptr();
             private::chan_from_global_ptr(global_ptr, || {
                 // FIXME (#2621): This would be a good place to use a very
                 // small foreign stack
@@ -217,29 +230,32 @@ mod global_env {
     mod impl_ {
         use cast;
         use libc;
+        use option::Option;
         use option;
         use ptr;
         use str;
         use vec;
 
         extern mod rustrt {
-            fn rust_env_pairs() -> ~[~str];
+            unsafe fn rust_env_pairs() -> ~[~str];
         }
 
         pub fn env() -> ~[(~str,~str)] {
-            let mut pairs = ~[];
-            for vec::each(rustrt::rust_env_pairs()) |p| {
-                let vs = str::splitn_char(*p, '=', 1u);
-                assert vec::len(vs) == 2u;
-                pairs.push((copy vs[0], copy vs[1]));
+            unsafe {
+                let mut pairs = ~[];
+                for vec::each(rustrt::rust_env_pairs()) |p| {
+                    let vs = str::splitn_char(*p, '=', 1u);
+                    assert vec::len(vs) == 2u;
+                    pairs.push((copy vs[0], copy vs[1]));
+                }
+                move pairs
             }
-            move pairs
         }
 
         #[cfg(unix)]
         pub fn getenv(n: &str) -> Option<~str> {
             unsafe {
-                let s = str::as_c_str(n, libc::getenv);
+                let s = str::as_c_str(n, |s| libc::getenv(s));
                 return if ptr::null::<u8>() == cast::reinterpret_cast(&s) {
                     option::None::<~str>
                 } else {
@@ -251,10 +267,12 @@ mod global_env {
 
         #[cfg(windows)]
         pub fn getenv(n: &str) -> Option<~str> {
-            use os::win32::*;
-            do as_utf16_p(n) |u| {
-                do fill_utf16_buf_and_decode() |buf, sz| {
-                    libc::GetEnvironmentVariableW(u, buf, sz)
+            unsafe {
+                use os::win32::{as_utf16_p, fill_utf16_buf_and_decode};
+                do as_utf16_p(n) |u| {
+                    do fill_utf16_buf_and_decode() |buf, sz| {
+                        libc::GetEnvironmentVariableW(u, buf, sz)
+                    }
                 }
             }
         }
@@ -262,9 +280,11 @@ mod global_env {
 
         #[cfg(unix)]
         pub fn setenv(n: &str, v: &str) {
-            do str::as_c_str(n) |nbuf| {
-                do str::as_c_str(v) |vbuf| {
-                    libc::funcs::posix01::unistd::setenv(nbuf, vbuf, 1i32);
+            unsafe {
+                do str::as_c_str(n) |nbuf| {
+                    do str::as_c_str(v) |vbuf| {
+                        libc::funcs::posix01::unistd::setenv(nbuf, vbuf, 1);
+                    }
                 }
             }
         }
@@ -272,10 +292,12 @@ mod global_env {
 
         #[cfg(windows)]
         pub fn setenv(n: &str, v: &str) {
-            use os::win32::*;
-            do as_utf16_p(n) |nbuf| {
-                do as_utf16_p(v) |vbuf| {
-                    libc::SetEnvironmentVariableW(nbuf, vbuf);
+            unsafe {
+                use os::win32::as_utf16_p;
+                do as_utf16_p(n) |nbuf| {
+                    do as_utf16_p(v) |vbuf| {
+                        libc::SetEnvironmentVariableW(nbuf, vbuf);
+                    }
                 }
             }
         }
@@ -284,9 +306,11 @@ mod global_env {
 }
 
 pub fn fdopen(fd: c_int) -> *FILE {
-    return do as_c_charp("r") |modebuf| {
-        libc::fdopen(fd, modebuf)
-    };
+    unsafe {
+        return do as_c_charp("r") |modebuf| {
+            libc::fdopen(fd, modebuf)
+        };
+    }
 }
 
 
@@ -294,90 +318,109 @@ pub fn fdopen(fd: c_int) -> *FILE {
 
 #[cfg(windows)]
 pub fn fsync_fd(fd: c_int, _level: io::fsync::Level) -> c_int {
-    use libc::funcs::extra::msvcrt::*;
-    return commit(fd);
+    unsafe {
+        use libc::funcs::extra::msvcrt::*;
+        return commit(fd);
+    }
 }
 
 #[cfg(target_os = "linux")]
 pub fn fsync_fd(fd: c_int, level: io::fsync::Level) -> c_int {
-    use libc::funcs::posix01::unistd::*;
-    match level {
-      io::fsync::FSync
-      | io::fsync::FullFSync => return fsync(fd),
-      io::fsync::FDataSync => return fdatasync(fd)
+    unsafe {
+        use libc::funcs::posix01::unistd::*;
+        match level {
+          io::fsync::FSync
+          | io::fsync::FullFSync => return fsync(fd),
+          io::fsync::FDataSync => return fdatasync(fd)
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
 pub fn fsync_fd(fd: c_int, level: io::fsync::Level) -> c_int {
-    use libc::consts::os::extra::*;
-    use libc::funcs::posix88::fcntl::*;
-    use libc::funcs::posix01::unistd::*;
-    match level {
-      io::fsync::FSync => return fsync(fd),
-      _ => {
-        // According to man fnctl, the ok retval is only specified to be !=-1
-        if (fcntl(F_FULLFSYNC as c_int, fd) == -1 as c_int)
-            { return -1 as c_int; }
-        else
-            { return 0 as c_int; }
-      }
+    unsafe {
+        use libc::consts::os::extra::*;
+        use libc::funcs::posix88::fcntl::*;
+        use libc::funcs::posix01::unistd::*;
+        match level {
+          io::fsync::FSync => return fsync(fd),
+          _ => {
+            // According to man fnctl, the ok retval is only specified to be
+            // !=-1
+            if (fcntl(F_FULLFSYNC as c_int, fd) == -1 as c_int)
+                { return -1 as c_int; }
+            else
+                { return 0 as c_int; }
+          }
+        }
     }
 }
 
 #[cfg(target_os = "freebsd")]
 pub fn fsync_fd(fd: c_int, _l: io::fsync::Level) -> c_int {
-    use libc::funcs::posix01::unistd::*;
-    return fsync(fd);
+    unsafe {
+        use libc::funcs::posix01::unistd::*;
+        return fsync(fd);
+    }
 }
 
 
 #[cfg(windows)]
 pub fn waitpid(pid: pid_t) -> c_int {
-    return rustrt::rust_process_wait(pid);
+    unsafe {
+        return rustrt::rust_process_wait(pid);
+    }
 }
 
 #[cfg(unix)]
 pub fn waitpid(pid: pid_t) -> c_int {
-    use libc::funcs::posix01::wait::*;
-    let status = 0 as c_int;
+    unsafe {
+        use libc::funcs::posix01::wait::*;
+        let status = 0 as c_int;
 
-    assert (waitpid(pid, ptr::mut_addr_of(&status),
-                    0 as c_int) != (-1 as c_int));
-    return status;
+        assert (waitpid(pid, ptr::mut_addr_of(&status),
+                        0 as c_int) != (-1 as c_int));
+        return status;
+    }
 }
 
 
 #[cfg(unix)]
 pub fn pipe() -> {in: c_int, out: c_int} {
-    let fds = {mut in: 0 as c_int,
-               mut out: 0 as c_int };
-    assert (libc::pipe(ptr::mut_addr_of(&(fds.in))) == (0 as c_int));
-    return {in: fds.in, out: fds.out};
+    unsafe {
+        let fds = {mut in: 0 as c_int,
+                   mut out: 0 as c_int };
+        assert (libc::pipe(ptr::mut_addr_of(&(fds.in))) == (0 as c_int));
+        return {in: fds.in, out: fds.out};
+    }
 }
 
 
 
 #[cfg(windows)]
 pub fn pipe() -> {in: c_int, out: c_int} {
-    // Windows pipes work subtly differently than unix pipes, and their
-    // inheritance has to be handled in a different way that I do not fully
-    // understand. Here we explicitly make the pipe non-inheritable, which
-    // means to pass it to a subprocess they need to be duplicated first, as
-    // in rust_run_program.
-    let fds = { mut in: 0 as c_int,
-                mut out: 0 as c_int };
-    let res = libc::pipe(ptr::mut_addr_of(&(fds.in)),
-                         1024 as c_uint,
-                         (libc::O_BINARY | libc::O_NOINHERIT) as c_int);
-    assert (res == 0 as c_int);
-    assert (fds.in != -1 as c_int && fds.in != 0 as c_int);
-    assert (fds.out != -1 as c_int && fds.in != 0 as c_int);
-    return {in: fds.in, out: fds.out};
+    unsafe {
+        // Windows pipes work subtly differently than unix pipes, and their
+        // inheritance has to be handled in a different way that I do not
+        // fully understand. Here we explicitly make the pipe non-inheritable,
+        // which means to pass it to a subprocess they need to be duplicated
+        // first, as in rust_run_program.
+        let fds = { mut in: 0 as c_int,
+                    mut out: 0 as c_int };
+        let res = libc::pipe(ptr::mut_addr_of(&(fds.in)),
+                             1024 as c_uint,
+                             (libc::O_BINARY | libc::O_NOINHERIT) as c_int);
+        assert (res == 0 as c_int);
+        assert (fds.in != -1 as c_int && fds.in != 0 as c_int);
+        assert (fds.out != -1 as c_int && fds.in != 0 as c_int);
+        return {in: fds.in, out: fds.out};
+    }
 }
 
 fn dup2(src: c_int, dst: c_int) -> c_int {
-    libc::dup2(src, dst)
+    unsafe {
+        libc::dup2(src, dst)
+    }
 }
 
 
@@ -407,27 +450,33 @@ pub fn self_exe_path() -> Option<Path> {
 
     #[cfg(target_os = "linux")]
     fn load_self() -> Option<~str> {
-        use libc::funcs::posix01::unistd::readlink;
-        do fill_charp_buf() |buf, sz| {
-            do as_c_charp("/proc/self/exe") |proc_self_buf| {
-                readlink(proc_self_buf, buf, sz) != (-1 as ssize_t)
+        unsafe {
+            use libc::funcs::posix01::unistd::readlink;
+            do fill_charp_buf() |buf, sz| {
+                do as_c_charp("/proc/self/exe") |proc_self_buf| {
+                    readlink(proc_self_buf, buf, sz) != (-1 as ssize_t)
+                }
             }
         }
     }
 
     #[cfg(target_os = "macos")]
     fn load_self() -> Option<~str> {
-        do fill_charp_buf() |buf, sz| {
-            libc::funcs::extra::_NSGetExecutablePath(
-                buf, ptr::mut_addr_of(&(sz as u32))) == (0 as c_int)
+        unsafe {
+            do fill_charp_buf() |buf, sz| {
+                libc::funcs::extra::_NSGetExecutablePath(
+                    buf, ptr::mut_addr_of(&(sz as u32))) == (0 as c_int)
+            }
         }
     }
 
     #[cfg(windows)]
     fn load_self() -> Option<~str> {
-        use os::win32::*;
-        do fill_utf16_buf_and_decode() |buf, sz| {
-            libc::GetModuleFileNameW(0u as libc::DWORD, buf, sz)
+        unsafe {
+            use os::win32::fill_utf16_buf_and_decode;
+            do fill_utf16_buf_and_decode() |buf, sz| {
+                libc::GetModuleFileNameW(0u as libc::DWORD, buf, sz)
+            }
         }
     }
 
@@ -551,15 +600,19 @@ pub fn walk_dir(p: &Path, f: fn(&Path) -> bool) {
 
 /// Indicates whether a path represents a directory
 pub fn path_is_dir(p: &Path) -> bool {
-    do str::as_c_str(p.to_str()) |buf| {
-        rustrt::rust_path_is_dir(buf) != 0 as c_int
+    unsafe {
+        do str::as_c_str(p.to_str()) |buf| {
+            rustrt::rust_path_is_dir(buf) != 0 as c_int
+        }
     }
 }
 
 /// Indicates whether a path exists
 pub fn path_exists(p: &Path) -> bool {
-    do str::as_c_str(p.to_str()) |buf| {
-        rustrt::rust_path_exists(buf) != 0 as c_int
+    unsafe {
+        do str::as_c_str(p.to_str()) |buf| {
+            rustrt::rust_path_exists(buf) != 0 as c_int
+        }
     }
 }
 
@@ -588,20 +641,24 @@ pub fn make_dir(p: &Path, mode: c_int) -> bool {
 
     #[cfg(windows)]
     fn mkdir(p: &Path, _mode: c_int) -> bool {
-        use os::win32::*;
-        // FIXME: turn mode into something useful? #2623
-        do as_utf16_p(p.to_str()) |buf| {
-            libc::CreateDirectoryW(buf, unsafe {
-                cast::reinterpret_cast(&0)
-            })
-                != (0 as libc::BOOL)
+        unsafe {
+            use os::win32::as_utf16_p;
+            // FIXME: turn mode into something useful? #2623
+            do as_utf16_p(p.to_str()) |buf| {
+                libc::CreateDirectoryW(buf, unsafe {
+                    cast::reinterpret_cast(&0)
+                })
+                    != (0 as libc::BOOL)
+            }
         }
     }
 
     #[cfg(unix)]
     fn mkdir(p: &Path, mode: c_int) -> bool {
-        do as_c_charp(p.to_str()) |c| {
-            libc::mkdir(c, mode as mode_t) == (0 as c_int)
+        unsafe {
+            do as_c_charp(p.to_str()) |c| {
+                libc::mkdir(c, mode as mode_t) == (0 as c_int)
+            }
         }
     }
 }
@@ -609,15 +666,16 @@ pub fn make_dir(p: &Path, mode: c_int) -> bool {
 /// Lists the contents of a directory
 #[allow(non_implicitly_copyable_typarams)]
 pub fn list_dir(p: &Path) -> ~[~str] {
+    unsafe {
+        #[cfg(unix)]
+        fn star(p: &Path) -> Path { copy *p }
 
-    #[cfg(unix)]
-    fn star(p: &Path) -> Path { copy *p }
+        #[cfg(windows)]
+        fn star(p: &Path) -> Path { p.push("*") }
 
-    #[cfg(windows)]
-    fn star(p: &Path) -> Path { p.push("*") }
-
-    do rustrt::rust_list_files2(star(p).to_str()).filter |filename| {
-        *filename != ~"." && *filename != ~".."
+        do rustrt::rust_list_files2(star(p).to_str()).filtered |filename| {
+            *filename != ~"." && *filename != ~".."
+        }
     }
 }
 
@@ -636,17 +694,21 @@ pub fn remove_dir(p: &Path) -> bool {
 
     #[cfg(windows)]
     fn rmdir(p: &Path) -> bool {
-        use os::win32::*;
-        return do as_utf16_p(p.to_str()) |buf| {
-            libc::RemoveDirectoryW(buf) != (0 as libc::BOOL)
-        };
+        unsafe {
+            use os::win32::as_utf16_p;
+            return do as_utf16_p(p.to_str()) |buf| {
+                libc::RemoveDirectoryW(buf) != (0 as libc::BOOL)
+            };
+        }
     }
 
     #[cfg(unix)]
     fn rmdir(p: &Path) -> bool {
-        return do as_c_charp(p.to_str()) |buf| {
-            libc::rmdir(buf) == (0 as c_int)
-        };
+        unsafe {
+            return do as_c_charp(p.to_str()) |buf| {
+                libc::rmdir(buf) == (0 as c_int)
+            };
+        }
     }
 }
 
@@ -655,17 +717,21 @@ pub fn change_dir(p: &Path) -> bool {
 
     #[cfg(windows)]
     fn chdir(p: &Path) -> bool {
-        use os::win32::*;
-        return do as_utf16_p(p.to_str()) |buf| {
-            libc::SetCurrentDirectoryW(buf) != (0 as libc::BOOL)
-        };
+        unsafe {
+            use os::win32::as_utf16_p;
+            return do as_utf16_p(p.to_str()) |buf| {
+                libc::SetCurrentDirectoryW(buf) != (0 as libc::BOOL)
+            };
+        }
     }
 
     #[cfg(unix)]
     fn chdir(p: &Path) -> bool {
-        return do as_c_charp(p.to_str()) |buf| {
-            libc::chdir(buf) == (0 as c_int)
-        };
+        unsafe {
+            return do as_c_charp(p.to_str()) |buf| {
+                libc::chdir(buf) == (0 as c_int)
+            };
+        }
     }
 }
 
@@ -675,57 +741,61 @@ pub fn copy_file(from: &Path, to: &Path) -> bool {
 
     #[cfg(windows)]
     fn do_copy_file(from: &Path, to: &Path) -> bool {
-        use os::win32::*;
-        return do as_utf16_p(from.to_str()) |fromp| {
-            do as_utf16_p(to.to_str()) |top| {
-                libc::CopyFileW(fromp, top, (0 as libc::BOOL)) !=
-                    (0 as libc::BOOL)
+        unsafe {
+            use os::win32::as_utf16_p;
+            return do as_utf16_p(from.to_str()) |fromp| {
+                do as_utf16_p(to.to_str()) |top| {
+                    libc::CopyFileW(fromp, top, (0 as libc::BOOL)) !=
+                        (0 as libc::BOOL)
+                }
             }
         }
     }
 
     #[cfg(unix)]
     fn do_copy_file(from: &Path, to: &Path) -> bool {
-        let istream = do as_c_charp(from.to_str()) |fromp| {
-            do as_c_charp("rb") |modebuf| {
-                libc::fopen(fromp, modebuf)
+        unsafe {
+            let istream = do as_c_charp(from.to_str()) |fromp| {
+                do as_c_charp("rb") |modebuf| {
+                    libc::fopen(fromp, modebuf)
+                }
+            };
+            if istream as uint == 0u {
+                return false;
             }
-        };
-        if istream as uint == 0u {
-            return false;
-        }
-        let ostream = do as_c_charp(to.to_str()) |top| {
-            do as_c_charp("w+b") |modebuf| {
-                libc::fopen(top, modebuf)
+            let ostream = do as_c_charp(to.to_str()) |top| {
+                do as_c_charp("w+b") |modebuf| {
+                    libc::fopen(top, modebuf)
+                }
+            };
+            if ostream as uint == 0u {
+                fclose(istream);
+                return false;
             }
-        };
-        if ostream as uint == 0u {
-            fclose(istream);
-            return false;
-        }
-        let bufsize = 8192u;
-        let mut buf = vec::with_capacity::<u8>(bufsize);
-        let mut done = false;
-        let mut ok = true;
-        while !done {
-            do vec::as_mut_buf(buf) |b, _sz| {
-              let nread = libc::fread(b as *mut c_void, 1u as size_t,
-                                      bufsize as size_t,
-                                      istream);
-              if nread > 0 as size_t {
-                  if libc::fwrite(b as *c_void, 1u as size_t, nread,
-                                  ostream) != nread {
-                      ok = false;
+            let bufsize = 8192u;
+            let mut buf = vec::with_capacity::<u8>(bufsize);
+            let mut done = false;
+            let mut ok = true;
+            while !done {
+                do vec::as_mut_buf(buf) |b, _sz| {
+                  let nread = libc::fread(b as *mut c_void, 1u as size_t,
+                                          bufsize as size_t,
+                                          istream);
+                  if nread > 0 as size_t {
+                      if libc::fwrite(b as *c_void, 1u as size_t, nread,
+                                      ostream) != nread {
+                          ok = false;
+                          done = true;
+                      }
+                  } else {
                       done = true;
                   }
-              } else {
-                  done = true;
               }
-          }
+            }
+            fclose(istream);
+            fclose(ostream);
+            return ok;
         }
-        fclose(istream);
-        fclose(ostream);
-        return ok;
     }
 }
 
@@ -735,23 +805,29 @@ pub fn remove_file(p: &Path) -> bool {
 
     #[cfg(windows)]
     fn unlink(p: &Path) -> bool {
-        use os::win32::*;
-        return do as_utf16_p(p.to_str()) |buf| {
-            libc::DeleteFileW(buf) != (0 as libc::BOOL)
-        };
+        unsafe {
+            use os::win32::as_utf16_p;
+            return do as_utf16_p(p.to_str()) |buf| {
+                libc::DeleteFileW(buf) != (0 as libc::BOOL)
+            };
+        }
     }
 
     #[cfg(unix)]
     fn unlink(p: &Path) -> bool {
-        return do as_c_charp(p.to_str()) |buf| {
-            libc::unlink(buf) == (0 as c_int)
-        };
+        unsafe {
+            return do as_c_charp(p.to_str()) |buf| {
+                libc::unlink(buf) == (0 as c_int)
+            };
+        }
     }
 }
 
 /// Get a string representing the platform-dependent last error
 pub fn last_os_error() -> ~str {
-    rustrt::last_os_error()
+    unsafe {
+        rustrt::last_os_error()
+    }
 }
 
 /**
@@ -763,7 +839,9 @@ pub fn last_os_error() -> ~str {
  * ignored and the process exits with the default failure status
  */
 pub fn set_exit_status(code: int) {
-    rustrt::rust_set_exit_status(code as libc::intptr_t);
+    unsafe {
+        rustrt::rust_set_exit_status(code as libc::intptr_t);
+    }
 }
 
 unsafe fn load_argc_and_argv(argc: c_int, argv: **c_char) -> ~[~str] {
@@ -780,7 +858,7 @@ unsafe fn load_argc_and_argv(argc: c_int, argv: **c_char) -> ~[~str] {
  * Returns a list of the command line arguments.
  */
 #[cfg(target_os = "macos")]
-fn real_args() -> ~[~str] {
+pub fn real_args() -> ~[~str] {
     unsafe {
         let (argc, argv) = (*_NSGetArgc() as c_int,
                             *_NSGetArgv() as **c_char);
@@ -790,7 +868,7 @@ fn real_args() -> ~[~str] {
 
 #[cfg(target_os = "linux")]
 #[cfg(target_os = "freebsd")]
-fn real_args() -> ~[~str] {
+pub fn real_args() -> ~[~str] {
     unsafe {
         let argc = rustrt::rust_get_argc();
         let argv = rustrt::rust_get_argv();
@@ -799,7 +877,7 @@ fn real_args() -> ~[~str] {
 }
 
 #[cfg(windows)]
-fn real_args() -> ~[~str] {
+pub fn real_args() -> ~[~str] {
     let mut nArgs: c_int = 0;
     let lpArgCount = ptr::to_mut_unsafe_ptr(&mut nArgs);
     let lpCmdLine = GetCommandLineW();
@@ -873,7 +951,7 @@ extern {
     pub fn _NSGetArgv() -> ***c_char;
 }
 
-mod consts {
+pub mod consts {
 
     #[cfg(unix)]
     use os::consts::unix::*;
@@ -954,9 +1032,15 @@ mod consts {
 #[cfg(test)]
 #[allow(non_implicitly_copyable_typarams)]
 mod tests {
+    use debug;
+    use libc::{c_int, c_void, size_t};
     use libc;
+    use option::{None, Option, Some};
     use option;
+    use os::{as_c_charp, env, getcwd, getenv, make_absolute, real_args};
+    use os::{remove_file, setenv};
     use os;
+    use path::Path;
     use rand;
     use run;
     use str;
@@ -964,7 +1048,7 @@ mod tests {
 
     #[test]
     pub fn last_os_error() {
-        log(debug, last_os_error());
+        log(debug, os::last_os_error());
     }
 
     #[test]
@@ -1149,34 +1233,36 @@ mod tests {
 
     #[test]
     fn copy_file_ok() {
-      let tempdir = getcwd(); // would like to use $TMPDIR,
-                              // doesn't seem to work on Linux
-      assert (str::len(tempdir.to_str()) > 0u);
-      let in = tempdir.push("in.txt");
-      let out = tempdir.push("out.txt");
+        unsafe {
+          let tempdir = getcwd(); // would like to use $TMPDIR,
+                                  // doesn't seem to work on Linux
+          assert (str::len(tempdir.to_str()) > 0u);
+          let in = tempdir.push("in.txt");
+          let out = tempdir.push("out.txt");
 
-      /* Write the temp input file */
-        let ostream = do as_c_charp(in.to_str()) |fromp| {
-            do as_c_charp("w+b") |modebuf| {
-                libc::fopen(fromp, modebuf)
-            }
-      };
-      assert (ostream as uint != 0u);
-      let s = ~"hello";
-      let mut buf = vec::to_mut(str::to_bytes(s) + ~[0 as u8]);
-      do vec::as_mut_buf(buf) |b, _len| {
-          assert (libc::fwrite(b as *c_void, 1u as size_t,
-                               (str::len(s) + 1u) as size_t, ostream)
-                  == buf.len() as size_t)};
-      assert (libc::fclose(ostream) == (0u as c_int));
-      let rs = os::copy_file(&in, &out);
-      if (!os::path_exists(&in)) {
-        fail (fmt!("%s doesn't exist", in.to_str()));
-      }
-      assert(rs);
-      let rslt = run::run_program(~"diff", ~[in.to_str(), out.to_str()]);
-      assert (rslt == 0);
-      assert (remove_file(&in));
-      assert (remove_file(&out));
+          /* Write the temp input file */
+            let ostream = do as_c_charp(in.to_str()) |fromp| {
+                do as_c_charp("w+b") |modebuf| {
+                    libc::fopen(fromp, modebuf)
+                }
+          };
+          assert (ostream as uint != 0u);
+          let s = ~"hello";
+          let mut buf = vec::to_mut(str::to_bytes(s) + ~[0 as u8]);
+          do vec::as_mut_buf(buf) |b, _len| {
+              assert (libc::fwrite(b as *c_void, 1u as size_t,
+                                   (str::len(s) + 1u) as size_t, ostream)
+                      == buf.len() as size_t)};
+          assert (libc::fclose(ostream) == (0u as c_int));
+          let rs = os::copy_file(&in, &out);
+          if (!os::path_exists(&in)) {
+            fail (fmt!("%s doesn't exist", in.to_str()));
+          }
+          assert(rs);
+          let rslt = run::run_program(~"diff", ~[in.to_str(), out.to_str()]);
+          assert (rslt == 0);
+          assert (remove_file(&in));
+          assert (remove_file(&out));
+        }
     }
 }

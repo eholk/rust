@@ -60,6 +60,7 @@ Grahame Bowland <grahame@angrygoats.net>
 Haitao Li <lihaitao@gmail.com>
 Huon Wilson <dbau.pp+github@gmail.com>
 Ian D. Bollinger <ian.bollinger@gmail.com>
+Ilyong Cho <ilyoan@gmail.com>
 Isaac Aggrey <isaac.aggrey@gmail.com>
 Ivano Coppola <rgbfirefox@gmail.com>
 Jacob Harris Cryer Kragh <jhckragh@gmail.com>
@@ -76,6 +77,7 @@ Jesse Ruderman <jruderman@gmail.com>
 Jim Blandy <jimb@red-bean.com>
 Jimmy Lu <jimmy.lu.2011@gmail.com>
 Joe Pletcher <joepletcher@gmail.com>
+John Clements <clements@racket-lang.org>
 Jon Morton <jonanin@gmail.com>
 Jonathan Sternberg <jonathansternberg@gmail.com>
 Josh Matthews <josh@joshmatthews.net>
@@ -86,7 +88,7 @@ Kelly Wilson <wilsonk@cpsc.ucalgary.ca>
 Kevin Atkinson <kevina@cs.utah.edu>
 Kevin Cantu <me@kevincantu.org>
 Lennart Kudling <github@kudling.de>
-Lindsey Kuper <lindsey@rockstargirl.org>
+Lindsey Kuper <lindsey@composition.al>
 Luca Bruno <lucab@debian.org>
 Luqman Aden <laden@csclub.uwaterloo.ca>
 Magnus Auvinen <magnus.auvinen@gmail.com>
@@ -120,6 +122,7 @@ Roland Tanglao <roland@rolandtanglao.com>
 Roy Frostig <rfrostig@mozilla.com>
 Ryan Scheel <ryan.havvy@gmail.com>
 Sean Stangl <sstangl@mozilla.com>
+Sebastian N. Fernandez <cachobot@gmail.com>
 Simon Barber-Dueck <sbarberdueck@gmail.com>
 startling <tdixon51793@gmail.com>
 Stefan Plantikow <stefan.plantikow@googlemail.com>

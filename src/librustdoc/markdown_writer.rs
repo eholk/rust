@@ -8,9 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
+
 use config;
 use doc::ItemUtils;
 use doc;
+use pass::Pass;
 
 use core::io::ReaderUtil;
 use core::io;
@@ -148,17 +151,19 @@ fn pandoc_writer(
 
 fn readclose(fd: libc::c_int) -> ~str {
     // Copied from run::program_output
-    let file = os::fdopen(fd);
-    let reader = io::FILE_reader(file, false);
-    let buf = io::with_bytes_writer(|writer| {
-        let mut bytes = [mut 0, ..4096];
-        while !reader.eof() {
-            let nread = reader.read(bytes, bytes.len());
-            writer.write(bytes.view(0, nread));
-        }
-    });
-    os::fclose(file);
-    str::from_bytes(buf)
+    unsafe {
+        let file = os::fdopen(fd);
+        let reader = io::FILE_reader(file, false);
+        let buf = io::with_bytes_writer(|writer| {
+            let mut bytes = [mut 0, ..4096];
+            while !reader.eof() {
+                let nread = reader.read(bytes, bytes.len());
+                writer.write(bytes.view(0, nread));
+            }
+        });
+        os::fclose(file);
+        str::from_bytes(buf)
+    }
 }
 
 fn generic_writer(+process: fn~(+markdown: ~str)) -> Writer {

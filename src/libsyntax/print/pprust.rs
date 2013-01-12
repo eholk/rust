@@ -8,7 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ast::{required, provided};
+use core::prelude::*;
+
+use ast::{RegionTyParamBound, TraitTyParamBound, required, provided};
 use ast;
 use ast_util;
 use ast_util::{operator_prec};
@@ -16,9 +18,9 @@ use attr;
 use codemap::{CodeMap, BytePos};
 use codemap;
 use diagnostic;
-use parse::classify::*;
+use parse::classify::{expr_is_simple_block, expr_requires_semi_to_be_stmt};
+use parse::classify::{stmt_ends_with_semi};
 use parse::token::ident_interner;
-use parse::token;
 use parse::{comments, lexer, token};
 use parse;
 use print::pp::{break_offset, word, printer, space, zerobreak, hardbreak};
@@ -42,11 +44,14 @@ enum ann_node {
     node_expr(ps, @ast::expr),
     node_pat(ps, @ast::pat),
 }
-type pp_ann = {pre: fn@(ann_node), post: fn@(ann_node)};
+struct pp_ann {
+    pre: fn@(ann_node),
+    post: fn@(ann_node)
+}
 
 fn no_ann() -> pp_ann {
     fn ignore(_node: ann_node) { }
-    return {pre: ignore, post: ignore};
+    return pp_ann {pre: ignore, post: ignore};
 }
 
 type ps =
@@ -597,7 +602,8 @@ fn print_item(s: ps, &&item: @ast::item) {
         }
         bclose(s, item.span);
       }
-      ast::item_mac({node: ast::mac_invoc_tt(pth, ref tts), _}) => {
+      ast::item_mac(ast::spanned { node: ast::mac_invoc_tt(pth, ref tts),
+                                   _}) => {
         print_visibility(s, item.vis);
         print_path(s, pth, false);
         word(s.s, ~"! ");
@@ -1785,9 +1791,12 @@ fn print_arg_mode(s: ps, m: ast::mode) {
 fn print_bounds(s: ps, bounds: @~[ast::ty_param_bound]) {
     if bounds.is_not_empty() {
         word(s.s, ~":");
-        for vec::each(*bounds) |bound| {
+        for vec::each(*bounds) |&bound| {
             nbsp(s);
-            print_type(s, **bound);
+            match bound {
+                TraitTyParamBound(ty) => print_type(s, ty),
+                RegionTyParamBound => word(s.s, ~"&static"),
+            }
         }
     }
 }

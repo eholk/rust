@@ -53,7 +53,7 @@ extern mod rusti {
 
 extern mod rustrt {
     #[rust_stack]
-    fn rust_upcall_fail(expr: *c_char, file: *c_char, line: size_t);
+    unsafe fn rust_upcall_fail(expr: *c_char, file: *c_char, line: size_t);
 }
 
 /// Compares contents of two pointers using the default method.
@@ -134,7 +134,7 @@ pub pure fn begin_unwind(msg: ~str, file: ~str, line: uint) -> ! {
     }
 }
 
-// XXX: Temorary until rt::rt_fail_ goes away
+// FIXME #4427: Temporary until rt::rt_fail_ goes away
 pub pure fn begin_unwind_(msg: *c_char, file: *c_char, line: size_t) -> ! {
     unsafe {
         gc::cleanup_stack_for_failure();
@@ -146,6 +146,7 @@ pub pure fn begin_unwind_(msg: *c_char, file: *c_char, line: size_t) -> ! {
 #[cfg(test)]
 pub mod tests {
     use cast;
+    use sys::{Closure, pref_align_of, size_of};
 
     #[test]
     pub fn size_of_basic() {

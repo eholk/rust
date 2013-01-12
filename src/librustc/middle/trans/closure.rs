@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use back::abi;
 use back::link::{mangle_internal_name_by_path_and_seq};
@@ -338,7 +339,9 @@ fn load_environment(fcx: fn_ctxt,
             let ll =
                 str::as_c_str(~"load_env",
                               |buf|
-                              llvm::LLVMAppendBasicBlock(fcx.llfn, buf));
+                              unsafe {
+                                llvm::LLVMAppendBasicBlock(fcx.llfn, buf)
+                              });
             fcx.llloadenv = Some(ll);
             ll
         }
@@ -412,7 +415,7 @@ fn trans_expr_fn(bcx: block,
                                                    ret_handle);
         trans_closure(ccx, /*bad*/copy sub_path, decl, body, llfn, no_self,
                       /*bad*/copy bcx.fcx.param_substs, id, None, |fcx| {
-            load_environment(fcx, cdata_ty, cap_vars,
+            load_environment(fcx, cdata_ty, copy cap_vars,
                              ret_handle.is_some(), proto);
                       }, |bcx| {
             if is_loop_body.is_some() {

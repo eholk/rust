@@ -8,10 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
+
 use ast::*;
 use ast;
 use ast_util;
 use codemap::{span, BytePos};
+use parse::token;
 use visit;
 
 use core::cmp;
@@ -26,7 +29,7 @@ pure fn spanned<T>(+lo: BytePos, +hi: BytePos, +t: T) -> spanned<T> {
 }
 
 pure fn respan<T>(sp: span, +t: T) -> spanned<T> {
-    {node: move t, span: sp}
+    spanned {node: t, span: sp}
 }
 
 pure fn dummy_spanned<T>(+t: T) -> spanned<T> {
@@ -281,7 +284,7 @@ impl def_id : to_bytes::IterBytes {
 
 fn block_from_expr(e: @expr) -> blk {
     let blk_ = default_block(~[], option::Some::<@expr>(e), e.id);
-    return {node: blk_, span: e.span};
+    return spanned {node: blk_, span: e.span};
 }
 
 fn default_block(+stmts1: ~[@stmt], expr1: Option<@expr>, id1: node_id) ->
@@ -313,11 +316,12 @@ pure fn unguarded_pat(a: &arm) -> Option<~[@pat]> {
 }
 
 fn public_methods(ms: ~[@method]) -> ~[@method] {
-    vec::filter(ms,
-                |m| match m.vis {
-                    public => true,
-                    _   => false
-                })
+    do ms.filtered |m| {
+        match m.vis {
+            public => true,
+            _   => false
+        }
+    }
 }
 
 // extract a ty_method from a trait_method. if the trait_method is
@@ -436,10 +440,8 @@ fn empty(range: id_range) -> bool {
 }
 
 fn id_visitor(vfn: fn@(node_id)) -> visit::vt<()> {
-    visit::mk_simple_visitor(@{
-        visit_mod: fn@(_m: _mod, _sp: span, id: node_id) {
-            vfn(id)
-        },
+    visit::mk_simple_visitor(@visit::SimpleVisitor {
+        visit_mod: |_m, _sp, id| vfn(id),
 
         visit_view_item: fn@(vi: @view_item) {
             match vi.node {

@@ -111,6 +111,7 @@ lvalues are *never* stored by value.
 
 */
 
+use core::prelude::*;
 
 use lib::llvm::ValueRef;
 use middle::resolve;
@@ -132,6 +133,8 @@ use util::common::indenter;
 use util::ppaux::ty_to_str;
 
 use syntax::print::pprust::{expr_to_str};
+use syntax::ast;
+use syntax::ast::spanned;
 
 // The primary two functions for translating expressions:
 export trans_to_datum, trans_into;
@@ -544,7 +547,7 @@ fn trans_rvalue_dps_unadjusted(bcx: block, expr: @ast::expr,
         ast::expr_tup(args) => {
             return trans_tup(bcx, args, dest);
         }
-        ast::expr_lit(@{node: ast::lit_str(s), _}) => {
+        ast::expr_lit(@ast::spanned {node: ast::lit_str(s), _}) => {
             return tvec::trans_lit_str(bcx, expr, s, dest);
         }
         ast::expr_vstore(contents, ast::expr_vstore_slice) |
@@ -1480,15 +1483,19 @@ fn trans_overloaded_op(bcx: block,
 fn int_cast(bcx: block, lldsttype: TypeRef, llsrctype: TypeRef,
             llsrc: ValueRef, signed: bool) -> ValueRef {
     let _icx = bcx.insn_ctxt("int_cast");
-    let srcsz = llvm::LLVMGetIntTypeWidth(llsrctype);
-    let dstsz = llvm::LLVMGetIntTypeWidth(lldsttype);
-    return if dstsz == srcsz {
-        BitCast(bcx, llsrc, lldsttype)
-    } else if srcsz > dstsz {
-        TruncOrBitCast(bcx, llsrc, lldsttype)
-    } else if signed {
-        SExtOrBitCast(bcx, llsrc, lldsttype)
-    } else { ZExtOrBitCast(bcx, llsrc, lldsttype) };
+    unsafe {
+        let srcsz = llvm::LLVMGetIntTypeWidth(llsrctype);
+        let dstsz = llvm::LLVMGetIntTypeWidth(lldsttype);
+        return if dstsz == srcsz {
+            BitCast(bcx, llsrc, lldsttype)
+        } else if srcsz > dstsz {
+            TruncOrBitCast(bcx, llsrc, lldsttype)
+        } else if signed {
+            SExtOrBitCast(bcx, llsrc, lldsttype)
+        } else {
+            ZExtOrBitCast(bcx, llsrc, lldsttype)
+        };
+    }
 }
 
 fn float_cast(bcx: block, lldsttype: TypeRef, llsrctype: TypeRef,

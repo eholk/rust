@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use back::link::mangle_exported_name;
 use middle::trans::base::{get_insn_ctxt};
@@ -172,7 +173,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
                 _
             }, _) => {
         let d = mk_lldecl();
-        set_inline_hint_if_appr(/*bad*/copy i.attrs, d);
+        set_inline_hint_if_appr(i.attrs, d);
         trans_fn(ccx, pt, decl, *body, d, no_self, psubsts, fn_id.node, None);
         d
       }
@@ -207,7 +208,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
       ast_map::node_method(mth, supplied_impl_did, _) => {
         // XXX: What should the self type be here?
         let d = mk_lldecl();
-        set_inline_hint_if_appr(/*bad*/copy mth.attrs, d);
+        set_inline_hint_if_appr(mth.attrs, d);
 
         // Override the impl def ID if necessary.
         let impl_did;
@@ -231,7 +232,7 @@ fn monomorphic_fn(ccx: @crate_ctxt,
       }
       ast_map::node_trait_method(@ast::provided(mth), _, pt) => {
         let d = mk_lldecl();
-        set_inline_hint_if_appr(/*bad*/copy mth.attrs, d);
+        set_inline_hint_if_appr(mth.attrs, d);
         debug!("monomorphic_fn impl_did_opt is %?", impl_did_opt);
         meth::trans_method(ccx, /*bad*/copy *pt, mth, psubsts, None, d,
                            impl_did_opt.get());
@@ -334,7 +335,7 @@ fn make_mono_id(ccx: @crate_ctxt, item: ast::def_id, substs: ~[ty::t],
       Some(ref uses) => {
         vec::map2(precise_param_ids, *uses, |id, uses| {
             if ccx.sess.no_monomorphic_collapse() {
-                match *id {
+                match copy *id {
                     (a, b) => mono_precise(a, b)
                 }
             } else {
@@ -378,7 +379,7 @@ fn make_mono_id(ccx: @crate_ctxt, item: ast::def_id, substs: ~[ty::t],
       }
       None => {
           precise_param_ids.map(|x| {
-              let (a, b) = *x;
+              let (a, b) = copy *x;
               mono_precise(a, b)
           })
       }

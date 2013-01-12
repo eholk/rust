@@ -18,6 +18,7 @@ use core::io;
 use core::ops;
 use core::to_str::ToStr;
 use core::mutable::Mut;
+use core::prelude::*;
 use core::send_map::linear::LinearMap;
 use core::to_bytes::IterBytes;
 use core::uint;
@@ -120,11 +121,12 @@ pub mod util {
 // FIXME (#2344): package this up and export it as a datatype usable for
 // external code that doesn't want to pay the cost of a box.
 pub mod chained {
-    use map::util;
+    use map::{Map, util};
 
     use core::io;
     use core::ops;
     use core::option;
+    use core::prelude::*;
     use core::uint;
     use core::vec;
 
@@ -496,7 +498,7 @@ pub fn hash_from_vec<K: Eq IterBytes Hash Const Copy, V: Copy>(
     map
 }
 
-// XXX Transitional
+// FIXME #4431: Transitional
 impl<K: Eq IterBytes Hash Copy, V: Copy> @Mut<LinearMap<K, V>>:
     Map<K, V> {
     pure fn size() -> uint {
@@ -615,6 +617,7 @@ impl<K: Eq IterBytes Hash Copy, V: Copy> @Mut<LinearMap<K, V>>:
 mod tests {
     use map;
 
+    use core::option::None;
     use core::option;
     use core::uint;
 

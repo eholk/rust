@@ -76,11 +76,15 @@ type parameter).
 
 */
 
+use core::prelude::*;
 
 use middle::capture;
 use middle::const_eval;
+use middle::pat_util::pat_id_map;
 use middle::pat_util;
-use middle::ty::{TyVid, vid, FnTyBase, FnMeta, FnSig, VariantInfo_};
+use middle::ty::{TyVid, Vid, FnTyBase, FnMeta, FnSig, VariantInfo_, field};
+use middle::ty::{ty_param_bounds_and_ty, ty_param_substs_and_ty};
+use middle::ty::{re_bound, br_cap_avoid};
 use middle::ty;
 use middle::typeck::astconv::{ast_conv, ast_path_to_ty};
 use middle::typeck::astconv::{ast_region_to_region, ast_ty_to_ty};
@@ -88,13 +92,20 @@ use middle::typeck::astconv;
 use middle::typeck::check::_match::pat_ctxt;
 use middle::typeck::check::method::TransformTypeNormally;
 use middle::typeck::check::regionmanip::replace_bound_regions_in_fn_ty;
+use middle::typeck::check::regionmanip::replace_bound_regions_in_fn_sig;
 use middle::typeck::check::vtable::{LocationInfo, VtableContext};
+use middle::typeck::crate_ctxt;
 use middle::typeck::infer::{resolve_type, force_tvar};
 use middle::typeck::infer;
 use middle::typeck::rscope::{anon_rscope, binding_rscope, bound_self_region};
 use middle::typeck::rscope::{empty_rscope, in_anon_rscope};
 use middle::typeck::rscope::{in_binding_rscope, region_scope, type_rscope};
 use middle::typeck::rscope;
+use middle::typeck::{isr_alist, lookup_def_ccx, method_map_entry};
+use middle::typeck::{method_origin, method_self, method_trait, no_params};
+use middle::typeck::{require_same_types};
+use util::common::{block_query, indenter, loop_query};
+use util::ppaux::{bound_region_to_str, expr_repr};
 use util::ppaux;
 
 use core::either;
@@ -104,15 +115,19 @@ use core::result::{Result, Ok, Err};
 use core::result;
 use core::str;
 use core::vec;
+use std::list::Nil;
 use std::map::HashMap;
 use std::map;
-use syntax::ast::ty_i;
+use syntax::ast::{provided, required, spanned, ty_i};
 use syntax::ast;
 use syntax::ast_map;
-use syntax::ast_util::{is_local, visibility_to_privacy, Private, Public};
+use syntax::ast_util::{Private, Public, is_local, local_def, respan};
+use syntax::ast_util::{visibility_to_privacy};
 use syntax::ast_util;
+use syntax::codemap::span;
 use syntax::codemap;
 use syntax::parse::token::special_idents;
+use syntax::print::pprust::{expr_to_str, pat_to_str};
 use syntax::print::pprust;
 use syntax::visit;
 use syntax;
@@ -131,6 +146,15 @@ export DerefArgs;
 export DontDerefArgs;
 export DoDerefArgs;
 export check_item_types;
+export check_block;
+export check_expr_with;
+export fn_ctxt;
+export lookup_def;
+export structure_of;
+export self_info;
+export structurally_resolved_type;
+export instantiate_path;
+export valid_range_bounds;
 
 #[legacy_exports]
 pub mod _match;
@@ -165,7 +189,7 @@ type self_info = {
 /// `bar()` will each have their own `fn_ctxt`, but they will
 /// share the inherited fields.
 struct inherited {
-    infcx: infer::infer_ctxt,
+    infcx: @infer::InferCtxt,
     locals: HashMap<ast::node_id, TyVid>,
     node_types: HashMap<ast::node_id, ty::t>,
     node_type_substs: HashMap<ast::node_id, ty::substs>,
@@ -243,7 +267,7 @@ fn blank_fn_ctxt(ccx: @crate_ctxt, rty: ty::t,
 }
 
 fn check_item_types(ccx: @crate_ctxt, crate: @ast::crate) {
-    let visit = visit::mk_simple_visitor(@{
+    let visit = visit::mk_simple_visitor(@visit::SimpleVisitor {
         visit_item: |a| check_item(ccx, a),
         .. *visit::default_simple_visitor()
     });
@@ -251,7 +275,7 @@ fn check_item_types(ccx: @crate_ctxt, crate: @ast::crate) {
 }
 
 fn check_bare_fn(ccx: @crate_ctxt,
-                 decl: ast::fn_decl,
+                 decl: &ast::fn_decl,
                  body: ast::blk,
                  id: ast::node_id,
                  self_info: Option<self_info>) {
@@ -268,7 +292,7 @@ fn check_bare_fn(ccx: @crate_ctxt,
 fn check_fn(ccx: @crate_ctxt,
             self_info: Option<self_info>,
             fn_ty: &ty::FnTy,
-            decl: ast::fn_decl,
+            decl: &ast::fn_decl,
             body: ast::blk,
             fn_kind: FnKind,
             old_fcx: Option<@fn_ctxt>) {
@@ -283,15 +307,15 @@ fn check_fn(ccx: @crate_ctxt,
     // types with free ones.  The free region references will be bound
     // the node_id of the body block.
 
-    let {isr: isr, self_info: self_info, fn_ty: fn_ty} = {
+    let {isr, self_info, fn_sig} = {
         let old_isr = option::map_default(&old_fcx, @Nil,
-                                         |fcx| fcx.in_scope_regions);
-        replace_bound_regions_in_fn_ty(tcx, old_isr, self_info, fn_ty,
-                                       |br| ty::re_free(body.node.id, br))
+                                          |fcx| fcx.in_scope_regions);
+        replace_bound_regions_in_fn_sig(tcx, old_isr, self_info, &fn_ty.sig,
+                                        |br| ty::re_free(body.node.id, br))
     };
 
-    let arg_tys = fn_ty.sig.inputs.map(|a| a.ty);
-    let ret_ty = fn_ty.sig.output;
+    let arg_tys = fn_sig.inputs.map(|a| a.ty);
+    let ret_ty = fn_sig.output;
 
     debug!("check_fn(arg_tys=%?, ret_ty=%?, self_info.self_ty=%?)",
            arg_tys.map(|a| ppaux::ty_to_str(tcx, *a)),
@@ -384,12 +408,12 @@ fn check_fn(ccx: @crate_ctxt,
     // resolved when the enclosing scope finishes up.
     if old_fcx.is_none() {
         vtable::resolve_in_block(fcx, body);
-        regionck::regionck_fn(fcx, decl, body);
+        regionck::regionck_fn(fcx, body);
         writeback::resolve_type_vars_in_fn(fcx, decl, body, self_info);
     }
 
     fn gather_locals(fcx: @fn_ctxt,
-                     decl: ast::fn_decl,
+                     decl: &ast::fn_decl,
                      body: ast::blk,
                      arg_tys: ~[ty::t],
                      self_info: Option<self_info>) {
@@ -481,12 +505,13 @@ fn check_fn(ccx: @crate_ctxt,
         }
         fn visit_item(_i: @ast::item, &&_e: (), _v: visit::vt<()>) { }
 
-        let visit = visit::mk_vt(@{visit_local: visit_local,
-                                   visit_pat: visit_pat,
-                                   visit_fn: visit_fn,
-                                   visit_item: visit_item,
-                                   visit_block: visit_block,
-                                   .. *visit::default_visitor()});
+        let visit = visit::mk_vt(
+            @visit::Visitor {visit_local: visit_local,
+                             visit_pat: visit_pat,
+                             visit_fn: visit_fn,
+                             visit_item: visit_item,
+                             visit_block: visit_block,
+                             ..*visit::default_visitor()});
 
         (visit.visit_block)(body, (), visit);
     }
@@ -498,7 +523,7 @@ fn check_method(ccx: @crate_ctxt, method: @ast::method,
                      self_id: method.self_id,
                      def_id: self_impl_def_id,
                      explicit_self: method.self_ty };
-    check_bare_fn(ccx, method.decl, method.body, method.id, Some(self_info));
+    check_bare_fn(ccx, &method.decl, method.body, method.id, Some(self_info));
 }
 
 fn check_no_duplicate_fields(tcx: ty::ctxt, fields:
@@ -530,13 +555,15 @@ fn check_struct(ccx: @crate_ctxt, struct_def: @ast::struct_def,
     let self_ty = ty::node_id_to_type(tcx, id);
 
     do struct_def.dtor.iter() |dtor| {
-        let class_t = {self_ty: self_ty,
-                       self_id: dtor.node.self_id,
-                       def_id: local_def(id),
-                       explicit_self: {node: ast::sty_by_ref,
-                                       span: ast_util::dummy_sp()}};
+        let class_t = { self_ty: self_ty,
+                        self_id: dtor.node.self_id,
+                        def_id: local_def(id),
+                        explicit_self:
+                            spanned { node: ast::sty_by_ref,
+                                      span: ast_util::dummy_sp() } };
         // typecheck the dtor
-        check_bare_fn(ccx, ast_util::dtor_dec(),
+        let dtor_dec = ast_util::dtor_dec();
+        check_bare_fn(ccx, &dtor_dec,
                       dtor.node.body, dtor.node.id,
                       Some(class_t));
     };
@@ -560,7 +587,7 @@ fn check_item(ccx: @crate_ctxt, it: @ast::item) {
                             it.id);
       }
       ast::item_fn(ref decl, _, _, ref body) => {
-        check_bare_fn(ccx, *decl, (*body), it.id, None);
+        check_bare_fn(ccx, decl, (*body), it.id, None);
       }
       ast::item_impl(_, _, ty, ms) => {
         let rp = ccx.tcx.region_paramd_items.find(it.id);
@@ -634,7 +661,7 @@ impl @fn_ctxt: ast_conv {
 }
 
 impl @fn_ctxt {
-    fn infcx() -> infer::infer_ctxt { self.inh.infcx }
+    fn infcx() -> @infer::InferCtxt { self.inh.infcx }
     fn search_in_scope_regions(br: ty::bound_region)
         -> Result<ty::Region, ~str>
     {
@@ -1480,12 +1507,12 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
     // resolution is not possible (e.g., no constraints yet present), just
     // returns `none`.
     fn unpack_expected<O: Copy>(fcx: @fn_ctxt, expected: Option<ty::t>,
-                                unpack: fn(ty::sty) -> Option<O>)
+                                unpack: fn(&ty::sty) -> Option<O>)
         -> Option<O> {
         match expected {
             Some(t) => {
                 match resolve_type(fcx.infcx(), t, force_tvar) {
-                    Ok(t) => unpack(ty::get(t).sty),
+                    Ok(t) => unpack(&ty::get(t).sty),
                     _ => None
                 }
             }
@@ -1496,7 +1523,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
     fn check_expr_fn(fcx: @fn_ctxt,
                      expr: @ast::expr,
                      ast_proto_opt: Option<ast::Proto>,
-                     decl: ast::fn_decl,
+                     decl: &ast::fn_decl,
                      body: ast::blk,
                      fn_kind: FnKind,
                      expected: Option<ty::t>) {
@@ -1510,7 +1537,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
         // to impure and block. Note that we only will use those for
         // block syntax lambdas; that is, lambdas without explicit
         // protos.
-        let expected_sty = unpack_expected(fcx, expected, |x| Some(x));
+        let expected_sty = unpack_expected(fcx, expected, |x| Some(copy *x));
         let (expected_tys,
              expected_purity,
              expected_proto,
@@ -1546,7 +1573,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
             fcx, fcx,
             proto, purity, expected_onceness,
             /*bounds:*/ @~[], /*opt_region:*/ None,
-            decl, expected_tys, expr.span);
+            *decl, expected_tys, expr.span);
 
         // XXX: Bad copy.
         let fty = ty::mk_fn(tcx, copy fn_ty);
@@ -1889,7 +1916,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
     match /*bad*/copy expr.node {
       ast::expr_vstore(ev, vst) => {
         let typ = match /*bad*/copy ev.node {
-          ast::expr_lit(@{node: ast::lit_str(s), span:_}) => {
+          ast::expr_lit(@ast::spanned { node: ast::lit_str(s), _ }) => {
             let tt = ast_expr_vstore_to_vstore(fcx, ev, str::len(*s), vst);
             ty::mk_estr(tcx, tt)
           }
@@ -1942,8 +1969,8 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
       ast::expr_unary(unop, oprnd) => {
         let exp_inner = do unpack_expected(fcx, expected) |sty| {
             match unop {
-              ast::box(_) | ast::uniq(_) => match sty {
-                ty::ty_box(mt) | ty::ty_uniq(mt) => Some(mt.ty),
+              ast::box(_) | ast::uniq(_) => match *sty {
+                ty::ty_box(ref mt) | ty::ty_uniq(ref mt) => Some(mt.ty),
                 _ => None
               },
               ast::not | ast::neg => expected,
@@ -2023,8 +2050,8 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
         fcx.write_ty(id, oprnd_t);
       }
       ast::expr_addr_of(mutbl, oprnd) => {
-        bot = check_expr(fcx, oprnd, unpack_expected(fcx, expected, |ty|
-            match ty { ty::ty_rptr(_, mt) => Some(mt.ty), _ => None }
+        bot = check_expr(fcx, oprnd, unpack_expected(fcx, expected, |sty|
+            match *sty { ty::ty_rptr(_, ref mt) => Some(mt.ty), _ => None }
         ));
 
         // Note: at this point, we cannot say what the best lifetime
@@ -2134,12 +2161,12 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
       }
       ast::expr_fn(proto, ref decl, ref body, cap_clause) => {
         check_expr_fn(fcx, expr, Some(proto),
-                      *decl, (*body), Vanilla, expected);
+                      decl, (*body), Vanilla, expected);
         capture::check_capture_clause(tcx, expr.id, cap_clause);
       }
       ast::expr_fn_block(ref decl, ref body, cap_clause) => {
         check_expr_fn(fcx, expr, None,
-                      *decl, (*body), Vanilla, expected);
+                      decl, (*body), Vanilla, expected);
         capture::check_capture_clause(tcx, expr.id, cap_clause);
       }
       ast::expr_loop_body(b) => {
@@ -2150,7 +2177,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
         // 1. a closure that returns a bool is expected
         // 2. the closure that was given returns unit
         let mut err_happened = false;
-        let expected_sty = unpack_expected(fcx, expected, |x| Some(x));
+        let expected_sty = unpack_expected(fcx, expected, |x| Some(copy *x));
         let inner_ty = match expected_sty {
           Some(ty::ty_fn(ref fty)) => {
             match fcx.mk_subty(false, expr.span,
@@ -2195,7 +2222,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
         match b.node {
           ast::expr_fn_block(ref decl, ref body, cap_clause) => {
             check_expr_fn(fcx, b, None,
-                          *decl, (*body), ForLoop, Some(inner_ty));
+                          decl, *body, ForLoop, Some(inner_ty));
             demand::suptype(fcx, b.span, inner_ty, fcx.expr_ty(b));
             capture::check_capture_clause(tcx, b.id, cap_clause);
           }
@@ -2204,24 +2231,16 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
         }
         let block_ty = structurally_resolved_type(
             fcx, expr.span, fcx.node_ty(b.id));
-        match ty::get(block_ty).sty {
-          ty::ty_fn(ref fty) => {
-              if !err_happened {
-                  fcx.write_ty(expr.id, ty::mk_fn(tcx, FnTyBase {
-                      meta: (*fty).meta,
-                      sig: FnSig {output: ty::mk_bool(tcx),
-                                  ../*bad*/copy (*fty).sig}
-                  }));
-              }
-              else {
-                  fcx.write_ty(expr.id, ty::mk_err(fcx.tcx()));
-              }
-          }
-          _ => fail ~"expected fn type"
+        if err_happened {
+            fcx.write_ty(expr.id, ty::mk_err(fcx.tcx()));
+        } else {
+            let loop_body_ty = ty::replace_fn_return_type(tcx, block_ty,
+                                                          ty::mk_bool(tcx));
+            fcx.write_ty(expr.id, loop_body_ty);
         }
       }
       ast::expr_do_body(b) => {
-        let expected_sty = unpack_expected(fcx, expected, |x| Some(x));
+        let expected_sty = unpack_expected(fcx, expected, |x| Some(copy *x));
         let inner_ty = match expected_sty {
           Some(ty::ty_fn(ref fty)) => {
               ty::mk_fn(tcx, (/*bad*/copy *fty))
@@ -2244,21 +2263,14 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
         match b.node {
           ast::expr_fn_block(ref decl, ref body, cap_clause) => {
             check_expr_fn(fcx, b, None,
-                          *decl, (*body), DoBlock, Some(inner_ty));
+                          decl, *body, DoBlock, Some(inner_ty));
             demand::suptype(fcx, b.span, inner_ty, fcx.expr_ty(b));
             capture::check_capture_clause(tcx, b.id, cap_clause);
           }
           // argh
           _ => fail ~"expected fn ty"
         }
-        let block_ty = structurally_resolved_type(
-            fcx, expr.span, fcx.node_ty(b.id));
-        match ty::get(block_ty).sty {
-          ty::ty_fn(ref fty) => {
-            fcx.write_ty(expr.id, ty::mk_fn(tcx, (/*bad*/copy *fty)));
-          }
-          _ => fail ~"expected fn ty"
-        }
+        fcx.write_ty(expr.id, fcx.node_ty(b.id));
       }
       ast::expr_block(ref b) => {
         // If this is an unchecked block, turn off purity-checking
@@ -2337,11 +2349,7 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
       }
       ast::expr_tup(elts) => {
         let flds = unpack_expected(fcx, expected, |sty| {
-            // XXX: Beware! If you remove `copy` below, the borrow checker
-            // will NOT complain, but you will get a segfault at runtime! This
-            // is because the mode computation is currently unaware of
-            // argument modes.
-            match copy sty { ty::ty_tup(flds) => Some(flds), _ => None }
+            match *sty { ty::ty_tup(ref flds) => Some(copy *flds), _ => None }
         });
         let elt_ts = do elts.mapi |i, e| {
             check_expr(fcx, *e, flds.map(|fs| fs[i]));
@@ -2356,12 +2364,8 @@ fn check_expr_with_unifier(fcx: @fn_ctxt,
             Some(fcx.expr_ty(base.get()))
         } else { expected };
         let flds = unpack_expected(fcx, expected, |sty|
-            // XXX: Beware! If you remove `copy` below, the borrow checker
-            // will NOT complain, but you will get a segfault at runtime! This
-            // is because the mode computation is currently unaware of
-            // argument modes.
-            match copy sty {
-                ty::ty_rec(flds) => Some(flds),
+            match *sty {
+                ty::ty_rec(ref flds) => Some(copy *flds),
                 _ => None
             }
         );
@@ -2578,7 +2582,8 @@ fn check_block(fcx0: @fn_ctxt, blk: ast::blk) -> bool {
         for blk.node.stmts.each |s| {
             if bot && !warned &&
                 match s.node {
-                  ast::stmt_decl(@{node: ast::decl_local(_), _}, _) |
+                  ast::stmt_decl(@ast::spanned { node: ast::decl_local(_),
+                                                 _}, _) |
                   ast::stmt_expr(_, _) | ast::stmt_semi(_, _) => {
                     true
                   }

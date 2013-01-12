@@ -11,6 +11,8 @@
 
 // Decoding metadata from a single crate's metadata
 
+use core::prelude::*;
+
 use cmd = metadata::cstore::crate_metadata;
 use dvec::DVec;
 use hash::{Hash, HashUtil};
@@ -1029,9 +1031,10 @@ fn get_attributes(md: ebml::Doc) -> ~[ast::attribute] {
             assert (vec::len(meta_items) == 1u);
             let meta_item = meta_items[0];
             attrs.push(
-                {node: {style: ast::attr_outer, value: /*bad*/copy *meta_item,
-                        is_sugared_doc: false},
-                 span: ast_util::dummy_sp()});
+                ast::spanned { node: { style: ast::attr_outer,
+                                       value: /*bad*/copy *meta_item,
+                                       is_sugared_doc: false },
+                               span: ast_util::dummy_sp()});
         };
       }
       option::None => ()

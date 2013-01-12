@@ -12,25 +12,29 @@
 
 #[legacy_exports];
 
+use core::prelude::*;
+
 use astsrv;
 use doc;
 use fold::Fold;
 use fold;
+use pass::Pass;
 
 use core::util;
 use core::vec;
 use syntax::ast;
 
 export mk_pass;
+export run;
 
 fn mk_pass() -> Pass {
-    {
+    Pass {
         name: ~"prune_private",
         f: run
     }
 }
 
-fn run(srv: astsrv::Srv, +doc: doc::Doc) -> doc::Doc {
+pub fn run(srv: astsrv::Srv, +doc: doc::Doc) -> doc::Doc {
     let fold = Fold {
         fold_mod: fold_mod,
         .. fold::default_any_fold(srv)
@@ -45,9 +49,9 @@ fn fold_mod(
     let doc = fold::default_any_fold_mod(fold, doc);
 
     doc::ModDoc_({
-        items: do doc.items.filter |ItemTag| {
+        items: doc.items.filtered(|ItemTag| {
             is_visible(fold.ctxt, ItemTag.item())
-        },
+        }),
         .. *doc
     })
 }
@@ -75,10 +79,11 @@ fn should_prune_items_without_pub_modifier() {
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use astsrv;
     use doc;
     use extract;
+    use prune_private_pass::run;
 
     pub fn mk_doc(source: ~str) -> doc::Doc {
         do astsrv::from_str(source) |srv| {

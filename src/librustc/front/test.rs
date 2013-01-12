@@ -10,6 +10,7 @@
 
 // Code that generates a test runner to run all the tests in a crate
 
+use core::prelude::*;
 
 use driver::session;
 use front::config;
@@ -64,10 +65,10 @@ fn generate_test_harness(sess: session::Session,
           mut path: ~[],
           testfns: DVec()};
 
-    let precursor =
-        @{fold_crate: fold::wrap(|a,b| fold_crate(cx, a, b) ),
-          fold_item: |a,b| fold_item(cx, a, b),
-          fold_mod: |a,b| fold_mod(cx, a, b),.. *fold::default_ast_fold()};
+    let precursor = @fold::AstFoldFns {
+        fold_crate: fold::wrap(|a,b| fold_crate(cx, a, b) ),
+        fold_item: |a,b| fold_item(cx, a, b),
+        fold_mod: |a,b| fold_mod(cx, a, b),.. *fold::default_ast_fold()};
 
     let fold = fold::make_fold(precursor);
     let res = @fold.fold_crate(*crate);
@@ -170,8 +171,7 @@ fn is_test_fn(i: @ast::item) -> bool {
 }
 
 fn is_ignored(cx: test_ctxt, i: @ast::item) -> bool {
-    let ignoreattrs = attr::find_attrs_by_name(/*bad*/copy i.attrs,
-                                               ~"ignore");
+    let ignoreattrs = attr::find_attrs_by_name(i.attrs, "ignore");
     let ignoreitems = attr::attr_metas(ignoreattrs);
     let cfg_metas = vec::concat(vec::filter_map(ignoreitems,
         |i| attr::get_meta_item_list(*i)));
@@ -241,7 +241,7 @@ fn mk_test_module(cx: test_ctxt) -> @ast::item {
 }
 
 fn nospan<T: Copy>(t: T) -> ast::spanned<T> {
-    return {node: t, span: dummy_sp()};
+    ast::spanned { node: t, span: dummy_sp() }
 }
 
 fn path_node(+ids: ~[ast::ident]) -> @ast::path {
@@ -423,8 +423,14 @@ fn mk_test_desc_rec(cx: test_ctxt, test: test) -> @ast::expr {
                 ident: cx.sess.ident_of(~"should_fail"),
                 expr: @fail_expr});
 
+    let test_desc_path =
+        mk_path(cx, ~[cx.sess.ident_of(~"test"),
+                      cx.sess.ident_of(~"TestDesc")]);
+
     let desc_rec_: ast::expr_ =
-        ast::expr_rec(~[name_field, fn_field, ignore_field, fail_field],
+        ast::expr_struct(
+            test_desc_path,
+            ~[name_field, fn_field, ignore_field, fail_field],
             option::None);
     let desc_rec: ast::expr =
         {id: cx.sess.next_node_id(), callee_id: cx.sess.next_node_id(),
@@ -488,7 +494,7 @@ fn mk_main(cx: test_ctxt) -> @ast::item {
     let body_: ast::blk_ =
         default_block(~[], option::Some(test_main_call_expr),
                       cx.sess.next_node_id());
-    let body = {node: body_, span: dummy_sp()};
+    let body = ast::spanned { node: body_, span: dummy_sp() };
 
     let item_ = ast::item_fn(decl, ast::impure_fn, ~[], body);
     let item: ast::item =

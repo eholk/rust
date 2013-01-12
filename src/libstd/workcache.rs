@@ -16,6 +16,7 @@ use core::either::{Either, Left, Right};
 use core::io;
 use core::option;
 use core::pipes::{recv, oneshot, PortOne, send_one};
+use core::prelude::*;
 use core::result;
 use core::run;
 use core::send_map::linear::LinearMap;
@@ -107,7 +108,7 @@ impl WorkKey {
 type WorkMap = LinearMap<WorkKey, ~str>;
 
 struct Database {
-    // XXX: Fill in.
+    // FIXME #4432: Fill in.
     a: ()
 }
 
@@ -116,7 +117,7 @@ impl Database {
                     _declared_inputs: &const WorkMap,
                     _declared_outputs: &const WorkMap) ->
         Option<(WorkMap, WorkMap, ~str)> {
-        // XXX: load
+        // FIXME #4432: load
         None
     }
     pure fn cache(_fn_name: &str,
@@ -125,12 +126,12 @@ impl Database {
                   _discovered_inputs: &WorkMap,
                   _discovered_outputs: &WorkMap,
                   _result: &str) {
-        // XXX: store
+        // FIXME #4432: store
     }
 }
 
 struct Logger {
-    // XXX: Fill in
+    // FIXME #4432: Fill in
     a: ()
 }
 
@@ -170,7 +171,7 @@ fn digest<T:Encodable<json::Encoder>
             Decodable<json::Decoder>>(t: &T) -> ~str {
     let sha = sha1::sha1();
     let s = do io::with_str_writer |wr| {
-        // XXX: sha1 should be a writer itself, shouldn't
+        // FIXME #4432: sha1 should be a writer itself, shouldn't
         // go via strings.
         t.encode(&json::Encoder(wr));
     };

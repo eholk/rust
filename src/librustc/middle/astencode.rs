@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use c = metadata::common;
 use cstore = metadata::cstore;
@@ -255,11 +256,13 @@ fn encode_ast(ebml_w: writer::Encoder, item: ast::inlined_item) {
 // inlined items.
 fn simplify_ast(ii: ast::inlined_item) -> ast::inlined_item {
     fn drop_nested_items(blk: ast::blk_, fld: fold::ast_fold) -> ast::blk_ {
-        let stmts_sans_items = do vec::filter(blk.stmts) |stmt| {
+        let stmts_sans_items = do blk.stmts.filtered |stmt| {
             match stmt.node {
               ast::stmt_expr(_, _) | ast::stmt_semi(_, _) |
-              ast::stmt_decl(@{node: ast::decl_local(_), span: _}, _) => true,
-              ast::stmt_decl(@{node: ast::decl_item(_), span: _}, _) => false,
+              ast::stmt_decl(@ast::spanned { node: ast::decl_local(_),
+                                             span: _}, _) => true,
+              ast::stmt_decl(@ast::spanned { node: ast::decl_item(_),
+                                             span: _}, _) => false,
               ast::stmt_mac(*) => fail ~"unexpanded macro in astencode"
             }
         };
@@ -268,7 +271,7 @@ fn simplify_ast(ii: ast::inlined_item) -> ast::inlined_item {
         fold::noop_fold_block(blk_sans_items, fld)
     }
 
-    let fld = fold::make_fold(@{
+    let fld = fold::make_fold(@fold::AstFoldFns {
         fold_block: fold::wrap(drop_nested_items),
         .. *fold::default_ast_fold()
     });
@@ -285,9 +288,10 @@ fn simplify_ast(ii: ast::inlined_item) -> ast::inlined_item {
       }
       ast::ii_dtor(ref dtor, nm, ref tps, parent_id) => {
         let dtor_body = fld.fold_block((*dtor).node.body);
-        ast::ii_dtor({node: {body: dtor_body,
-                              .. /*bad*/copy (*dtor).node},
-            .. (/*bad*/copy *dtor)}, nm, /*bad*/copy *tps, parent_id)
+        ast::ii_dtor(ast::spanned { node: { body: dtor_body,
+                                            .. /*bad*/copy (*dtor).node },
+                                    .. (/*bad*/copy *dtor) },
+                     nm, /*bad*/copy *tps, parent_id)
       }
     }
 }
@@ -300,7 +304,7 @@ fn decode_ast(par_doc: ebml::Doc) -> ast::inlined_item {
 
 fn renumber_ast(xcx: extended_decode_ctxt, ii: ast::inlined_item)
     -> ast::inlined_item {
-    let fld = fold::make_fold(@{
+    let fld = fold::make_fold(@fold::AstFoldFns{
         new_id: |a| xcx.tr_id(a),
         new_span: |a| xcx.tr_span(a),
         .. *fold::default_ast_fold()
@@ -323,9 +327,11 @@ fn renumber_ast(xcx: extended_decode_ctxt, ii: ast::inlined_item)
         let dtor_id = fld.new_id((*dtor).node.id);
         let new_parent = xcx.tr_def_id(parent_id);
         let new_self = fld.new_id((*dtor).node.self_id);
-        ast::ii_dtor({node: {id: dtor_id, attrs: dtor_attrs,
-                self_id: new_self, body: dtor_body},
-                        .. (/*bad*/copy *dtor)},
+        ast::ii_dtor(ast::spanned { node: { id: dtor_id,
+                                            attrs: dtor_attrs,
+                                            self_id: new_self,
+                                            body: dtor_body },
+                                    .. (/*bad*/copy *dtor)},
           nm, new_params, new_parent)
       }
      }
@@ -637,11 +643,11 @@ trait get_ty_str_ctxt {
 
 impl @e::encode_ctxt: get_ty_str_ctxt {
     fn ty_str_ctxt() -> @tyencode::ctxt {
-        @{diag: self.tcx.sess.diagnostic(),
-          ds: e::def_to_str,
-          tcx: self.tcx,
-          reachable: |a| encoder::reachable(self, a),
-          abbrevs: tyencode::ac_use_abbrevs(self.type_abbrevs)}
+        @tyencode::ctxt {diag: self.tcx.sess.diagnostic(),
+                        ds: e::def_to_str,
+                        tcx: self.tcx,
+                        reachable: |a| encoder::reachable(self, a),
+                        abbrevs: tyencode::ac_use_abbrevs(self.type_abbrevs)}
     }
 }
 

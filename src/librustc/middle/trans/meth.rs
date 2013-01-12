@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
+
 use back::{link, abi};
 use driver;
 use lib::llvm::llvm::LLVMGetParam;
@@ -753,16 +755,18 @@ fn get_vtable(ccx: @crate_ctxt, +origin: typeck::vtable_origin) -> ValueRef {
 }
 
 fn make_vtable(ccx: @crate_ctxt, ptrs: ~[ValueRef]) -> ValueRef {
-    let _icx = ccx.insn_ctxt("impl::make_vtable");
-    let tbl = C_struct(ptrs);
-    let vt_gvar =
-            str::as_c_str(ccx.sess.str_of((ccx.names)(~"vtable")), |buf| {
-        llvm::LLVMAddGlobal(ccx.llmod, val_ty(tbl), buf)
-    });
-    llvm::LLVMSetInitializer(vt_gvar, tbl);
-    llvm::LLVMSetGlobalConstant(vt_gvar, lib::llvm::True);
-    lib::llvm::SetLinkage(vt_gvar, lib::llvm::InternalLinkage);
-    vt_gvar
+    unsafe {
+        let _icx = ccx.insn_ctxt("impl::make_vtable");
+        let tbl = C_struct(ptrs);
+        let vt_gvar =
+                str::as_c_str(ccx.sess.str_of((ccx.names)(~"vtable")), |buf| {
+            llvm::LLVMAddGlobal(ccx.llmod, val_ty(tbl), buf)
+        });
+        llvm::LLVMSetInitializer(vt_gvar, tbl);
+        llvm::LLVMSetGlobalConstant(vt_gvar, lib::llvm::True);
+        lib::llvm::SetLinkage(vt_gvar, lib::llvm::InternalLinkage);
+        vt_gvar
+    }
 }
 
 fn make_impl_vtable(ccx: @crate_ctxt, impl_id: ast::def_id, substs: ~[ty::t],
@@ -778,7 +782,8 @@ fn make_impl_vtable(ccx: @crate_ctxt, impl_id: ast::def_id, substs: ~[ty::t],
 
     let has_tps = (*ty::lookup_item_type(ccx.tcx, impl_id).bounds).len() > 0u;
     make_vtable(ccx, vec::map(*ty::trait_methods(tcx, trt_id), |im| {
-        let fty = ty::subst_tps(tcx, substs, None, ty::mk_fn(tcx, im.fty));
+        let fty = ty::subst_tps(tcx, substs, None,
+                                ty::mk_fn(tcx, copy im.fty));
         if (*im.tps).len() > 0u || ty::type_has_self(fty) {
             debug!("(making impl vtable) method has self or type params: %s",
                    tcx.sess.str_of(im.ident));

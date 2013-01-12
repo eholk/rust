@@ -197,7 +197,7 @@ fn trans_slice_vstore(bcx: block,
 
     // Handle the &"..." case:
     match content_expr.node {
-        ast::expr_lit(@{node: ast::lit_str(s), span: _}) => {
+        ast::expr_lit(@ast::spanned {node: ast::lit_str(s), span: _}) => {
             return trans_lit_str(bcx, content_expr, s, dest);
         }
         _ => {}
@@ -256,13 +256,20 @@ fn trans_lit_str(bcx: block,
     match dest {
         Ignore => bcx,
         SaveIn(lldest) => {
-            let bytes = lit_str.len() + 1; // count null-terminator too
-            let llbytes = C_uint(bcx.ccx(), bytes);
-            let llcstr = C_cstr(bcx.ccx(), /*bad*/copy *lit_str);
-            let llcstr = llvm::LLVMConstPointerCast(llcstr, T_ptr(T_i8()));
-            Store(bcx, llcstr, GEPi(bcx, lldest, [0u, abi::slice_elt_base]));
-            Store(bcx, llbytes, GEPi(bcx, lldest, [0u, abi::slice_elt_len]));
-            bcx
+            unsafe {
+                let bytes = lit_str.len() + 1; // count null-terminator too
+                let llbytes = C_uint(bcx.ccx(), bytes);
+                let llcstr = C_cstr(bcx.ccx(), /*bad*/copy *lit_str);
+                let llcstr = llvm::LLVMConstPointerCast(llcstr,
+                                                        T_ptr(T_i8()));
+                Store(bcx,
+                      llcstr,
+                      GEPi(bcx, lldest, [0u, abi::slice_elt_base]));
+                Store(bcx,
+                      llbytes,
+                      GEPi(bcx, lldest, [0u, abi::slice_elt_len]));
+                bcx
+            }
         }
     }
 }
@@ -316,7 +323,7 @@ fn write_content(bcx: block,
     let _indenter = indenter();
 
     match /*bad*/copy content_expr.node {
-        ast::expr_lit(@{node: ast::lit_str(s), span: _}) => {
+        ast::expr_lit(@ast::spanned { node: ast::lit_str(s), _ }) => {
             match dest {
                 Ignore => {
                     return bcx;
@@ -422,7 +429,9 @@ fn elements_required(bcx: block, content_expr: @ast::expr) -> uint {
     //! Figure out the number of elements we need to store this content
 
     match /*bad*/copy content_expr.node {
-        ast::expr_lit(@{node: ast::lit_str(s), span: _}) => s.len() + 1,
+        ast::expr_lit(@ast::spanned { node: ast::lit_str(s), _ }) => {
+            s.len() + 1
+        },
         ast::expr_vec(es, _) => es.len(),
         ast::expr_repeat(_, count_expr, _) => {
             ty::eval_repeat_count(bcx.tcx(), count_expr, content_expr.span)

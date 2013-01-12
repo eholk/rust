@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use syntax::{ast, fold, attr};
 
@@ -37,8 +38,8 @@ fn strip_items(crate: @ast::crate, in_cfg: in_cfg_pred)
 
     let ctxt = @{in_cfg: in_cfg};
 
-    let precursor =
-        @{fold_mod: |a,b| fold_mod(ctxt, a, b),
+    let precursor = @fold::AstFoldFns {
+          fold_mod: |a,b| fold_mod(ctxt, a, b),
           fold_block: fold::wrap(|a,b| fold_block(ctxt, a, b) ),
           fold_foreign_mod: |a,b| fold_foreign_mod(ctxt, a, b),
           fold_item_underscore: |a,b| {
@@ -102,11 +103,11 @@ fn fold_item_underscore(cx: ctxt, +item: ast::item_,
                         fld: fold::ast_fold) -> ast::item_ {
     let item = match item {
         ast::item_impl(a, b, c, methods) => {
-            let methods = methods.filter(|m| method_in_cfg(cx, *m) );
+            let methods = methods.filtered(|m| method_in_cfg(cx, *m) );
             ast::item_impl(a, b, c, methods)
         }
         ast::item_trait(ref a, ref b, ref methods) => {
-            let methods = methods.filter(|m| trait_method_in_cfg(cx, m) );
+            let methods = methods.filtered(|m| trait_method_in_cfg(cx, m) );
             ast::item_trait(/*bad*/copy *a, /*bad*/copy *b, methods)
         }
         item => item

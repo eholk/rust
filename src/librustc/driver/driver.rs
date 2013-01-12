@@ -9,6 +9,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use back::link;
 use back::{x86, x86_64};
@@ -187,7 +188,7 @@ fn compile_upto(sess: Session, cfg: ast::crate_cfg,
     -> {crate: @ast::crate, tcx: Option<ty::ctxt>} {
     let time_passes = sess.time_passes();
     let mut crate = time(time_passes, ~"parsing",
-                         ||parse_input(sess, cfg, input) );
+                         || parse_input(sess, copy cfg, input) );
     if upto == cu_parse { return {crate: crate, tcx: None}; }
 
     sess.building_library = session::building_library(
@@ -200,7 +201,7 @@ fn compile_upto(sess: Session, cfg: ast::crate_cfg,
         front::test::modify_for_testing(sess, crate));
 
     crate = time(time_passes, ~"expansion", ||
-        syntax::ext::expand::expand_crate(sess.parse_sess, cfg,
+        syntax::ext::expand::expand_crate(sess.parse_sess, copy cfg,
                                           crate));
 
     if upto == cu_expand { return {crate: crate, tcx: None}; }
@@ -394,13 +395,16 @@ fn pretty_print_input(sess: Session, +cfg: ast::crate_cfg, input: input,
 
     let ann = match ppm {
       ppm_typed => {
-        {pre: ann_paren_for_expr,
-         post: |a| ann_typed_post(tcx.get(), a) }
+          pprust::pp_ann {pre: ann_paren_for_expr,
+                          post: |a| ann_typed_post(tcx.get(), a) }
       }
       ppm_identified | ppm_expanded_identified => {
-        {pre: ann_paren_for_expr, post: ann_identified_post}
+          pprust::pp_ann {pre: ann_paren_for_expr,
+                          post: ann_identified_post}
       }
-      ppm_expanded | ppm_normal => pprust::no_ann()
+      ppm_expanded | ppm_normal => {
+          pprust::no_ann()
+      }
     };
     let is_expanded = upto != cu_parse;
     let src = sess.codemap.get_filemap(source_name(input)).src;
@@ -538,7 +542,9 @@ fn build_session_options(+binary: ~str,
         debugging_opts |= this_bit;
     }
     if debugging_opts & session::debug_llvm != 0 {
-        llvm::LLVMSetDebug(1);
+        unsafe {
+            llvm::LLVMSetDebug(1);
+        }
     }
 
     let jit = opt_present(matches, ~"jit");
@@ -835,7 +841,13 @@ fn list_metadata(sess: Session, path: &Path, out: io::Writer) {
 mod test {
     #[legacy_exports];
 
+    use core::prelude::*;
+
+    use driver::driver::{build_configuration, build_session};
+    use driver::driver::{build_session_options, optgroups, str_input};
+
     use core::vec;
+    use std::getopts::groups::getopts;
     use std::getopts;
     use syntax::attr;
     use syntax::diagnostic;

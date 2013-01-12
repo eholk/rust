@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use core::prelude::*;
 
 use lib::llvm::ValueRef;
 use middle::trans::base::*;
@@ -173,7 +174,7 @@ fn trans_log(log_ex: @ast::expr,
 
     let modpath = vec::append(
         ~[path_mod(ccx.sess.ident_of(/*bad*/copy ccx.link_meta.name))],
-        vec::filter(bcx.fcx.path, |e|
+        bcx.fcx.path.filtered(|e|
             match *e { path_mod(_) => true, _ => false }
         ));
     // XXX: Bad copy.
@@ -185,12 +186,15 @@ fn trans_log(log_ex: @ast::expr,
     } else {
         let s = link::mangle_internal_name_by_path_and_seq(
             ccx, modpath, ~"loglevel");
-        let global = str::as_c_str(s, |buf| {
-            llvm::LLVMAddGlobal(ccx.llmod, T_i32(), buf)
-        });
-        llvm::LLVMSetGlobalConstant(global, False);
-        llvm::LLVMSetInitializer(global, C_null(T_i32()));
-        lib::llvm::SetLinkage(global, lib::llvm::InternalLinkage);
+        let global;
+        unsafe {
+            global = str::as_c_str(s, |buf| {
+                llvm::LLVMAddGlobal(ccx.llmod, T_i32(), buf)
+            });
+            llvm::LLVMSetGlobalConstant(global, False);
+            llvm::LLVMSetInitializer(global, C_null(T_i32()));
+            lib::llvm::SetLinkage(global, lib::llvm::InternalLinkage);
+        }
         ccx.module_data.insert(modname, global);
         global
     };

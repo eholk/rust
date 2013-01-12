@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use prelude::*;
 use task;
 use task::local_data::{local_data_pop, local_data_set};
 
@@ -36,7 +37,7 @@ impl<T, U> Condition<T, U> {
 
     fn raise(t: T) -> U {
         let msg = fmt!("Unhandled condition: %s: %?", self.name, t);
-        self.raise_default(t, || fail msg)
+        self.raise_default(t, || fail copy msg)
     }
 
     fn raise_default(t: T, default: &fn() -> U) -> U {
