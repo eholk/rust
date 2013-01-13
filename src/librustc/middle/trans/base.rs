@@ -2298,8 +2298,8 @@ fn get_item_val(ccx: @crate_ctxt, id: ast::node_id) -> ValueRef {
               }
               ast::item_fn(_, purity, _, _) => {
                   if attr::attrs_contains_name(i.attrs, ~"kernel")
-                      || attr::attrs_contains_name(i.attrs,
-                                                   ~"device")
+                      //|| attr::attrs_contains_name(i.attrs,
+                      //                             ~"device")
                   {
                       let cc = if attr::attrs_contains_name(
                           i.attrs, ~"kernel") {
