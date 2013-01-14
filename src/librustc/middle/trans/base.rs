@@ -326,8 +326,8 @@ fn non_gc_box_cast(bcx: block, val: ValueRef) -> ValueRef {
     unsafe {
         debug!("non_gc_box_cast");
         add_comment(bcx, ~"non_gc_box_cast");
-        assert(llvm::LLVMGetPointerAddressSpace(val_ty(val)) ==
-                gc_box_addrspace || bcx.unreachable);
+        //assert(llvm::LLVMGetPointerAddressSpace(val_ty(val)) ==
+        //        gc_box_addrspace || bcx.unreachable);
         let non_gc_t = T_ptr(llvm::LLVMGetElementType(val_ty(val)));
         PointerCast(bcx, val, non_gc_t)
     }

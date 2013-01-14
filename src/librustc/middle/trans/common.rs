@@ -1017,9 +1017,15 @@ fn T_unique(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
     return T_struct(vec::append(T_box_header_fields(cx), ~[t]));
 }
 
-fn T_unique_ptr(t: TypeRef) -> TypeRef {
+fn T_unique_ptr(cx: @crate_ctxt, t: TypeRef) -> TypeRef {
+    let addrspace = if (cx.sess.opts.debugging_opts & session::ptx) == 0 {
+        gc_box_addrspace
+    } else {
+        nvptx_global_addrspace
+    };
+
     unsafe {
-        return llvm::LLVMPointerType(t, gc_box_addrspace);
+        return llvm::LLVMPointerType(t, addrspace);
     }
 }
 
@@ -1086,7 +1092,7 @@ fn T_opaque_trait(cx: @crate_ctxt, vstore: ty::vstore) -> TypeRef {
         }
         ty::vstore_uniq => {
             T_struct(~[T_ptr(cx.tydesc_type),
-                       T_unique_ptr(T_unique(cx, T_i8())),
+                       T_unique_ptr(cx, T_unique(cx, T_i8())),
                        T_ptr(cx.tydesc_type)])
         }
         _ => T_struct(~[T_ptr(cx.tydesc_type), T_ptr(T_i8())])
