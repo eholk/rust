@@ -1062,12 +1062,17 @@ fn trans_index(bcx: block,
     debug!("trans_index: base %s", val_str(bcx.ccx().tn, base));
     debug!("trans_index: len %s", val_str(bcx.ccx().tn, len));
 
-    let bounds_check = ICmp(bcx, lib::llvm::IntUGE, scaled_ix, len);
-    let bcx = do with_cond(bcx, bounds_check) |bcx| {
-        let unscaled_len = UDiv(bcx, len, vt.llunit_size);
-        controlflow::trans_fail_bounds_check(bcx, index_expr.span,
-                                             ix_val, unscaled_len)
-    };
+    // Only do bounds checks in non-PTX mode.
+    let bcx = if (ccx.sess.opts.debugging_opts & session::ptx) == 0 {
+        let bounds_check = ICmp(bcx, lib::llvm::IntUGE, scaled_ix, len);
+        do with_cond(bcx, bounds_check) |bcx| {
+            let unscaled_len = UDiv(bcx, len, vt.llunit_size);
+            controlflow::trans_fail_bounds_check(bcx, index_expr.span,
+                                                 ix_val, unscaled_len)
+        }
+    }
+    else { bcx };
+
     let elt = InBoundsGEP(bcx, base, ~[ix_val]);
     let elt = PointerCast(bcx, elt, T_ptr(vt.llunit_ty));
     return DatumBlock {
