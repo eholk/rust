@@ -6,6 +6,7 @@ mod cloned;
 mod copied;
 mod cycle;
 mod enumerate;
+mod generator;
 mod filter;
 mod filter_map;
 mod flatten;
