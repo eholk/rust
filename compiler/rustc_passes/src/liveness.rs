@@ -189,7 +189,7 @@ enum VarKind {
     Upvar(HirId, Symbol),
 }
 
-struct IrMaps<'tcx> {
+pub struct IrMaps<'tcx> {
     tcx: TyCtxt<'tcx>,
     live_node_map: HirIdMap<LiveNode>,
     variable_map: HirIdMap<Variable>,
@@ -199,7 +199,7 @@ struct IrMaps<'tcx> {
 }
 
 impl IrMaps<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>) -> IrMaps<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>) -> IrMaps<'tcx> {
         IrMaps {
             tcx,
             live_node_map: HirIdMap::default(),
@@ -475,6 +475,25 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
     }
 }
 
+// Expose liveness computation to other passes that might need it.
+pub fn compute_body_liveness(
+    maps: &'a mut IrMaps<'tcx>,
+    body_id: hir::BodyId,
+) -> Liveness<'a, 'tcx> {
+    let body = maps.tcx.hir().body(body_id);
+    let local_def_id = maps.tcx.hir().local_def_id(body_id.hir_id);
+
+    // gather up the various local variables, significant expressions,
+    // and so forth:
+    intravisit::walk_body(maps, body);
+
+    // compute liveness
+    let mut lsets = Liveness::new(maps, local_def_id);
+    lsets.compute(&body, body_id.hir_id);
+
+    lsets
+}
+
 // ______________________________________________________________________
 // Computing liveness sets
 //
@@ -485,7 +504,7 @@ const ACC_READ: u32 = 1;
 const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
-struct Liveness<'a, 'tcx> {
+pub struct Liveness<'a, 'tcx> {
     ir: &'a mut IrMaps<'tcx>,
     typeck_results: &'a ty::TypeckResults<'tcx>,
     param_env: ty::ParamEnv<'tcx>,

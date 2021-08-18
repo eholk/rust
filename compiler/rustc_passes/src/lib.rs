@@ -32,7 +32,7 @@ mod intrinsicck;
 mod lang_items;
 pub mod layout_test;
 mod lib_features;
-mod liveness;
+pub mod liveness;
 pub mod loops;
 mod naked_functions;
 mod reachable;

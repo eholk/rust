@@ -13,6 +13,7 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::middle::region::{self, YieldData};
 use rustc_middle::ty::{self, Ty};
+use rustc_passes::liveness::{compute_body_liveness, IrMaps};
 use rustc_span::Span;
 use smallvec::SmallVec;
 
@@ -153,6 +154,9 @@ pub fn resolve_interior<'a, 'tcx>(
     interior: Ty<'tcx>,
     kind: hir::GeneratorKind,
 ) {
+    let mut ir_maps = IrMaps::new(fcx.tcx);
+    // FIXME: use this to inform capture information
+    let _liveness = compute_body_liveness(&mut ir_maps, body_id);
     let body = fcx.tcx.hir().body(body_id);
     let mut visitor = InteriorVisitor {
         fcx,
