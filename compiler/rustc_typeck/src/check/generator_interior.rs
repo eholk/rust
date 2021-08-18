@@ -341,17 +341,19 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
             ExprKind::Yield(..) => {
                 let live_node = self.liveness.live_node(expr.hir_id, expr.span);
 
+                debug!("***Dumping variable liveness information***");
                 for (_, &var) in self.liveness.ir.variable_map.iter() {
                     if self.liveness.live_on_entry(live_node, var) {
                         debug!(
-                            "Variable {:?} is live on entry at {:?}",
+                            "  Variable {:?} is live on entry at {:?}",
                             self.liveness.ir.variable_name(var),
                             expr.span
                         );
                     }
                 }
+                debug!("***Done dumping variable liveness information***");
 
-                intravisit::walk_expr(self, expr)
+                intravisit::walk_expr(self, expr);
             }
             _ => intravisit::walk_expr(self, expr),
         }
