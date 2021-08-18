@@ -13,7 +13,7 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::middle::region::{self, YieldData};
 use rustc_middle::ty::{self, Ty};
-use rustc_passes::liveness::{compute_body_liveness, IrMaps};
+use rustc_passes::liveness::{compute_body_liveness, IrMaps, Liveness};
 use rustc_span::Span;
 use smallvec::SmallVec;
 
@@ -31,6 +31,7 @@ struct InteriorVisitor<'a, 'tcx> {
     /// that they may succeed the said yield point in the post-order.
     guard_bindings: SmallVec<[SmallVec<[HirId; 4]>; 1]>,
     guard_bindings_set: HirIdSet,
+    liveness: Liveness<'a, 'tcx>,
 }
 
 impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
@@ -156,7 +157,7 @@ pub fn resolve_interior<'a, 'tcx>(
 ) {
     let mut ir_maps = IrMaps::new(fcx.tcx);
     // FIXME: use this to inform capture information
-    let _liveness = compute_body_liveness(&mut ir_maps, body_id);
+    let liveness = compute_body_liveness(&mut ir_maps, body_id);
     let body = fcx.tcx.hir().body(body_id);
     let mut visitor = InteriorVisitor {
         fcx,
@@ -167,6 +168,7 @@ pub fn resolve_interior<'a, 'tcx>(
         prev_unresolved_span: None,
         guard_bindings: <_>::default(),
         guard_bindings_set: <_>::default(),
+        liveness,
     };
     intravisit::walk_body(&mut visitor, body);
 
@@ -335,6 +337,21 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
                     }
                     _ => {}
                 }
+            }
+            ExprKind::Yield(..) => {
+                let live_node = self.liveness.live_node(expr.hir_id, expr.span);
+
+                for (_, &var) in self.liveness.ir.variable_map.iter() {
+                    if self.liveness.live_on_entry(live_node, var) {
+                        debug!(
+                            "Variable {:?} is live on entry at {:?}",
+                            self.liveness.ir.variable_name(var),
+                            expr.span
+                        );
+                    }
+                }
+
+                intravisit::walk_expr(self, expr)
             }
             _ => intravisit::walk_expr(self, expr),
         }

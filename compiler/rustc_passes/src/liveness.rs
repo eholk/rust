@@ -192,7 +192,7 @@ enum VarKind {
 pub struct IrMaps<'tcx> {
     tcx: TyCtxt<'tcx>,
     live_node_map: HirIdMap<LiveNode>,
-    variable_map: HirIdMap<Variable>,
+    pub variable_map: HirIdMap<Variable>,
     capture_info_map: HirIdMap<Rc<Vec<CaptureInfo>>>,
     var_kinds: IndexVec<Variable, VarKind>,
     lnks: IndexVec<LiveNode, LiveNodeKind>,
@@ -248,7 +248,7 @@ impl IrMaps<'tcx> {
         }
     }
 
-    fn variable_name(&self, var: Variable) -> Symbol {
+    pub fn variable_name(&self, var: Variable) -> Symbol {
         match self.var_kinds[var] {
             Local(LocalInfo { name, .. }) | Param(_, name) | Upvar(_, name) => name,
         }
@@ -481,7 +481,7 @@ pub fn compute_body_liveness(
     body_id: hir::BodyId,
 ) -> Liveness<'a, 'tcx> {
     let body = maps.tcx.hir().body(body_id);
-    let local_def_id = maps.tcx.hir().local_def_id(body_id.hir_id);
+    let local_def_id = maps.tcx.hir().local_def_id(maps.tcx.hir().body_owner(body_id));
 
     // gather up the various local variables, significant expressions,
     // and so forth:
@@ -505,7 +505,7 @@ const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
 pub struct Liveness<'a, 'tcx> {
-    ir: &'a mut IrMaps<'tcx>,
+    pub ir: &'a mut IrMaps<'tcx>,
     typeck_results: &'a ty::TypeckResults<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
     closure_min_captures: Option<&'tcx RootVariableMinCaptureList<'tcx>>,
@@ -552,7 +552,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         }
     }
 
-    fn live_node(&self, hir_id: HirId, span: Span) -> LiveNode {
+    pub fn live_node(&self, hir_id: HirId, span: Span) -> LiveNode {
         match self.ir.live_node_map.get(&hir_id) {
             Some(&ln) => ln,
             None => {
@@ -583,7 +583,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         succ
     }
 
-    fn live_on_entry(&self, ln: LiveNode, var: Variable) -> bool {
+    pub fn live_on_entry(&self, ln: LiveNode, var: Variable) -> bool {
         self.rwu_table.get_reader(ln, var)
     }
 
