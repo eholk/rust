@@ -12,8 +12,8 @@ use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty};
-use rustc_passes::liveness::{compute_body_liveness, IrMaps, Liveness};
+use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_passes::liveness::{compute_body_liveness, IrMaps, Liveness, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
 
@@ -32,6 +32,7 @@ struct InteriorVisitor<'a, 'tcx> {
     guard_bindings: SmallVec<[SmallVec<[HirId; 4]>; 1]>,
     guard_bindings_set: HirIdSet,
     liveness: Liveness<'a, 'tcx>,
+    live_across_yield: FxIndexSet<Variable>,
 }
 
 impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
@@ -148,6 +149,54 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
     }
 }
 
+/// Hackily find the type of a variable binding.
+fn find_binding_type(
+    tcx: TyCtxt<'tcx>,
+    typeck_results: &ty::TypeckResults<'tcx>,
+    var_hir_id: HirId,
+) -> Ty<'tcx> {
+    debug!("Finding type of binding {:?}", var_hir_id);
+    let parent = tcx.hir().get_parent_node(var_hir_id);
+    debug!("Parent is: {:?}", parent);
+    if let Some(node) = tcx.hir().find(parent) {
+        match node {
+            hir::Node::Param(_) => todo!(),
+            hir::Node::Item(_) => todo!(),
+            hir::Node::ForeignItem(_) => todo!(),
+            hir::Node::TraitItem(_) => todo!(),
+            hir::Node::ImplItem(_) => todo!(),
+            hir::Node::Variant(_) => todo!(),
+            hir::Node::Field(_) => todo!(),
+            hir::Node::AnonConst(_) => todo!(),
+            hir::Node::Expr(_) => todo!(),
+            hir::Node::Stmt(_) => todo!(),
+            hir::Node::PathSegment(_) => todo!(),
+            hir::Node::Ty(_) => todo!(),
+            hir::Node::TraitRef(_) => todo!(),
+            hir::Node::Binding(_) => todo!(),
+            hir::Node::Pat(_) => todo!(),
+            hir::Node::Arm(_) => todo!(),
+            hir::Node::Block(_) => todo!(),
+            hir::Node::Local(hir::Local { init, .. }) => {
+                debug!("Parent is local variable, init is {:#?}", init);
+                match init {
+                    Some(expr) => typeck_results.expr_ty(expr),
+                    None => todo!(),
+                }
+            }
+            hir::Node::MacroDef(_) => todo!(),
+            hir::Node::Ctor(_) => todo!(),
+            hir::Node::Lifetime(_) => todo!(),
+            hir::Node::GenericParam(_) => todo!(),
+            hir::Node::Visibility(_) => todo!(),
+            hir::Node::Crate(_) => todo!(),
+            hir::Node::Infer(_) => todo!(),
+        }
+    } else {
+        unreachable!();
+    }
+}
+
 pub fn resolve_interior<'a, 'tcx>(
     fcx: &'a FnCtxt<'a, 'tcx>,
     def_id: DefId,
@@ -169,6 +218,7 @@ pub fn resolve_interior<'a, 'tcx>(
         guard_bindings: <_>::default(),
         guard_bindings_set: <_>::default(),
         liveness,
+        live_across_yield: FxIndexSet::default(),
     };
     intravisit::walk_body(&mut visitor, body);
 
@@ -177,7 +227,24 @@ pub fn resolve_interior<'a, 'tcx>(
     assert_eq!(region_expr_count, visitor.expr_count);
 
     // The types are already kept in insertion order.
-    let types = visitor.types;
+    // let types = visitor.types;
+    let types = visitor
+        .live_across_yield
+        .iter()
+        .map(|v| {
+            let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
+            //let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
+            let ty =
+                find_binding_type(fcx.tcx, &visitor.fcx.inh.typeck_results.borrow(), var_hir_id);
+            ty::GeneratorInteriorTypeCause {
+                ty,
+                span: fcx.tcx.hir().span(var_hir_id),
+                scope_span: None,
+                yield_span: fcx.tcx.hir().span(var_hir_id), // FIXME: this should be the yield span instead
+                expr: None,
+            }
+        })
+        .collect::<FxIndexSet<_>>();
 
     // The types in the generator interior contain lifetimes local to the generator itself,
     // which should not be exposed outside of the generator. Therefore, we replace these
@@ -349,6 +416,8 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
                             self.liveness.ir.variable_name(var),
                             expr.span
                         );
+
+                        self.live_across_yield.insert(var);
                     }
                 }
                 debug!("***Done dumping variable liveness information***");

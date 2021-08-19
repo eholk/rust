@@ -176,14 +176,14 @@ struct CaptureInfo {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct LocalInfo {
+pub struct LocalInfo {
     id: HirId,
     name: Symbol,
     is_shorthand: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
-enum VarKind {
+pub enum VarKind {
     Param(HirId, Symbol),
     Local(LocalInfo),
     Upvar(HirId, Symbol),
@@ -194,7 +194,7 @@ pub struct IrMaps<'tcx> {
     live_node_map: HirIdMap<LiveNode>,
     pub variable_map: HirIdMap<Variable>,
     capture_info_map: HirIdMap<Rc<Vec<CaptureInfo>>>,
-    var_kinds: IndexVec<Variable, VarKind>,
+    pub var_kinds: IndexVec<Variable, VarKind>,
     lnks: IndexVec<LiveNode, LiveNodeKind>,
 }
 
@@ -251,6 +251,12 @@ impl IrMaps<'tcx> {
     pub fn variable_name(&self, var: Variable) -> Symbol {
         match self.var_kinds[var] {
             Local(LocalInfo { name, .. }) | Param(_, name) | Upvar(_, name) => name,
+        }
+    }
+
+    pub fn variable_hir_id(&self, var: Variable) -> HirId {
+        match self.var_kinds[var] {
+            Local(LocalInfo { id, .. }) | Param(id, _) | Upvar(id, _) => id,
         }
     }
 
