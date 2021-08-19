@@ -228,7 +228,7 @@ pub fn resolve_interior<'a, 'tcx>(
 
     // The types are already kept in insertion order.
     // let types = visitor.types;
-    let types = visitor
+    let mut types = visitor
         .live_across_yield
         .iter()
         .map(|v| {
@@ -245,6 +245,12 @@ pub fn resolve_interior<'a, 'tcx>(
             }
         })
         .collect::<FxIndexSet<_>>();
+    // Now add in any temporaries that implement Drop
+    for ty in visitor.types.drain(..) {
+        if ty.ty.has_significant_drop(fcx.tcx, fcx.param_env) {
+            types.insert(ty);
+        }
+    }
 
     // The types in the generator interior contain lifetimes local to the generator itself,
     // which should not be exposed outside of the generator. Therefore, we replace these
