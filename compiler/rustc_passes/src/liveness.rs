@@ -94,6 +94,7 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Expr, HirId, HirIdMap, HirIdSet};
 use rustc_index::vec::IndexVec;
 use rustc_middle::hir::map::Map;
+use rustc_middle::ty::TypeckResults;
 use rustc_middle::ty::query::Providers;
 use rustc_middle::ty::{self, DefIdTree, RootVariableMinCaptureList, Ty, TyCtxt};
 use rustc_session::lint;
@@ -355,7 +356,8 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
         intravisit::walk_body(&mut maps, body);
 
         // compute liveness
-        let mut lsets = Liveness::new(&mut maps, local_def_id);
+        let typeck_results = maps.tcx.typeck(local_def_id);
+        let mut lsets = Liveness::new(&mut maps, local_def_id, typeck_results);
         let entry_ln = lsets.compute(&body, hir_id);
         lsets.log_liveness(entry_ln, body.id().hir_id);
 
@@ -485,7 +487,11 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
 pub fn compute_body_liveness(
     maps: &'a mut IrMaps<'tcx>,
     body_id: hir::BodyId,
-) -> Liveness<'a, 'tcx> {
+    typeck_results: &'atcx TypeckResults<'tcx>,
+) -> Liveness<'a, 'atcx, 'tcx>
+where
+    'atcx: 'a,
+{
     let body = maps.tcx.hir().body(body_id);
     let local_def_id = maps.tcx.hir().local_def_id(maps.tcx.hir().body_owner(body_id));
 
@@ -494,7 +500,7 @@ pub fn compute_body_liveness(
     intravisit::walk_body(maps, body);
 
     // compute liveness
-    let mut lsets = Liveness::new(maps, local_def_id);
+    let mut lsets = Liveness::new(maps, local_def_id, typeck_results);
     lsets.compute(&body, body_id.hir_id);
 
     lsets
@@ -510,11 +516,11 @@ const ACC_READ: u32 = 1;
 const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
-pub struct Liveness<'a, 'tcx> {
+pub struct Liveness<'a, 'atcx, 'tcx> {
     pub ir: &'a mut IrMaps<'tcx>,
-    typeck_results: &'a ty::TypeckResults<'tcx>,
+    typeck_results: &'atcx ty::TypeckResults<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
-    closure_min_captures: Option<&'tcx RootVariableMinCaptureList<'tcx>>,
+    closure_min_captures: Option<&'atcx RootVariableMinCaptureList<'tcx>>,
     successors: IndexVec<LiveNode, Option<LiveNode>>,
     rwu_table: rwu_table::RWUTable,
 
@@ -533,9 +539,15 @@ pub struct Liveness<'a, 'tcx> {
     cont_ln: HirIdMap<LiveNode>,
 }
 
-impl<'a, 'tcx> Liveness<'a, 'tcx> {
-    fn new(ir: &'a mut IrMaps<'tcx>, body_owner: LocalDefId) -> Liveness<'a, 'tcx> {
-        let typeck_results = ir.tcx.typeck(body_owner);
+impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx>
+where
+    'atcx: 'a,
+{
+    fn new(
+        ir: &'a mut IrMaps<'tcx>,
+        body_owner: LocalDefId,
+        typeck_results: &'atcx TypeckResults<'tcx>,
+    ) -> Liveness<'a, 'atcx, 'tcx> {
         let param_env = ir.tcx.param_env(body_owner);
         let closure_min_captures = typeck_results.closure_min_captures.get(&body_owner.to_def_id());
         let closure_ln = ir.add_live_node(ClosureNode);
@@ -1344,7 +1356,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 // _______________________________________________________________________
 // Checking for error conditions
 
-impl<'a, 'tcx> Visitor<'tcx> for Liveness<'a, 'tcx> {
+impl<'a, 'atcx, 'tcx> Visitor<'tcx> for Liveness<'a, 'atcx, 'tcx> {
     type Map = intravisit::ErasedMap<'tcx>;
 
     fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
@@ -1372,7 +1384,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Liveness<'a, 'tcx> {
     }
 }
 
-fn check_expr<'tcx>(this: &mut Liveness<'_, 'tcx>, expr: &'tcx Expr<'tcx>) {
+fn check_expr<'tcx>(this: &mut Liveness<'_, '_, 'tcx>, expr: &'tcx Expr<'tcx>) {
     match expr.kind {
         hir::ExprKind::Assign(ref l, ..) => {
             this.check_place(&l);
@@ -1455,7 +1467,7 @@ fn check_expr<'tcx>(this: &mut Liveness<'_, 'tcx>, expr: &'tcx Expr<'tcx>) {
     }
 }
 
-impl<'tcx> Liveness<'_, 'tcx> {
+impl<'tcx> Liveness<'_, '_, 'tcx> {
     fn check_place(&mut self, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
