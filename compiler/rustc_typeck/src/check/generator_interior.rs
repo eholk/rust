@@ -160,7 +160,7 @@ fn find_binding_type(
     debug!("Parent is: {:?}", parent);
     if let Some(node) = tcx.hir().find(parent) {
         match node {
-            hir::Node::Param(_) => todo!(),
+            hir::Node::Param(hir::Param { pat, .. }) => typeck_results.pat_ty(pat),
             hir::Node::Item(_) => todo!(),
             hir::Node::ForeignItem(_) => todo!(),
             hir::Node::TraitItem(_) => todo!(),
