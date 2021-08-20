@@ -493,15 +493,25 @@ where
     'atcx: 'a,
 {
     let body = maps.tcx.hir().body(body_id);
-    let local_def_id = maps.tcx.hir().local_def_id(maps.tcx.hir().body_owner(body_id));
+    let body_owner = maps.tcx.hir().body_owner(body_id);
+    let body_owner_local_def_id = maps.tcx.hir().local_def_id(body_owner);
+
+    if let Some(captures) =
+        typeck_results.closure_min_captures.get(&body_owner_local_def_id.to_def_id())
+    {
+        for &var_hir_id in captures.keys() {
+            let var_name = maps.tcx.hir().name(var_hir_id);
+            maps.add_variable(Upvar(var_hir_id, var_name));
+        }
+    }
 
     // gather up the various local variables, significant expressions,
     // and so forth:
     intravisit::walk_body(maps, body);
 
     // compute liveness
-    let mut lsets = Liveness::new(maps, local_def_id, typeck_results);
-    lsets.compute(&body, body_id.hir_id);
+    let mut lsets = Liveness::new(maps, body_owner_local_def_id, typeck_results);
+    lsets.compute(&body, body_owner);
 
     lsets
 }
