@@ -12,7 +12,7 @@ use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::ty::{self, Ty};
 use rustc_passes::liveness::{compute_body_liveness, IrMaps, Liveness, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
@@ -149,53 +149,6 @@ impl<'a, 'atcx, 'tcx> InteriorVisitor<'a, 'atcx, 'tcx> {
     }
 }
 
-/// Hackily find the type of a variable binding.
-fn find_binding_type(
-    tcx: TyCtxt<'tcx>,
-    typeck_results: &ty::TypeckResults<'tcx>,
-    var_hir_id: HirId,
-) -> Ty<'tcx> {
-    debug!("Finding type of binding {:?}", var_hir_id);
-    let parent = tcx.hir().get_parent_node(var_hir_id);
-    debug!("Parent is: {:?}", parent);
-    if let Some(node) = tcx.hir().find(parent) {
-        match node {
-            hir::Node::Param(hir::Param { pat, .. }) => typeck_results.pat_ty(pat),
-            hir::Node::Item(_) => todo!(),
-            hir::Node::ForeignItem(_) => todo!(),
-            hir::Node::TraitItem(_) => todo!(),
-            hir::Node::ImplItem(_) => todo!(),
-            hir::Node::Variant(_) => todo!(),
-            hir::Node::Field(_) => todo!(),
-            hir::Node::AnonConst(_) => todo!(),
-            hir::Node::Expr(_) => todo!(),
-            hir::Node::Stmt(_) => todo!(),
-            hir::Node::PathSegment(_) => todo!(),
-            hir::Node::Ty(_) => todo!(),
-            hir::Node::TraitRef(_) => todo!(),
-            hir::Node::Binding(_) => todo!(),
-            hir::Node::Pat(_) => todo!(),
-            hir::Node::Arm(_) => todo!(),
-            hir::Node::Block(_) => todo!(),
-            hir::Node::Local(hir::Local { init, .. }) => {
-                debug!("Parent is local variable, init is {:#?}", init);
-                match init {
-                    Some(expr) => typeck_results.expr_ty(expr),
-                    None => todo!(),
-                }
-            }
-            hir::Node::Ctor(_) => todo!(),
-            hir::Node::Lifetime(_) => todo!(),
-            hir::Node::GenericParam(_) => todo!(),
-            hir::Node::Visibility(_) => todo!(),
-            hir::Node::Crate(_) => todo!(),
-            hir::Node::Infer(_) => todo!(),
-        }
-    } else {
-        unreachable!();
-    }
-}
-
 pub fn resolve_interior<'a, 'tcx>(
     fcx: &'a FnCtxt<'a, 'tcx>,
     def_id: DefId,
@@ -234,12 +187,7 @@ pub fn resolve_interior<'a, 'tcx>(
             .iter()
             .map(|v| {
                 let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
-                //let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
-                let ty = find_binding_type(
-                    fcx.tcx,
-                    &visitor.fcx.inh.typeck_results.borrow(),
-                    var_hir_id,
-                );
+                let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
                 ty::GeneratorInteriorTypeCause {
                     ty,
                     span: fcx.tcx.hir().span(var_hir_id),
