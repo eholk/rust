@@ -79,6 +79,7 @@ mod fallback;
 mod fn_ctxt;
 mod gather_locals;
 mod generator_interior;
+mod generator_liveness;
 mod inherited;
 pub mod intrinsic;
 pub mod method;

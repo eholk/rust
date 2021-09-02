@@ -17,6 +17,7 @@ rustc_data_structures = { path = "../rustc_data_structures" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_hir = { path = "../rustc_hir" }
 rustc_hir_pretty = { path = "../rustc_hir_pretty" }
+rustc_passes = { path = "../rustc_passes" }
 rustc_target = { path = "../rustc_target" }
 rustc_session = { path = "../rustc_session" }
 smallvec = { version = "1.6.1", features = ["union", "may_dangle"] }
