@@ -188,6 +188,7 @@ pub enum VarKind {
     Param(HirId, Symbol),
     Local(LocalInfo),
     Upvar(HirId, Symbol),
+    Temporary(HirId),
 }
 
 pub struct IrMaps<'tcx> {
@@ -230,7 +231,10 @@ impl IrMaps<'tcx> {
         let v = self.var_kinds.push(vk);
 
         match vk {
-            Local(LocalInfo { id: node_id, .. }) | Param(node_id, _) | Upvar(node_id, _) => {
+            Local(LocalInfo { id: node_id, .. })
+            | Param(node_id, _)
+            | Upvar(node_id, _)
+            | Temporary(node_id, ..) => {
                 self.variable_map.insert(node_id, v);
             }
         }
@@ -252,19 +256,20 @@ impl IrMaps<'tcx> {
     pub fn variable_name(&self, var: Variable) -> Symbol {
         match self.var_kinds[var] {
             Local(LocalInfo { name, .. }) | Param(_, name) | Upvar(_, name) => name,
+            Temporary(hir_id) => Symbol::intern(format!("temporary@{}", hir_id).as_str()),
         }
     }
 
     pub fn variable_hir_id(&self, var: Variable) -> HirId {
         match self.var_kinds[var] {
-            Local(LocalInfo { id, .. }) | Param(id, _) | Upvar(id, _) => id,
+            Local(LocalInfo { id, .. }) | Param(id, _) | Upvar(id, _) | Temporary(id, ..) => id,
         }
     }
 
     fn variable_is_shorthand(&self, var: Variable) -> bool {
         match self.var_kinds[var] {
             Local(LocalInfo { is_shorthand, .. }) => is_shorthand,
-            Param(..) | Upvar(..) => false,
+            Param(..) | Upvar(..) | Temporary(..) => false,
         }
     }
 

@@ -3,6 +3,8 @@
 //! is calculated in `rustc_mir::transform::generator` and may be a subset of the
 //! types computed here.
 
+use crate::expr_use_visitor::{self, ExprUseVisitor};
+
 use super::FnCtxt;
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
 use rustc_hir as hir;
@@ -12,7 +14,7 @@ use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty, TyCtxt, TypeckResults};
+use rustc_middle::ty::{self, Ty, TypeckResults};
 use rustc_passes::liveness::{self, IrMaps, Liveness, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
@@ -161,7 +163,7 @@ pub fn resolve_interior<'a, 'tcx>(
         let mut ir_maps = IrMaps::new(fcx.tcx);
         // FIXME: use this to inform capture information
         let typeck_results = fcx.inh.typeck_results.borrow();
-        let liveness = compute_body_liveness(fcx.tcx, &mut ir_maps, body_id, &typeck_results);
+        let liveness = compute_body_liveness(&fcx, &mut ir_maps, body_id, &typeck_results);
         let mut visitor = InteriorVisitor {
             fcx,
             types: FxIndexSet::default(),
@@ -465,7 +467,7 @@ impl<'a, 'tcx> Visitor<'tcx> for ArmPatCollector<'a> {
 
 // Expose liveness computation to other passes that might need it.
 fn compute_body_liveness(
-    tcx: TyCtxt<'tcx>,
+    fcx: &FnCtxt<'a, 'tcx>,
     maps: &'a mut IrMaps<'tcx>,
     body_id: hir::BodyId,
     typeck_results: &'atcx TypeckResults<'tcx>,
@@ -473,15 +475,15 @@ fn compute_body_liveness(
 where
     'atcx: 'a,
 {
-    let body = tcx.hir().body(body_id);
-    let body_owner = tcx.hir().body_owner(body_id);
-    let body_owner_local_def_id = tcx.hir().local_def_id(body_owner);
+    let body = fcx.tcx.hir().body(body_id);
+    let body_owner = fcx.tcx.hir().body_owner(body_id);
+    let body_owner_local_def_id = fcx.tcx.hir().local_def_id(body_owner);
 
     if let Some(captures) =
         typeck_results.closure_min_captures.get(&body_owner_local_def_id.to_def_id())
     {
         for &var_hir_id in captures.keys() {
-            let var_name = tcx.hir().name(var_hir_id);
+            let var_name = fcx.tcx.hir().name(var_hir_id);
             maps.add_variable(liveness::VarKind::Upvar(var_hir_id, var_name));
         }
     }
@@ -489,10 +491,58 @@ where
     // gather up the various local variables, significant expressions,
     // and so forth:
     intravisit::walk_body(maps, body);
+    ExprUseVisitor::new(
+        &mut ExprUseDelegate { maps },
+        &fcx.infcx,
+        body_owner_local_def_id,
+        fcx.param_env,
+        typeck_results,
+    )
+    .consume_body(body);
 
     // compute liveness
     let mut lsets = Liveness::new(maps, body_owner_local_def_id, typeck_results);
     lsets.compute(&body, body_owner);
 
     lsets
+}
+
+// We use ExprUseVisitor to gather up all the temporary values whose liveness we need to consider.
+struct ExprUseDelegate<'a, 'tcx> {
+    maps: &'a mut IrMaps<'tcx>,
+}
+
+impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
+    fn consume(
+        &mut self,
+        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+        self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
+    }
+
+    fn borrow(
+        &mut self,
+        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+        _bk: ty::BorrowKind,
+    ) {
+        self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
+    }
+
+    fn mutate(
+        &mut self,
+        assignee_place: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+        self.maps.add_variable(liveness::VarKind::Temporary(assignee_place.hir_id));
+    }
+
+    fn fake_read(
+        &mut self,
+        _place: rustc_middle::hir::place::Place<'tcx>,
+        _cause: rustc_middle::mir::FakeReadCause,
+        _diag_expr_id: hir::HirId,
+    ) {
+    }
 }
