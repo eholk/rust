@@ -94,8 +94,8 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Expr, HirId, HirIdMap, HirIdSet};
 use rustc_index::vec::IndexVec;
 use rustc_middle::hir::map::Map;
-use rustc_middle::ty::TypeckResults;
 use rustc_middle::ty::query::Providers;
+use rustc_middle::ty::TypeckResults;
 use rustc_middle::ty::{self, DefIdTree, RootVariableMinCaptureList, Ty, TyCtxt};
 use rustc_session::lint;
 use rustc_span::symbol::{kw, sym, Symbol};
@@ -226,7 +226,7 @@ impl IrMaps<'tcx> {
         debug!("{:?} is node {:?}", ln, hir_id);
     }
 
-    fn add_variable(&mut self, vk: VarKind) -> Variable {
+    pub fn add_variable(&mut self, vk: VarKind) -> Variable {
         let v = self.var_kinds.push(vk);
 
         match vk {
@@ -483,39 +483,6 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
     }
 }
 
-// Expose liveness computation to other passes that might need it.
-pub fn compute_body_liveness(
-    maps: &'a mut IrMaps<'tcx>,
-    body_id: hir::BodyId,
-    typeck_results: &'atcx TypeckResults<'tcx>,
-) -> Liveness<'a, 'atcx, 'tcx>
-where
-    'atcx: 'a,
-{
-    let body = maps.tcx.hir().body(body_id);
-    let body_owner = maps.tcx.hir().body_owner(body_id);
-    let body_owner_local_def_id = maps.tcx.hir().local_def_id(body_owner);
-
-    if let Some(captures) =
-        typeck_results.closure_min_captures.get(&body_owner_local_def_id.to_def_id())
-    {
-        for &var_hir_id in captures.keys() {
-            let var_name = maps.tcx.hir().name(var_hir_id);
-            maps.add_variable(Upvar(var_hir_id, var_name));
-        }
-    }
-
-    // gather up the various local variables, significant expressions,
-    // and so forth:
-    intravisit::walk_body(maps, body);
-
-    // compute liveness
-    let mut lsets = Liveness::new(maps, body_owner_local_def_id, typeck_results);
-    lsets.compute(&body, body_owner);
-
-    lsets
-}
-
 // ______________________________________________________________________
 // Computing liveness sets
 //
@@ -553,7 +520,7 @@ impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx>
 where
     'atcx: 'a,
 {
-    fn new(
+    pub fn new(
         ir: &'a mut IrMaps<'tcx>,
         body_owner: LocalDefId,
         typeck_results: &'atcx TypeckResults<'tcx>,
@@ -735,7 +702,7 @@ where
         self.rwu_table.set(ln, var, rwu);
     }
 
-    fn compute(&mut self, body: &hir::Body<'_>, hir_id: HirId) -> LiveNode {
+    pub fn compute(&mut self, body: &hir::Body<'_>, hir_id: HirId) -> LiveNode {
         debug!("compute: for body {:?}", body.id().hir_id);
 
         // # Liveness of captured variables

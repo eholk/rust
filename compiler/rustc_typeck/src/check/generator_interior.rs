@@ -12,8 +12,8 @@ use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty};
-use rustc_passes::liveness::{compute_body_liveness, IrMaps, Liveness, Variable};
+use rustc_middle::ty::{self, Ty, TyCtxt, TypeckResults};
+use rustc_passes::liveness::{self, IrMaps, Liveness, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
 
@@ -161,7 +161,7 @@ pub fn resolve_interior<'a, 'tcx>(
         let mut ir_maps = IrMaps::new(fcx.tcx);
         // FIXME: use this to inform capture information
         let typeck_results = fcx.inh.typeck_results.borrow();
-        let liveness = compute_body_liveness(&mut ir_maps, body_id, &typeck_results);
+        let liveness = compute_body_liveness(fcx.tcx, &mut ir_maps, body_id, &typeck_results);
         let mut visitor = InteriorVisitor {
             fcx,
             types: FxIndexSet::default(),
@@ -461,4 +461,38 @@ impl<'a, 'tcx> Visitor<'tcx> for ArmPatCollector<'a> {
             self.guard_bindings_set.insert(id);
         }
     }
+}
+
+// Expose liveness computation to other passes that might need it.
+fn compute_body_liveness(
+    tcx: TyCtxt<'tcx>,
+    maps: &'a mut IrMaps<'tcx>,
+    body_id: hir::BodyId,
+    typeck_results: &'atcx TypeckResults<'tcx>,
+) -> Liveness<'a, 'atcx, 'tcx>
+where
+    'atcx: 'a,
+{
+    let body = tcx.hir().body(body_id);
+    let body_owner = tcx.hir().body_owner(body_id);
+    let body_owner_local_def_id = tcx.hir().local_def_id(body_owner);
+
+    if let Some(captures) =
+        typeck_results.closure_min_captures.get(&body_owner_local_def_id.to_def_id())
+    {
+        for &var_hir_id in captures.keys() {
+            let var_name = tcx.hir().name(var_hir_id);
+            maps.add_variable(liveness::VarKind::Upvar(var_hir_id, var_name));
+        }
+    }
+
+    // gather up the various local variables, significant expressions,
+    // and so forth:
+    intravisit::walk_body(maps, body);
+
+    // compute liveness
+    let mut lsets = Liveness::new(maps, body_owner_local_def_id, typeck_results);
+    lsets.compute(&body, body_owner);
+
+    lsets
 }
