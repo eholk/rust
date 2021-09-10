@@ -362,7 +362,7 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
 
         // compute liveness
         let typeck_results = maps.tcx.typeck(local_def_id);
-        let mut lsets = Liveness::new(&mut maps, local_def_id, typeck_results);
+        let mut lsets = Liveness::<false>::new(&mut maps, local_def_id, typeck_results);
         let entry_ln = lsets.compute(&body, hir_id);
         lsets.log_liveness(entry_ln, body.id().hir_id);
 
@@ -482,9 +482,11 @@ impl<'tcx> Visitor<'tcx> for IrMaps<'tcx> {
             | hir::ExprKind::Err
             | hir::ExprKind::Path(hir::QPath::TypeRelative(..))
             | hir::ExprKind::Path(hir::QPath::LangItem(..)) => {
+                self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
                 intravisit::walk_expr(self, expr);
             }
         }
+        self.add_variable(Temporary(expr.hir_id));
     }
 }
 
@@ -498,7 +500,7 @@ const ACC_READ: u32 = 1;
 const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
-pub struct Liveness<'a, 'atcx, 'tcx> {
+pub struct Liveness<'a, 'atcx, 'tcx, const TRACK_TEMPORARIES: bool> {
     pub ir: &'a mut IrMaps<'tcx>,
     typeck_results: &'atcx ty::TypeckResults<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -521,7 +523,7 @@ pub struct Liveness<'a, 'atcx, 'tcx> {
     cont_ln: HirIdMap<LiveNode>,
 }
 
-impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx>
+impl<'a, 'atcx, 'tcx, const TRACK_TEMPORARIES: bool> Liveness<'a, 'atcx, 'tcx, TRACK_TEMPORARIES>
 where
     'atcx: 'a,
 {
@@ -529,7 +531,7 @@ where
         ir: &'a mut IrMaps<'tcx>,
         body_owner: LocalDefId,
         typeck_results: &'atcx TypeckResults<'tcx>,
-    ) -> Liveness<'a, 'atcx, 'tcx> {
+    ) -> Self {
         let param_env = ir.tcx.param_env(body_owner);
         let closure_min_captures = typeck_results.closure_min_captures.get(&body_owner.to_def_id());
         let closure_ln = ir.add_live_node(ClosureNode);
@@ -840,6 +842,15 @@ where
     fn propagate_through_expr(&mut self, expr: &Expr<'_>, succ: LiveNode) -> LiveNode {
         debug!("propagate_through_expr: {:?}", expr);
 
+        let succ = if TRACK_TEMPORARIES {
+            let ln = self.live_node(expr.hir_id, expr.span);
+            self.init_from_succ(ln, succ);
+            self.define(ln, self.variable(expr.hir_id, expr.span));
+            ln
+        } else {
+            succ
+        };
+
         match expr.kind {
             // Interesting cases with control flow or which gen/kill
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
@@ -985,17 +996,23 @@ where
             }
 
             hir::ExprKind::AssignOp(_, ref l, ref r) => {
+                if TRACK_TEMPORARIES {
+                    self.acc(succ, self.variable(r.hir_id, r.span), ACC_READ | ACC_USE);
+                    self.acc(succ, self.variable(l.hir_id, l.span), ACC_READ | ACC_USE);
+                }
                 // an overloaded assign op is like a method call
-                if self.typeck_results.is_method_call(expr) {
+                let succ = if self.typeck_results.is_method_call(expr) {
+                    let succ = self.propagate_through_expr(&r, succ);
                     let succ = self.propagate_through_expr(&l, succ);
-                    self.propagate_through_expr(&r, succ)
+                    succ
                 } else {
                     // see comment on places in
                     // propagate_through_place_components()
                     let succ = self.write_place(&l, succ, ACC_WRITE | ACC_READ);
                     let succ = self.propagate_through_expr(&r, succ);
                     self.propagate_through_place_components(&l, succ)
-                }
+                };
+                succ
             }
 
             // Uninteresting cases: just propagate in rev exec order
@@ -1338,7 +1355,9 @@ where
 // _______________________________________________________________________
 // Checking for error conditions
 
-impl<'a, 'atcx, 'tcx> Visitor<'tcx> for Liveness<'a, 'atcx, 'tcx> {
+impl<'a, 'atcx, 'tcx, const TRACK_TEMPORARIES: bool> Visitor<'tcx>
+    for Liveness<'a, 'atcx, 'tcx, TRACK_TEMPORARIES>
+{
     type Map = intravisit::ErasedMap<'tcx>;
 
     fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
@@ -1366,7 +1385,10 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for Liveness<'a, 'atcx, 'tcx> {
     }
 }
 
-fn check_expr<'tcx>(this: &mut Liveness<'_, '_, 'tcx>, expr: &'tcx Expr<'tcx>) {
+fn check_expr<'tcx, const TRACK_TEMPORARIES: bool>(
+    this: &mut Liveness<'_, '_, 'tcx, TRACK_TEMPORARIES>,
+    expr: &'tcx Expr<'tcx>,
+) {
     match expr.kind {
         hir::ExprKind::Assign(ref l, ..) => {
             this.check_place(&l);
@@ -1449,7 +1471,7 @@ fn check_expr<'tcx>(this: &mut Liveness<'_, '_, 'tcx>, expr: &'tcx Expr<'tcx>) {
     }
 }
 
-impl<'tcx> Liveness<'_, '_, 'tcx> {
+impl<'tcx, const TRACK_TEMPORARIES: bool> Liveness<'_, '_, 'tcx, TRACK_TEMPORARIES> {
     fn check_place(&mut self, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
