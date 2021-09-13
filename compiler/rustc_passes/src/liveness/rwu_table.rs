@@ -2,15 +2,15 @@ use crate::liveness::{LiveNode, Variable};
 use std::iter;
 
 #[derive(Clone, Copy)]
-pub(super) struct RWU {
-    pub(super) reader: bool,
-    pub(super) writer: bool,
-    pub(super) used: bool,
+pub struct RWU {
+    pub reader: bool,
+    pub writer: bool,
+    pub used: bool,
 }
 
 /// Conceptually, this is like a `Vec<Vec<RWU>>`. But the number of
 /// RWU`s can get very large, so it uses a more compact representation.
-pub(super) struct RWUTable {
+pub struct RWUTable {
     /// Total number of live nodes.
     live_nodes: usize,
     /// Total number of variables.
@@ -42,7 +42,7 @@ impl RWUTable {
     /// Number of packed RWUs that fit into a single word.
     const WORD_RWU_COUNT: usize = Self::WORD_BITS / Self::RWU_BITS;
 
-    pub(super) fn new(live_nodes: usize, vars: usize) -> RWUTable {
+    pub fn new(live_nodes: usize, vars: usize) -> RWUTable {
         let live_node_words = (vars + Self::WORD_RWU_COUNT - 1) / Self::WORD_RWU_COUNT;
         Self { live_nodes, vars, live_node_words, words: vec![0u8; live_node_words * live_nodes] }
     }
@@ -74,7 +74,7 @@ impl RWUTable {
         }
     }
 
-    pub(super) fn copy(&mut self, dst: LiveNode, src: LiveNode) {
+    pub fn copy(&mut self, dst: LiveNode, src: LiveNode) {
         if dst == src {
             return;
         }
@@ -85,7 +85,7 @@ impl RWUTable {
 
     /// Sets `dst` to the union of `dst` and `src`, returns true if `dst` was
     /// changed.
-    pub(super) fn union(&mut self, dst: LiveNode, src: LiveNode) -> bool {
+    pub fn union(&mut self, dst: LiveNode, src: LiveNode) -> bool {
         if dst == src {
             return false;
         }
@@ -101,22 +101,22 @@ impl RWUTable {
         changed
     }
 
-    pub(super) fn get_reader(&self, ln: LiveNode, var: Variable) -> bool {
+    pub fn get_reader(&self, ln: LiveNode, var: Variable) -> bool {
         let (word, shift) = self.word_and_shift(ln, var);
         (self.words[word] >> shift) & Self::RWU_READER != 0
     }
 
-    pub(super) fn get_writer(&self, ln: LiveNode, var: Variable) -> bool {
+    pub fn get_writer(&self, ln: LiveNode, var: Variable) -> bool {
         let (word, shift) = self.word_and_shift(ln, var);
         (self.words[word] >> shift) & Self::RWU_WRITER != 0
     }
 
-    pub(super) fn get_used(&self, ln: LiveNode, var: Variable) -> bool {
+    pub fn get_used(&self, ln: LiveNode, var: Variable) -> bool {
         let (word, shift) = self.word_and_shift(ln, var);
         (self.words[word] >> shift) & Self::RWU_USED != 0
     }
 
-    pub(super) fn get(&self, ln: LiveNode, var: Variable) -> RWU {
+    pub fn get(&self, ln: LiveNode, var: Variable) -> RWU {
         let (word, shift) = self.word_and_shift(ln, var);
         let rwu_packed = self.words[word] >> shift;
         RWU {
@@ -126,7 +126,7 @@ impl RWUTable {
         }
     }
 
-    pub(super) fn set(&mut self, ln: LiveNode, var: Variable, rwu: RWU) {
+    pub fn set(&mut self, ln: LiveNode, var: Variable, rwu: RWU) {
         let mut packed = 0;
         if rwu.reader {
             packed |= Self::RWU_READER;

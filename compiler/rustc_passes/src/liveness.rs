@@ -106,7 +106,7 @@ use std::io::prelude::*;
 use std::iter;
 use std::rc::Rc;
 
-mod rwu_table;
+pub mod rwu_table;
 
 rustc_index::newtype_index! {
     pub struct Variable {
@@ -121,7 +121,7 @@ rustc_index::newtype_index! {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum LiveNodeKind {
+pub enum LiveNodeKind {
     UpvarNode(Span),
     ExprNode(Span, HirId),
     VarDefNode(Span, HirId),
@@ -170,9 +170,9 @@ pub fn provide(providers: &mut Providers) {
 // variable must not be assigned if there is some successor
 // assignment.  And so forth.
 
-struct CaptureInfo {
-    ln: LiveNode,
-    var_hid: HirId,
+pub struct CaptureInfo {
+    pub ln: LiveNode,
+    pub var_hid: HirId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -194,16 +194,16 @@ pub enum VarKind {
 }
 
 pub struct IrMaps<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    live_node_map: HirIdMap<LiveNode>,
-    variable_map: HirIdMap<Variable>,
-    capture_info_map: HirIdMap<Rc<Vec<CaptureInfo>>>,
-    var_kinds: IndexVec<Variable, VarKind>,
-    lnks: IndexVec<LiveNode, LiveNodeKind>,
+    pub tcx: TyCtxt<'tcx>,
+    pub live_node_map: HirIdMap<LiveNode>,
+    pub variable_map: HirIdMap<Variable>,
+    pub capture_info_map: HirIdMap<Rc<Vec<CaptureInfo>>>,
+    pub var_kinds: IndexVec<Variable, VarKind>,
+    pub lnks: IndexVec<LiveNode, LiveNodeKind>,
 }
 
 impl IrMaps<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>) -> IrMaps<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>) -> IrMaps<'tcx> {
         IrMaps {
             tcx,
             live_node_map: HirIdMap::default(),
@@ -214,7 +214,7 @@ impl IrMaps<'tcx> {
         }
     }
 
-    fn add_live_node(&mut self, lnk: LiveNodeKind) -> LiveNode {
+    pub fn add_live_node(&mut self, lnk: LiveNodeKind) -> LiveNode {
         let ln = self.lnks.push(lnk);
 
         debug!("{:?} is of kind {}", ln, live_node_kind_to_string(lnk, self.tcx));
@@ -246,7 +246,7 @@ impl IrMaps<'tcx> {
         v
     }
 
-    fn variable(&self, hir_id: HirId, span: Span) -> Variable {
+    pub fn variable(&self, hir_id: HirId, span: Span) -> Variable {
         match self.variable_map.get(&hir_id) {
             Some(&var) => var,
             None => {
@@ -255,10 +255,16 @@ impl IrMaps<'tcx> {
         }
     }
 
-    fn variable_name(&self, var: Variable) -> Symbol {
+    pub fn variable_name(&self, var: Variable) -> Symbol {
         match self.var_kinds[var] {
             Local(LocalInfo { name, .. }) | Param(_, name) | Upvar(_, name) => name,
             Temporary(..) => Symbol::intern("[temporary]"),
+        }
+    }
+
+    pub fn variable_hir_id(&self, var: Variable) -> HirId {
+        match self.var_kinds[var] {
+            Local(LocalInfo { id, .. }) | Param(id, ..) | Upvar(id, ..) | Temporary(id) => id,
         }
     }
 

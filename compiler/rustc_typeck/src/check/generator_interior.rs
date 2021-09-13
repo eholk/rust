@@ -1,22 +1,29 @@
 //! This calculates the types which has storage which lives across a suspension point in a
 //! generator from the perspective of typeck. The actual types used at runtime
-//! is calculated in `rustc_const_eval::transform::generator` and may be a subset of the
+//! is calculated in `rustc_mir::transform::generator` and may be a subset of the
 //! types computed here.
 
+// use crate::expr_use_visitor::{self, ExprUseVisitor};
+
+use crate::expr_use_visitor::{self, ExprUseVisitor};
+
+use super::generator_liveness::Liveness;
 use super::FnCtxt;
-use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
+use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_hir as hir;
 use rustc_hir::def::{CtorKind, DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
+use rustc_infer::infer::RegionVariableOrigin;
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty};
+use rustc_middle::ty::{self, BorrowKind, Ty, TypeckResults};
+use rustc_passes::liveness::{self, IrMaps, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
 
-struct InteriorVisitor<'a, 'tcx> {
+struct InteriorVisitor<'a, 'atcx, 'tcx> {
     fcx: &'a FnCtxt<'a, 'tcx>,
     types: FxIndexSet<ty::GeneratorInteriorTypeCause<'tcx>>,
     region_scope_tree: &'tcx region::ScopeTree,
@@ -30,9 +37,11 @@ struct InteriorVisitor<'a, 'tcx> {
     /// that they may succeed the said yield point in the post-order.
     guard_bindings: SmallVec<[SmallVec<[HirId; 4]>; 1]>,
     guard_bindings_set: HirIdSet,
+    liveness: Liveness<'a, 'atcx, 'tcx>,
+    live_across_yield: FxIndexSet<Variable>,
 }
 
-impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
+impl<'a, 'atcx, 'tcx> InteriorVisitor<'a, 'atcx, 'tcx> {
     fn record(
         &mut self,
         ty: Ty<'tcx>,
@@ -154,24 +163,72 @@ pub fn resolve_interior<'a, 'tcx>(
     kind: hir::GeneratorKind,
 ) {
     let body = fcx.tcx.hir().body(body_id);
-    let mut visitor = InteriorVisitor {
-        fcx,
-        types: FxIndexSet::default(),
-        region_scope_tree: fcx.tcx.region_scope_tree(def_id),
-        expr_count: 0,
-        kind,
-        prev_unresolved_span: None,
-        guard_bindings: <_>::default(),
-        guard_bindings_set: <_>::default(),
+    let types = {
+        let mut ir_maps = IrMaps::new(fcx.tcx);
+        // FIXME: use this to inform capture information
+        let typeck_results = fcx.inh.typeck_results.borrow();
+        let liveness = compute_body_liveness(&fcx, &mut ir_maps, body_id, &typeck_results);
+        let mut visitor = InteriorVisitor {
+            fcx,
+            types: FxIndexSet::default(),
+            region_scope_tree: fcx.tcx.region_scope_tree(def_id),
+            expr_count: 0,
+            kind,
+            prev_unresolved_span: None,
+            guard_bindings: <_>::default(),
+            guard_bindings_set: <_>::default(),
+            liveness: liveness.liveness,
+            live_across_yield: FxIndexSet::default(),
+        };
+        intravisit::walk_body(&mut visitor, body);
+
+        // Check that we visited the same amount of expressions and the RegionResolutionVisitor
+        let region_expr_count = visitor.region_scope_tree.body_expr_count(body_id).unwrap();
+        assert_eq!(region_expr_count, visitor.expr_count);
+
+        // The types are already kept in insertion order.
+        // let types = visitor.types;
+        let borrows = liveness.borrows;
+        let mut types = visitor
+            .live_across_yield
+            .iter()
+            .map(|v| {
+                let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
+                let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
+
+                // fixup type if it is borrowed
+                let ty = if let Some(bk) = borrows.get(&var_hir_id) {
+                    // FIXME: this is almost certainly the wrong origin to use here.
+                    let origin = RegionVariableOrigin::AddrOfRegion(fcx.tcx.hir().span(var_hir_id));
+                    let region = fcx.infcx.next_region_var(origin);
+                    match bk {
+                        BorrowKind::ImmBorrow | BorrowKind::UniqueImmBorrow => {
+                            visitor.fcx.tcx.mk_imm_ref(region, ty)
+                        }
+                        BorrowKind::MutBorrow => visitor.fcx.tcx.mk_mut_ref(region, ty),
+                    }
+                } else {
+                    ty
+                };
+
+                ty::GeneratorInteriorTypeCause {
+                    ty,
+                    span: fcx.tcx.hir().span(var_hir_id),
+                    scope_span: None,
+                    yield_span: fcx.tcx.hir().span(var_hir_id), // FIXME: this should be the yield span instead
+                    expr: None,
+                }
+            })
+            .collect::<FxIndexSet<_>>();
+
+        // Now add in any temporaries that implement Drop
+        for ty in visitor.types.drain(..) {
+            if ty.ty.has_significant_drop(fcx.tcx, fcx.param_env) {
+                types.insert(ty);
+            }
+        }
+        types
     };
-    intravisit::walk_body(&mut visitor, body);
-
-    // Check that we visited the same amount of expressions and the RegionResolutionVisitor
-    let region_expr_count = visitor.region_scope_tree.body_expr_count(body_id).unwrap();
-    assert_eq!(region_expr_count, visitor.expr_count);
-
-    // The types are already kept in insertion order.
-    let types = visitor.types;
 
     // The types in the generator interior contain lifetimes local to the generator itself,
     // which should not be exposed outside of the generator. Therefore, we replace these
@@ -224,7 +281,7 @@ pub fn resolve_interior<'a, 'tcx>(
         fcx.tcx.mk_generator_witness(ty::Binder::bind_with_vars(type_list, bound_vars.clone()));
 
     // Store the generator types and spans into the typeck results for this generator.
-    visitor.fcx.inh.typeck_results.borrow_mut().generator_interior_types =
+    fcx.inh.typeck_results.borrow_mut().generator_interior_types =
         ty::Binder::bind_with_vars(type_causes, bound_vars);
 
     debug!(
@@ -242,7 +299,7 @@ pub fn resolve_interior<'a, 'tcx>(
 // This visitor has to have the same visit_expr calls as RegionResolutionVisitor in
 // librustc_middle/middle/region.rs since `expr_count` is compared against the results
 // there.
-impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
+impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
     type Map = intravisit::ErasedMap<'tcx>;
 
     fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
@@ -332,6 +389,30 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
                     _ => {}
                 }
             }
+            ExprKind::Yield(..) => {
+                let live_node = self.liveness.live_node(expr.hir_id, expr.span);
+
+                debug!("***Dumping variable liveness information***");
+                for (_, &var) in self.liveness.ir.variable_map.iter() {
+                    if self.liveness.live_on_entry(live_node, var) {
+                        debug!(
+                            "  Variable {:?}: {:?} (ty={:?}) is live on entry at {:?}",
+                            var,
+                            self.liveness.ir.variable_name(var),
+                            self.fcx
+                                .typeck_results
+                                .borrow()
+                                .node_type(self.liveness.ir.variable_hir_id(var)),
+                            expr.span
+                        );
+
+                        self.live_across_yield.insert(var);
+                    }
+                }
+                debug!("***Done dumping variable liveness information***");
+
+                intravisit::walk_expr(self, expr);
+            }
             _ => intravisit::walk_expr(self, expr),
         }
 
@@ -407,5 +488,121 @@ impl<'a, 'tcx> Visitor<'tcx> for ArmPatCollector<'a> {
             self.guard_bindings.push(id);
             self.guard_bindings_set.insert(id);
         }
+    }
+}
+
+struct GeneratorLiveness<'a, 'atcx, 'tcx> {
+    liveness: Liveness<'a, 'atcx, 'tcx>,
+    borrows: FxIndexMap<HirId, BorrowKind>,
+}
+
+// Expose liveness computation to other passes that might need it.
+fn compute_body_liveness(
+    fcx: &FnCtxt<'a, 'tcx>,
+    maps: &'a mut IrMaps<'tcx>,
+    body_id: hir::BodyId,
+    typeck_results: &'atcx TypeckResults<'tcx>,
+) -> GeneratorLiveness<'a, 'atcx, 'tcx>
+where
+    'atcx: 'a,
+{
+    let body = fcx.tcx.hir().body(body_id);
+    let body_owner = fcx.tcx.hir().body_owner(body_id);
+    let body_owner_local_def_id = fcx.tcx.hir().local_def_id(body_owner);
+
+    if let Some(captures) =
+        typeck_results.closure_min_captures.get(&body_owner_local_def_id.to_def_id())
+    {
+        for &var_hir_id in captures.keys() {
+            let var_name = fcx.tcx.hir().name(var_hir_id);
+            maps.add_variable(liveness::VarKind::Upvar(var_hir_id, var_name));
+        }
+    }
+
+    let mut borrows = <_>::default();
+
+    // gather up the various local variables, significant expressions,
+    // and so forth:
+    intravisit::walk_body(maps, body);
+    ExprUseVisitor::new(
+        &mut ExprUseDelegate {
+            hir: &fcx.tcx.hir(),
+            _maps: maps,
+            typeck_results: &fcx.typeck_results.borrow(),
+            borrows: &mut borrows,
+        },
+        &fcx.infcx,
+        body_owner_local_def_id,
+        fcx.param_env,
+        typeck_results,
+    )
+    .consume_body(body);
+
+    // compute liveness
+    let mut lsets = Liveness::new(maps, body_owner_local_def_id, typeck_results);
+    lsets.compute(&body, body_owner);
+
+    GeneratorLiveness { liveness: lsets, borrows }
+}
+
+/// We use ExprUseVisitor to gather up all the temporary values whose liveness we need to consider.
+struct ExprUseDelegate<'a, 'tcx> {
+    hir: &'a rustc_middle::hir::map::Map<'tcx>,
+    _maps: &'a mut IrMaps<'tcx>,
+    typeck_results: &'a TypeckResults<'tcx>,
+    borrows: &'a mut FxIndexMap<HirId, BorrowKind>,
+}
+
+impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
+    fn consume(
+        &mut self,
+        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+        debug!(
+            "ExprUseDelegate: consume {} ty={:?}, {:?}",
+            place_with_id.hir_id,
+            self.typeck_results.node_type(place_with_id.hir_id),
+            self.hir.span(place_with_id.hir_id)
+        );
+        // self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
+    }
+
+    fn borrow(
+        &mut self,
+        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+        bk: BorrowKind,
+    ) {
+        debug!(
+            "ExprUseDelegate: borrow {} ty={:?}, {:?}",
+            place_with_id.hir_id,
+            self.typeck_results.node_type(place_with_id.hir_id),
+            self.hir.span(place_with_id.hir_id)
+        );
+        self.borrows.insert(place_with_id.hir_id, bk);
+        // self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
+    }
+
+    fn mutate(
+        &mut self,
+        assignee_place: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+        debug!(
+            "ExprUseDelegate: mutate {} ty={:?}, {:?}",
+            assignee_place.hir_id,
+            self.typeck_results.node_type(assignee_place.hir_id),
+            self.hir.span(assignee_place.hir_id)
+        );
+        // self.maps.add_variable(liveness::VarKind::Temporary(assignee_place.hir_id));
+    }
+
+    fn fake_read(
+        &mut self,
+        _place: rustc_middle::hir::place::Place<'tcx>,
+        _cause: rustc_middle::mir::FakeReadCause,
+        _diag_expr_id: hir::HirId,
+    ) {
     }
 }
