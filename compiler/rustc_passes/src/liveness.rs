@@ -177,9 +177,9 @@ pub struct CaptureInfo {
 
 #[derive(Copy, Clone, Debug)]
 pub struct LocalInfo {
-    id: HirId,
-    name: Symbol,
-    is_shorthand: bool,
+    pub id: HirId,
+    pub name: Symbol,
+    pub is_shorthand: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -189,7 +189,7 @@ pub enum VarKind {
     Upvar(HirId, Symbol),
     /// A virtual variable for a temporary expression.
     ///
-    /// Used primarily by generator_interior.
+    /// Used by generator_interior.
     Temporary(HirId),
 }
 
@@ -222,7 +222,7 @@ impl IrMaps<'tcx> {
         ln
     }
 
-    fn add_live_node_for_node(&mut self, hir_id: HirId, lnk: LiveNodeKind) {
+    pub fn add_live_node_for_node(&mut self, hir_id: HirId, lnk: LiveNodeKind) {
         let ln = self.add_live_node(lnk);
         self.live_node_map.insert(hir_id, ln);
 
@@ -275,11 +275,11 @@ impl IrMaps<'tcx> {
         }
     }
 
-    fn set_captures(&mut self, hir_id: HirId, cs: Vec<CaptureInfo>) {
+    pub fn set_captures(&mut self, hir_id: HirId, cs: Vec<CaptureInfo>) {
         self.capture_info_map.insert(hir_id, Rc::new(cs));
     }
 
-    fn add_from_pat(&mut self, pat: &hir::Pat<'tcx>) {
+    pub fn add_from_pat(&mut self, pat: &hir::Pat<'tcx>) {
         // For struct patterns, take note of which fields used shorthand
         // (`x` rather than `x: x`).
         let mut shorthand_field_ids = HirIdSet::default();

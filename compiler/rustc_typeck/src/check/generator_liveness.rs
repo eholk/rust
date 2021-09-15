@@ -1,54 +1,29 @@
 use std::io::{self, Write};
 use std::iter;
+use std::ops::{Deref, DerefMut};
 
-use crate::expr_use_visitor;
-use hir::HirIdMap;
+use crate::expr_use_visitor::{self, ExprUseVisitor};
 use hir::def::Res;
 use hir::def_id::LocalDefId;
+use hir::intravisit::{NestedVisitorMap, Visitor};
+use hir::{intravisit, HirIdMap};
 use rustc_ast::InlineAsmOptions;
+use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir as hir;
 use rustc_hir::{Expr, HirId};
 use rustc_index::vec::IndexVec;
-use rustc_middle::ty::{self, RootVariableMinCaptureList, TypeckResults};
-use rustc_passes::liveness::{IrMaps, LiveNode, LiveNodeKind, VarKind, Variable, rwu_table};
+use rustc_middle::hir::map::Map;
+use rustc_middle::ty::{self, BorrowKind, RootVariableMinCaptureList, TypeckResults};
+use rustc_passes::liveness::{
+    self, rwu_table, CaptureInfo, IrMaps, LiveNode, LiveNodeKind, LocalInfo, VarKind, Variable,
+};
 
 use rustc_span::Span;
+
+use super::FnCtxt;
+
+use LiveNodeKind::*;
 use VarKind::*;
-
-impl<'tcx> expr_use_visitor::Delegate<'tcx> for IrMaps<'tcx> {
-    fn consume(
-        &mut self,
-        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
-        _diag_expr_id: rustc_hir::HirId,
-    ) {
-        self.add_variable(Temporary(place_with_id.hir_id));
-    }
-
-    fn borrow(
-        &mut self,
-        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
-        _diag_expr_id: rustc_hir::HirId,
-        _bk: rustc_middle::ty::BorrowKind,
-    ) {
-        self.add_variable(Temporary(place_with_id.hir_id));
-    }
-
-    fn mutate(
-        &mut self,
-        assignee_place: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
-        _diag_expr_id: rustc_hir::HirId,
-    ) {
-        self.add_variable(Temporary(assignee_place.hir_id));
-    }
-
-    fn fake_read(
-        &mut self,
-        _place: rustc_middle::hir::place::Place<'tcx>,
-        _cause: rustc_middle::mir::FakeReadCause,
-        _diag_expr_id: rustc_hir::HirId,
-    ) {
-    }
-}
 
 // ______________________________________________________________________
 // Computing liveness sets
@@ -60,7 +35,305 @@ const ACC_READ: u32 = 1;
 const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
-pub(super) struct Liveness<'a, 'atcx, 'tcx> {
+/// A custom visitor to find interesting expressions and values for generator liveness.
+struct IrMapVisitor<'a, 'tcx>(&'a mut IrMaps<'tcx>);
+
+impl<'a, 'tcx> Deref for IrMapVisitor<'a, 'tcx> {
+    type Target = IrMaps<'tcx>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a, 'tcx> DerefMut for IrMapVisitor<'a, 'tcx> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+    }
+}
+
+impl<'a, 'tcx> Visitor<'tcx> for IrMapVisitor<'a, 'tcx> {
+    type Map = Map<'tcx>;
+
+    fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
+        NestedVisitorMap::OnlyBodies(self.tcx.hir())
+    }
+
+    // fn visit_body(&mut self, body: &'tcx hir::Body<'tcx>) {
+    //     debug!("visit_body {:?}", body.id());
+
+    //     // swap in a new set of IR maps for this body
+    //     let mut maps = IrMaps::new(self.tcx);
+    //     let hir_id = maps.tcx.hir().body_owner(body.id());
+    //     let local_def_id = maps.tcx.hir().local_def_id(hir_id);
+    //     let def_id = local_def_id.to_def_id();
+
+    //     // Don't run unused pass for #[derive()]
+    //     if let Some(parent) = self.tcx.parent(def_id) {
+    //         if let DefKind::Impl = self.tcx.def_kind(parent.expect_local()) {
+    //             if self.tcx.has_attr(parent, sym::automatically_derived) {
+    //                 return;
+    //             }
+    //         }
+    //     }
+
+    //     // Don't run unused pass for #[naked]
+    //     if self.tcx.has_attr(def_id, sym::naked) {
+    //         return;
+    //     }
+
+    //     if let Some(upvars) = maps.tcx.upvars_mentioned(def_id) {
+    //         for &var_hir_id in upvars.keys() {
+    //             let var_name = maps.tcx.hir().name(var_hir_id);
+    //             maps.add_variable(Upvar(var_hir_id, var_name));
+    //         }
+    //     }
+
+    //     // gather up the various local variables, significant expressions,
+    //     // and so forth:
+    //     intravisit::walk_body(&mut maps, body);
+
+    //     // compute liveness
+    //     let mut lsets = Liveness::new(&mut maps, local_def_id);
+    //     let entry_ln = lsets.compute(&body, hir_id);
+    //     lsets.log_liveness(entry_ln, body.id().hir_id);
+
+    //     // check for various error conditions
+    //     lsets.visit_body(body);
+    //     lsets.warn_about_unused_upvars(entry_ln);
+    //     lsets.warn_about_unused_args(body, entry_ln);
+    // }
+
+    fn visit_local(&mut self, local: &'tcx hir::Local<'tcx>) {
+        self.add_from_pat(&local.pat);
+        intravisit::walk_local(self, local);
+    }
+
+    fn visit_arm(&mut self, arm: &'tcx hir::Arm<'tcx>) {
+        self.add_from_pat(&arm.pat);
+        if let Some(hir::Guard::IfLet(ref pat, _)) = arm.guard {
+            self.add_from_pat(pat);
+        }
+        intravisit::walk_arm(self, arm);
+    }
+
+    fn visit_param(&mut self, param: &'tcx hir::Param<'tcx>) {
+        param.pat.each_binding(|_bm, hir_id, _x, ident| {
+            let var = match param.pat.kind {
+                rustc_hir::PatKind::Struct(_, fields, _) => Local(LocalInfo {
+                    id: hir_id,
+                    name: ident.name,
+                    is_shorthand: fields
+                        .iter()
+                        .find(|f| f.ident == ident)
+                        .map_or(false, |f| f.is_shorthand),
+                }),
+                _ => Param(hir_id, ident.name),
+            };
+            self.add_variable(var);
+        });
+        intravisit::walk_param(self, param);
+    }
+
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        match expr.kind {
+            // live nodes required for uses or definitions of variables:
+            hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
+                debug!("expr {}: path that leads to {:?}", expr.hir_id, path.res);
+                if let Res::Local(_var_hir_id) = path.res {
+                    self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
+                }
+                intravisit::walk_expr(self, expr);
+            }
+            hir::ExprKind::Closure(..) => {
+                // Interesting control flow (for loops can contain labeled
+                // breaks or continues)
+                self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
+
+                // Make a live_node for each mentioned variable, with the span
+                // being the location that the variable is used.  This results
+                // in better error messages than just pointing at the closure
+                // construction site.
+                let mut call_caps = Vec::new();
+                let closure_def_id = self.tcx.hir().local_def_id(expr.hir_id);
+                if let Some(upvars) = self.tcx.upvars_mentioned(closure_def_id) {
+                    call_caps.extend(upvars.keys().map(|var_id| {
+                        let upvar = upvars[var_id];
+                        let upvar_ln = self.add_live_node(UpvarNode(upvar.span));
+                        CaptureInfo { ln: upvar_ln, var_hid: *var_id }
+                    }));
+                }
+                self.set_captures(expr.hir_id, call_caps);
+                intravisit::walk_expr(self, expr);
+            }
+
+            hir::ExprKind::Let(ref pat, ..) => {
+                self.add_from_pat(pat);
+                intravisit::walk_expr(self, expr);
+            }
+
+            // live nodes required for interesting control flow:
+            hir::ExprKind::If(..)
+            | hir::ExprKind::Match(..)
+            | hir::ExprKind::Loop(..)
+            | hir::ExprKind::Yield(..) => {
+                self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
+                intravisit::walk_expr(self, expr);
+            }
+            hir::ExprKind::Binary(op, ..) if op.node.is_lazy() => {
+                self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
+                intravisit::walk_expr(self, expr);
+            }
+
+            // otherwise, live nodes are not required:
+            hir::ExprKind::Index(..)
+            | hir::ExprKind::Field(..)
+            | hir::ExprKind::Array(..)
+            | hir::ExprKind::Call(..)
+            | hir::ExprKind::MethodCall(..)
+            | hir::ExprKind::Tup(..)
+            | hir::ExprKind::Binary(..)
+            | hir::ExprKind::AddrOf(..)
+            | hir::ExprKind::Cast(..)
+            | hir::ExprKind::DropTemps(..)
+            | hir::ExprKind::Unary(..)
+            | hir::ExprKind::Break(..)
+            | hir::ExprKind::Continue(_)
+            | hir::ExprKind::Lit(_)
+            | hir::ExprKind::ConstBlock(..)
+            | hir::ExprKind::Ret(..)
+            | hir::ExprKind::Block(..)
+            | hir::ExprKind::Assign(..)
+            | hir::ExprKind::AssignOp(..)
+            | hir::ExprKind::Struct(..)
+            | hir::ExprKind::Repeat(..)
+            | hir::ExprKind::InlineAsm(..)
+            | hir::ExprKind::LlvmInlineAsm(..)
+            | hir::ExprKind::Box(..)
+            | hir::ExprKind::Type(..)
+            | hir::ExprKind::Err
+            | hir::ExprKind::Path(hir::QPath::TypeRelative(..))
+            | hir::ExprKind::Path(hir::QPath::LangItem(..)) => {
+                intravisit::walk_expr(self, expr);
+            }
+        }
+    }
+}
+
+pub(super) fn compute_body_liveness(
+    fcx: &FnCtxt<'a, 'tcx>,
+    maps: &'a mut IrMaps<'tcx>,
+    body_id: hir::BodyId,
+    typeck_results: &'atcx TypeckResults<'tcx>,
+) -> GeneratorLiveness<'a, 'atcx, 'tcx>
+where
+    'atcx: 'a,
+{
+    let body = fcx.tcx.hir().body(body_id);
+    let body_owner = fcx.tcx.hir().body_owner(body_id);
+    let body_owner_local_def_id = fcx.tcx.hir().local_def_id(body_owner);
+
+    if let Some(captures) =
+        typeck_results.closure_min_captures.get(&body_owner_local_def_id.to_def_id())
+    {
+        for &var_hir_id in captures.keys() {
+            let var_name = fcx.tcx.hir().name(var_hir_id);
+            maps.add_variable(liveness::VarKind::Upvar(var_hir_id, var_name));
+        }
+    }
+
+    let mut borrows = <_>::default();
+
+    // gather up the various local variables, significant expressions,
+    // and so forth:
+    {
+        let mut visitor = IrMapVisitor(maps);
+        intravisit::walk_body(&mut visitor, body);
+    }
+    ExprUseVisitor::new(
+        &mut ExprUseDelegate {
+            hir: &fcx.tcx.hir(),
+            _maps: maps,
+            typeck_results: &fcx.typeck_results.borrow(),
+            borrows: &mut borrows,
+        },
+        &fcx.infcx,
+        body_owner_local_def_id,
+        fcx.param_env,
+        typeck_results,
+    )
+    .consume_body(body);
+
+    // compute liveness
+    let mut lsets = GeneratorLiveness::new(maps, body_owner_local_def_id, typeck_results, borrows);
+    lsets.compute(&body, body_owner);
+
+    lsets
+}
+
+/// We use ExprUseVisitor to gather up all the temporary values whose liveness we need to consider.
+struct ExprUseDelegate<'a, 'tcx> {
+    hir: &'a rustc_middle::hir::map::Map<'tcx>,
+    _maps: &'a mut IrMaps<'tcx>,
+    typeck_results: &'a TypeckResults<'tcx>,
+    borrows: &'a mut FxIndexMap<HirId, BorrowKind>,
+}
+
+impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
+    fn consume(
+        &mut self,
+        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+        debug!(
+            "ExprUseDelegate: consume {} ty={:?}, {:?}",
+            place_with_id.hir_id,
+            self.typeck_results.node_type(place_with_id.hir_id),
+            self.hir.span(place_with_id.hir_id)
+        );
+        // self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
+    }
+
+    fn borrow(
+        &mut self,
+        place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+        bk: BorrowKind,
+    ) {
+        debug!(
+            "ExprUseDelegate: borrow {} ty={:?}, {:?}",
+            place_with_id.hir_id,
+            self.typeck_results.node_type(place_with_id.hir_id),
+            self.hir.span(place_with_id.hir_id)
+        );
+        self.borrows.insert(place_with_id.hir_id, bk);
+        // self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
+    }
+
+    fn mutate(
+        &mut self,
+        assignee_place: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+        debug!(
+            "ExprUseDelegate: mutate {} ty={:?}, {:?}",
+            assignee_place.hir_id,
+            self.typeck_results.node_type(assignee_place.hir_id),
+            self.hir.span(assignee_place.hir_id)
+        );
+        // self.maps.add_variable(liveness::VarKind::Temporary(assignee_place.hir_id));
+    }
+
+    fn fake_read(
+        &mut self,
+        _place: rustc_middle::hir::place::Place<'tcx>,
+        _cause: rustc_middle::mir::FakeReadCause,
+        _diag_expr_id: hir::HirId,
+    ) {
+    }
+}
+
+pub(super) struct GeneratorLiveness<'a, 'atcx, 'tcx> {
     pub ir: &'a mut IrMaps<'tcx>,
     typeck_results: &'atcx ty::TypeckResults<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -81,13 +354,15 @@ pub(super) struct Liveness<'a, 'atcx, 'tcx> {
     // it probably doesn't now)
     break_ln: HirIdMap<LiveNode>,
     cont_ln: HirIdMap<LiveNode>,
+    pub borrows: FxIndexMap<HirId, BorrowKind>,
 }
 
-impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx> {
+impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
     pub fn new(
         ir: &'a mut IrMaps<'tcx>,
         body_owner: LocalDefId,
         typeck_results: &'atcx TypeckResults<'tcx>,
+        borrows: FxIndexMap<HirId, BorrowKind>,
     ) -> Self {
         let param_env = ir.tcx.param_env(body_owner);
         let closure_min_captures = typeck_results.closure_min_captures.get(&body_owner.to_def_id());
@@ -97,7 +372,7 @@ impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx> {
         let num_live_nodes = ir.lnks.len();
         let num_vars = ir.var_kinds.len();
 
-        Liveness {
+        GeneratorLiveness {
             ir,
             typeck_results,
             param_env,
@@ -108,6 +383,7 @@ impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx> {
             exit_ln,
             break_ln: Default::default(),
             cont_ln: Default::default(),
+            borrows,
         }
     }
 
@@ -803,6 +1079,10 @@ impl<'a, 'atcx, 'tcx> Liveness<'a, 'atcx, 'tcx> {
     fn check_is_ty_uninhabited(&mut self, expr: &Expr<'_>, succ: LiveNode) -> LiveNode {
         let ty = self.typeck_results.expr_ty(expr);
         let m = self.ir.tcx.parent_module(expr.hir_id).to_def_id();
-        if self.ir.tcx.is_ty_uninhabited_from(m, ty, self.param_env) { self.exit_ln } else { succ }
+        if self.ir.tcx.is_ty_uninhabited_from(m, ty, self.param_env) {
+            self.exit_ln
+        } else {
+            succ
+        }
     }
 }
