@@ -16,7 +16,7 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_infer::infer::RegionVariableOrigin;
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, BorrowKind, Ty};
+use rustc_middle::ty::{self, Ty};
 use rustc_passes::liveness::{IrMaps, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
@@ -186,38 +186,40 @@ pub fn resolve_interior<'a, 'tcx>(
 
         // The types are already kept in insertion order.
         // let types = visitor.types;
-        let borrows = &visitor.liveness.borrows;
-        let mut types = visitor
-            .live_across_yield
-            .iter()
-            .map(|v| {
-                let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
-                let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
+        let temporaries = &visitor.liveness.temporaries;
+        let mut types = FxIndexSet::<_>::default();
+        for v in visitor.live_across_yield.iter() {
+            let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
+            let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
 
-                // fixup type if it is borrowed
-                let ty = if let Some(bk) = borrows.get(&var_hir_id) {
-                    // FIXME: this is almost certainly the wrong origin to use here.
+            let cause = ty::GeneratorInteriorTypeCause {
+                ty,
+                span: fcx.tcx.hir().span(var_hir_id),
+                scope_span: None,
+                yield_span: fcx.tcx.hir().span(var_hir_id), // FIXME: this should be the yield span instead
+                expr: None,
+            };
+
+            types.insert(cause.clone());
+            temporaries.get(&var_hir_id).map(|usage| {
+                if usage.borrowed {
                     let origin = RegionVariableOrigin::AddrOfRegion(fcx.tcx.hir().span(var_hir_id));
                     let region = fcx.infcx.next_region_var(origin);
-                    match bk {
-                        BorrowKind::ImmBorrow | BorrowKind::UniqueImmBorrow => {
-                            visitor.fcx.tcx.mk_imm_ref(region, ty)
-                        }
-                        BorrowKind::MutBorrow => visitor.fcx.tcx.mk_mut_ref(region, ty),
-                    }
-                } else {
-                    ty
-                };
-
-                ty::GeneratorInteriorTypeCause {
-                    ty,
-                    span: fcx.tcx.hir().span(var_hir_id),
-                    scope_span: None,
-                    yield_span: fcx.tcx.hir().span(var_hir_id), // FIXME: this should be the yield span instead
-                    expr: None,
+                    types.insert(ty::GeneratorInteriorTypeCause {
+                        ty: visitor.fcx.tcx.mk_imm_ref(region, ty),
+                        ..cause.clone()
+                    });
                 }
-            })
-            .collect::<FxIndexSet<_>>();
+                if usage.borrowed_mut {
+                    let origin = RegionVariableOrigin::AddrOfRegion(fcx.tcx.hir().span(var_hir_id));
+                    let region = fcx.infcx.next_region_var(origin);
+                    types.insert(ty::GeneratorInteriorTypeCause {
+                        ty: visitor.fcx.tcx.mk_mut_ref(region, ty),
+                        ..cause
+                    });
+                }
+            });
+        }
 
         // Now add in any temporaries that implement Drop
         for ty in visitor.types.drain(..) {

@@ -35,10 +35,30 @@ const ACC_READ: u32 = 1;
 const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
+pub(super) struct TemporaryUsage {
+    pub borrowed: bool,
+    pub borrowed_mut: bool,
+    pub consumed: bool,
+}
+
+impl std::ops::BitOrAssign for TemporaryUsage {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.borrowed |= rhs.borrowed;
+        self.borrowed_mut |= rhs.borrowed_mut;
+        self.consumed |= rhs.consumed;
+    }
+}
+
+impl Default for TemporaryUsage {
+    fn default() -> Self {
+        Self { borrowed: false, borrowed_mut: false, consumed: false }
+    }
+}
+
 /// A custom visitor to find interesting expressions and values for generator liveness.
 struct IrMapVisitor<'a, 'tcx> {
     ir: &'a mut IrMaps<'tcx>,
-    borrows: &'a FxIndexMap<HirId, BorrowKind>,
+    temporaries: &'a FxIndexMap<HirId, TemporaryUsage>,
 }
 
 impl<'a, 'tcx> Deref for IrMapVisitor<'a, 'tcx> {
@@ -139,7 +159,7 @@ impl<'a, 'tcx> Visitor<'tcx> for IrMapVisitor<'a, 'tcx> {
     }
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
-        if self.borrows.contains_key(&expr.hir_id) {
+        if self.temporaries.contains_key(&expr.hir_id) {
             self.add_variable(Temporary(expr.hir_id));
             // FIXME: this leads to duplicate nodes
             self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
@@ -251,7 +271,7 @@ where
         }
     }
 
-    let mut borrows = <_>::default();
+    let mut temporaries = <_>::default();
 
     // gather up the various local variables, significant expressions,
     // and so forth:
@@ -260,7 +280,7 @@ where
             hir: &fcx.tcx.hir(),
             _maps: maps,
             typeck_results: &fcx.typeck_results.borrow(),
-            borrows: &mut borrows,
+            temporaries: &mut temporaries,
         },
         &fcx.infcx,
         body_owner_local_def_id,
@@ -268,10 +288,11 @@ where
         typeck_results,
     )
     .consume_body(body);
-    intravisit::walk_body(&mut IrMapVisitor { ir: maps, borrows: &borrows }, body);
+    intravisit::walk_body(&mut IrMapVisitor { ir: maps, temporaries: &temporaries }, body);
 
     // compute liveness
-    let mut lsets = GeneratorLiveness::new(maps, body_owner_local_def_id, typeck_results, borrows);
+    let mut lsets =
+        GeneratorLiveness::new(maps, body_owner_local_def_id, typeck_results, temporaries);
     lsets.compute(&body, body_owner);
 
     lsets
@@ -282,7 +303,7 @@ struct ExprUseDelegate<'a, 'tcx> {
     hir: &'a rustc_middle::hir::map::Map<'tcx>,
     _maps: &'a mut IrMaps<'tcx>,
     typeck_results: &'a TypeckResults<'tcx>,
-    borrows: &'a mut FxIndexMap<HirId, BorrowKind>,
+    temporaries: &'a mut FxIndexMap<HirId, TemporaryUsage>,
 }
 
 impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
@@ -291,12 +312,20 @@ impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
         place_with_id: &rustc_middle::hir::place::PlaceWithHirId<'tcx>,
         _diag_expr_id: hir::HirId,
     ) {
+        let hir_id = place_with_id.hir_id;
         debug!(
             "ExprUseDelegate: consume {} ty={:?}, {:?}",
-            place_with_id.hir_id,
-            self.typeck_results.node_type(place_with_id.hir_id),
-            self.hir.span(place_with_id.hir_id)
+            hir_id,
+            self.typeck_results.node_type(hir_id),
+            self.hir.span(hir_id)
         );
+        let usage = TemporaryUsage { consumed: true, ..Default::default() };
+        match self.temporaries.get_mut(&hir_id) {
+            Some(existing_usage) => *existing_usage |= usage,
+            None => {
+                self.temporaries.insert(hir_id, usage);
+            }
+        }
     }
 
     fn borrow(
@@ -305,13 +334,25 @@ impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
         _diag_expr_id: hir::HirId,
         bk: BorrowKind,
     ) {
+        let hir_id = place_with_id.hir_id;
         debug!(
-            "ExprUseDelegate: borrow {} ty={:?}, {:?}",
-            place_with_id.hir_id,
-            self.typeck_results.node_type(place_with_id.hir_id),
-            self.hir.span(place_with_id.hir_id)
+            "ExprUseDelegate: borrow {:?} {} ty={:?}, {:?}",
+            bk,
+            hir_id,
+            self.typeck_results.node_type(hir_id),
+            self.hir.span(hir_id)
         );
-        self.borrows.insert(place_with_id.hir_id, bk);
+        let usage = match bk {
+            BorrowKind::ImmBorrow => TemporaryUsage { borrowed: true, ..Default::default() },
+            BorrowKind::UniqueImmBorrow => TemporaryUsage { borrowed: true, ..Default::default() },
+            BorrowKind::MutBorrow => TemporaryUsage { borrowed_mut: true, ..Default::default() },
+        };
+        match self.temporaries.get_mut(&hir_id) {
+            Some(existing_usage) => *existing_usage |= usage,
+            None => {
+                self.temporaries.insert(hir_id, usage);
+            }
+        }
     }
 
     fn mutate(
@@ -357,7 +398,7 @@ pub(super) struct GeneratorLiveness<'a, 'atcx, 'tcx> {
     // it probably doesn't now)
     break_ln: HirIdMap<LiveNode>,
     cont_ln: HirIdMap<LiveNode>,
-    pub borrows: FxIndexMap<HirId, BorrowKind>,
+    pub temporaries: FxIndexMap<HirId, TemporaryUsage>,
 }
 
 impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
@@ -365,7 +406,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
         ir: &'a mut IrMaps<'tcx>,
         body_owner: LocalDefId,
         typeck_results: &'atcx TypeckResults<'tcx>,
-        borrows: FxIndexMap<HirId, BorrowKind>,
+        temporaries: FxIndexMap<HirId, TemporaryUsage>,
     ) -> Self {
         let param_env = ir.tcx.param_env(body_owner);
         let closure_min_captures = typeck_results.closure_min_captures.get(&body_owner.to_def_id());
@@ -386,7 +427,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
             exit_ln,
             break_ln: Default::default(),
             cont_ln: Default::default(),
-            borrows,
+            temporaries,
         }
     }
 
@@ -645,7 +686,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
     fn propagate_through_expr(&mut self, expr: &Expr<'_>, succ: LiveNode) -> LiveNode {
         debug!("propagate_through_expr: {:?}", expr);
 
-        let succ = match self.borrows.get(&expr.hir_id) {
+        let succ = match self.temporaries.get(&expr.hir_id) {
             Some(_) => {
                 let ln = self.live_node(expr.hir_id, expr.span);
                 self.init_from_succ(ln, succ);
@@ -751,6 +792,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                     });
                     let arm_succ = self.define_bindings_in_pat(&arm.pat, guard_succ);
                     self.merge_from_succ(ln, arm_succ);
+                    self.maybe_use_temporary(ln, arm.body.hir_id, expr.span)
                 }
                 self.propagate_through_expr(&e, ln)
             }
@@ -954,7 +996,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
 
     /// Marks a temporary as used if it was one that was previously identified as being interesting
     fn maybe_use_temporary(&mut self, ln: LiveNode, temporary: HirId, span: Span) {
-        if self.borrows.contains_key(&temporary) {
+        if self.temporaries.contains_key(&temporary) {
             self.acc(ln, self.variable(temporary, span), ACC_READ | ACC_WRITE);
         }
     }
@@ -1101,10 +1143,6 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
     fn check_is_ty_uninhabited(&mut self, expr: &Expr<'_>, succ: LiveNode) -> LiveNode {
         let ty = self.typeck_results.expr_ty(expr);
         let m = self.ir.tcx.parent_module(expr.hir_id).to_def_id();
-        if self.ir.tcx.is_ty_uninhabited_from(m, ty, self.param_env) {
-            self.exit_ln
-        } else {
-            succ
-        }
+        if self.ir.tcx.is_ty_uninhabited_from(m, ty, self.param_env) { self.exit_ln } else { succ }
     }
 }
