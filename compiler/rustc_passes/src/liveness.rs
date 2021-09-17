@@ -258,7 +258,7 @@ impl IrMaps<'tcx> {
     pub fn variable_name(&self, var: Variable) -> Symbol {
         match self.var_kinds[var] {
             Local(LocalInfo { name, .. }) | Param(_, name) | Upvar(_, name) => name,
-            Temporary(..) => Symbol::intern("[temporary]"),
+            Temporary(id) => Symbol::intern(format!("[temporary]@{}", id).as_str()),
         }
     }
 

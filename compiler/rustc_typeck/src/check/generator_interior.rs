@@ -394,7 +394,7 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
                 for (_, &var) in self.liveness.ir.variable_map.iter() {
                     if self.liveness.live_on_entry(live_node, var) {
                         debug!(
-                            "  Variable {:?}: {:?} (ty={:?}) is live on entry at {:?}",
+                            "  Variable {:?}: {:?} (ty={:?}) is LIVE on entry at {:?}",
                             var,
                             self.liveness.ir.variable_name(var),
                             self.fcx
@@ -405,6 +405,17 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
                         );
 
                         self.live_across_yield.insert(var);
+                    } else {
+                        debug!(
+                            "  Variable {:?}: {:?} (ty={:?}) is NOT LIVE on entry at {:?}",
+                            var,
+                            self.liveness.ir.variable_name(var),
+                            self.fcx
+                                .typeck_results
+                                .borrow()
+                                .node_type(self.liveness.ir.variable_hir_id(var)),
+                            expr.span
+                        );
                     }
                 }
                 debug!("***Done dumping variable liveness information***");

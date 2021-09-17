@@ -36,19 +36,22 @@ const ACC_WRITE: u32 = 2;
 const ACC_USE: u32 = 4;
 
 /// A custom visitor to find interesting expressions and values for generator liveness.
-struct IrMapVisitor<'a, 'tcx>(&'a mut IrMaps<'tcx>);
+struct IrMapVisitor<'a, 'tcx> {
+    ir: &'a mut IrMaps<'tcx>,
+    borrows: &'a FxIndexMap<HirId, BorrowKind>,
+}
 
 impl<'a, 'tcx> Deref for IrMapVisitor<'a, 'tcx> {
     type Target = IrMaps<'tcx>;
 
     fn deref(&self) -> &Self::Target {
-        self.0
+        self.ir
     }
 }
 
 impl<'a, 'tcx> DerefMut for IrMapVisitor<'a, 'tcx> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0
+        self.ir
     }
 }
 
@@ -136,6 +139,12 @@ impl<'a, 'tcx> Visitor<'tcx> for IrMapVisitor<'a, 'tcx> {
     }
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        if self.borrows.contains_key(&expr.hir_id) {
+            self.add_variable(Temporary(expr.hir_id));
+            // FIXME: this leads to duplicate nodes
+            self.add_live_node_for_node(expr.hir_id, ExprNode(expr.span, expr.hir_id));
+        }
+
         match expr.kind {
             // live nodes required for uses or definitions of variables:
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
@@ -246,10 +255,6 @@ where
 
     // gather up the various local variables, significant expressions,
     // and so forth:
-    {
-        let mut visitor = IrMapVisitor(maps);
-        intravisit::walk_body(&mut visitor, body);
-    }
     ExprUseVisitor::new(
         &mut ExprUseDelegate {
             hir: &fcx.tcx.hir(),
@@ -263,6 +268,7 @@ where
         typeck_results,
     )
     .consume_body(body);
+    intravisit::walk_body(&mut IrMapVisitor { ir: maps, borrows: &borrows }, body);
 
     // compute liveness
     let mut lsets = GeneratorLiveness::new(maps, body_owner_local_def_id, typeck_results, borrows);
@@ -291,7 +297,6 @@ impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
             self.typeck_results.node_type(place_with_id.hir_id),
             self.hir.span(place_with_id.hir_id)
         );
-        // self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
     }
 
     fn borrow(
@@ -307,7 +312,6 @@ impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
             self.hir.span(place_with_id.hir_id)
         );
         self.borrows.insert(place_with_id.hir_id, bk);
-        // self.maps.add_variable(liveness::VarKind::Temporary(place_with_id.hir_id));
     }
 
     fn mutate(
@@ -321,7 +325,6 @@ impl<'a, 'tcx> expr_use_visitor::Delegate<'tcx> for ExprUseDelegate<'a, 'tcx> {
             self.typeck_results.node_type(assignee_place.hir_id),
             self.hir.span(assignee_place.hir_id)
         );
-        // self.maps.add_variable(liveness::VarKind::Temporary(assignee_place.hir_id));
     }
 
     fn fake_read(
@@ -642,6 +645,16 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
     fn propagate_through_expr(&mut self, expr: &Expr<'_>, succ: LiveNode) -> LiveNode {
         debug!("propagate_through_expr: {:?}", expr);
 
+        let succ = match self.borrows.get(&expr.hir_id) {
+            Some(_) => {
+                let ln = self.live_node(expr.hir_id, expr.span);
+                self.init_from_succ(ln, succ);
+                self.define(ln, self.variable(expr.hir_id, expr.span));
+                ln
+            }
+            None => succ,
+        };
+
         match expr.kind {
             // Interesting cases with control flow or which gen/kill
             hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
@@ -787,10 +800,12 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
             }
 
             hir::ExprKind::AssignOp(_, ref l, ref r) => {
+                self.maybe_use_temporary(succ, r.hir_id, expr.span);
+                self.maybe_use_temporary(succ, l.hir_id, expr.span);
                 // an overloaded assign op is like a method call
                 if self.typeck_results.is_method_call(expr) {
-                    let succ = self.propagate_through_expr(&l, succ);
-                    self.propagate_through_expr(&r, succ)
+                    let succ = self.propagate_through_expr(&r, succ);
+                    self.propagate_through_expr(&l, succ)
                 } else {
                     // see comment on places in
                     // propagate_through_place_components()
@@ -934,6 +949,13 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
             // Note that labels have been resolved, so we don't need to look
             // at the label ident
             hir::ExprKind::Block(ref blk, _) => self.propagate_through_block(&blk, succ),
+        }
+    }
+
+    /// Marks a temporary as used if it was one that was previously identified as being interesting
+    fn maybe_use_temporary(&mut self, ln: LiveNode, temporary: HirId, span: Span) {
+        if self.borrows.contains_key(&temporary) {
+            self.acc(ln, self.variable(temporary, span), ACC_READ | ACC_WRITE);
         }
     }
 
