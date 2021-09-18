@@ -278,7 +278,6 @@ where
     ExprUseVisitor::new(
         &mut ExprUseDelegate {
             hir: &fcx.tcx.hir(),
-            _maps: maps,
             typeck_results: &fcx.typeck_results.borrow(),
             temporaries: &mut temporaries,
         },
@@ -301,7 +300,6 @@ where
 /// We use ExprUseVisitor to gather up all the temporary values whose liveness we need to consider.
 struct ExprUseDelegate<'a, 'tcx> {
     hir: &'a rustc_middle::hir::map::Map<'tcx>,
-    _maps: &'a mut IrMaps<'tcx>,
     typeck_results: &'a TypeckResults<'tcx>,
     temporaries: &'a mut FxIndexMap<HirId, TemporaryUsage>,
 }
@@ -876,6 +874,9 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
 
             hir::ExprKind::MethodCall(.., ref args, _) => {
                 let succ = self.check_is_ty_uninhabited(expr, succ);
+                for arg in args.iter() {
+                    self.maybe_use_temporary(succ, arg.hir_id, arg.span);
+                }
                 self.propagate_through_exprs(args, succ)
             }
 
