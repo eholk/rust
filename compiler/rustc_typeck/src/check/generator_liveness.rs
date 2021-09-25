@@ -778,6 +778,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                 //
                 let ln = self.live_node(expr.hir_id, expr.span);
                 self.init_empty(ln, succ);
+                self.maybe_use_temporary(succ, e.hir_id, e.span);
                 for arm in arms {
                     let body_succ = self.propagate_through_expr(&arm.body, succ);
 
