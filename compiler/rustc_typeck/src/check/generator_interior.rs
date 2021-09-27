@@ -191,6 +191,7 @@ pub fn resolve_interior<'a, 'tcx>(
         for v in visitor.live_across_yield.iter() {
             let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
             let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
+            let ty = visitor.fcx.resolve_vars_if_possible(ty);
 
             let cause = ty::GeneratorInteriorTypeCause {
                 ty,
@@ -239,7 +240,7 @@ pub fn resolve_interior<'a, 'tcx>(
     // if a Sync generator contains an &'α T, we need to check whether &'α T: Sync),
     // so knowledge of the exact relationships between them isn't particularly important.
 
-    debug!("types in generator {:?}, span = {:?}", types, body.value.span);
+    debug!("types in generator {:#?}, span = {:?}", types, body.value.span);
 
     let mut counter = 0;
     let mut captured_tys = FxHashSet::default();
