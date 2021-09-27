@@ -13,6 +13,8 @@ fn main() {
         //~^ ERROR: generator cannot be shared between threads safely
         let a = Cell::new(2);
         yield;
+        // Explicity drop a so it is live across the yield for liveness-based generator captures.
+        drop(a);
     });
 
     let a = Cell::new(2);
