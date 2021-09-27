@@ -47,7 +47,7 @@ LL |     require_send(send_fut);
    = note: required because it appears within the type `impl Future`
    = note: required because it appears within the type `impl Future`
    = note: required because it appears within the type `impl Future`
-   = note: required because it appears within the type `{ResumeTy, impl Future, (), i32, Ready<i32>}`
+   = note: required because it appears within the type `for<'r, 's, 't0, 't1, 't2> {(), &'r (), !, &'s !, i32, &'t0 i32, impl Future, &'t1 impl Future, Ready<i32>, &'t2 Ready<i32>}`
    = note: required because it appears within the type `[static generator@$DIR/issue-68112.rs:55:26: 59:6]`
    = note: required because it appears within the type `from_generator::GenFuture<[static generator@$DIR/issue-68112.rs:55:26: 59:6]>`
    = note: required because it appears within the type `impl Future`
