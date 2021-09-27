@@ -185,7 +185,6 @@ pub fn resolve_interior<'a, 'tcx>(
         assert_eq!(region_expr_count, visitor.expr_count);
 
         // The types are already kept in insertion order.
-        // let types = visitor.types;
         let temporaries = &visitor.liveness.temporaries;
         let mut types = FxIndexSet::<_>::default();
         for v in visitor.live_across_yield.iter() {
