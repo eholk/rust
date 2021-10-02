@@ -16,8 +16,8 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_infer::infer::RegionVariableOrigin;
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty};
-use rustc_passes::liveness::{IrMaps, Variable};
+use rustc_middle::ty::{self, GeneratorInteriorTypeCause, Ty};
+use rustc_passes::liveness::IrMaps;
 use rustc_span::Span;
 use smallvec::SmallVec;
 
@@ -36,7 +36,8 @@ struct InteriorVisitor<'a, 'atcx, 'tcx> {
     guard_bindings: SmallVec<[SmallVec<[HirId; 4]>; 1]>,
     guard_bindings_set: HirIdSet,
     liveness: GeneratorLiveness<'a, 'atcx, 'tcx>,
-    live_across_yield: FxIndexSet<Variable>,
+    /// A set of values that are live across a yield expression
+    live_across_yield: FxIndexSet<GeneratorInteriorTypeCause<'tcx>>,
 }
 
 impl<'a, 'atcx, 'tcx> InteriorVisitor<'a, 'atcx, 'tcx> {
@@ -185,46 +186,13 @@ pub fn resolve_interior<'a, 'tcx>(
         assert_eq!(region_expr_count, visitor.expr_count);
 
         // The types are already kept in insertion order.
-        let temporaries = &visitor.liveness.temporaries;
-        let mut types = FxIndexSet::<_>::default();
-        for v in visitor.live_across_yield.iter() {
-            let var_hir_id = visitor.liveness.ir.variable_hir_id(*v);
-            let ty = visitor.fcx.inh.typeck_results.borrow().node_type(var_hir_id);
-            let ty = visitor.fcx.resolve_vars_if_possible(ty);
-
-            let cause = ty::GeneratorInteriorTypeCause {
-                ty,
-                span: fcx.tcx.hir().span(var_hir_id),
-                scope_span: None,
-                yield_span: fcx.tcx.hir().span(var_hir_id), // FIXME: this should be the yield span instead
-                expr: None,
-            };
-
-            types.insert(cause.clone());
-            temporaries.get(&var_hir_id).map(|usage| {
-                if usage.borrowed {
-                    let origin = RegionVariableOrigin::AddrOfRegion(fcx.tcx.hir().span(var_hir_id));
-                    let region = fcx.infcx.next_region_var(origin);
-                    types.insert(ty::GeneratorInteriorTypeCause {
-                        ty: visitor.fcx.tcx.mk_imm_ref(region, ty),
-                        ..cause.clone()
-                    });
-                }
-                if usage.borrowed_mut {
-                    let origin = RegionVariableOrigin::AddrOfRegion(fcx.tcx.hir().span(var_hir_id));
-                    let region = fcx.infcx.next_region_var(origin);
-                    types.insert(ty::GeneratorInteriorTypeCause {
-                        ty: visitor.fcx.tcx.mk_mut_ref(region, ty),
-                        ..cause
-                    });
-                }
-            });
-        }
+        let mut types = visitor.live_across_yield;
 
         // Now add in any temporaries that implement Drop
         for ty in visitor.types.drain(..) {
             if ty.ty.has_significant_drop(fcx.tcx, fcx.param_env) {
-                types.insert(ty);
+                // FIXME: need scope span for this type.
+                types.insert(GeneratorInteriorTypeCause { scope_span: None, ..ty });
             }
         }
         types
@@ -353,6 +321,7 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         let mut guard_borrowing_from_pattern = false;
+        let scope = self.region_scope_tree.temporary_scope(expr.hir_id.local_id);
         match &expr.kind {
             ExprKind::Call(callee, args) => match &callee.kind {
                 ExprKind::Path(qpath) => {
@@ -395,18 +364,57 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
                 debug!("***Dumping variable liveness information***");
                 for (_, &var) in self.liveness.ir.variable_map.iter() {
                     if self.liveness.live_on_entry(live_node, var) {
+                        let ty = self
+                            .fcx
+                            .typeck_results
+                            .borrow()
+                            .node_type(self.liveness.ir.variable_hir_id(var));
+                        let ty = self.fcx.resolve_vars_if_possible(ty);
                         debug!(
                             "  Variable {:?}: {:?} (ty={:?}) is LIVE on entry at {:?}",
                             var,
                             self.liveness.ir.variable_name(var),
-                            self.fcx
-                                .typeck_results
-                                .borrow()
-                                .node_type(self.liveness.ir.variable_hir_id(var)),
+                            ty,
                             expr.span
                         );
 
-                        self.live_across_yield.insert(var);
+                        let var_hir_id = self.liveness.ir.variable_hir_id(var);
+
+                        let cause = ty::GeneratorInteriorTypeCause {
+                            ty,
+                            span: self.fcx.tcx.hir().span(var_hir_id),
+                            scope_span: scope.map(|s| s.span(self.fcx.tcx, self.region_scope_tree)),
+                            yield_span: expr.span,
+                            expr: match self.fcx.tcx.hir().get(var_hir_id) {
+                                hir::Node::Expr(e) => Some(e.hir_id),
+                                _ => None,
+                            },
+                        };
+
+                        self.live_across_yield.insert(cause.clone());
+
+                        let usage = self.liveness.temporaries.get(&var_hir_id);
+                        match usage {
+                            Some(usage) => {
+                                if usage.borrowed {
+                                    let origin = RegionVariableOrigin::AddrOfRegion(cause.span);
+                                    let region = self.fcx.infcx.next_region_var(origin);
+                                    self.live_across_yield.insert(ty::GeneratorInteriorTypeCause {
+                                        ty: self.fcx.tcx.mk_imm_ref(region, ty),
+                                        ..cause.clone()
+                                    });
+                                }
+                                if usage.borrowed_mut {
+                                    let origin = RegionVariableOrigin::AddrOfRegion(cause.span);
+                                    let region = self.fcx.infcx.next_region_var(origin);
+                                    self.live_across_yield.insert(ty::GeneratorInteriorTypeCause {
+                                        ty: self.fcx.tcx.mk_mut_ref(region, ty),
+                                        ..cause
+                                    });
+                                }
+                            }
+                            None => (),
+                        }
                     } else {
                         debug!(
                             "  Variable {:?}: {:?} (ty={:?}) is NOT LIVE on entry at {:?}",
@@ -428,8 +436,6 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
         }
 
         self.expr_count += 1;
-
-        let scope = self.region_scope_tree.temporary_scope(expr.hir_id.local_id);
 
         // If there are adjustments, then record the final type --
         // this is the actual value that is being produced.
