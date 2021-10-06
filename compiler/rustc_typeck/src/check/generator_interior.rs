@@ -15,9 +15,9 @@ use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_infer::infer::RegionVariableOrigin;
-use rustc_middle::middle::region::{self, YieldData};
+use rustc_middle::middle::region::{self, Scope, YieldData};
 use rustc_middle::ty::{self, GeneratorInteriorTypeCause, Ty};
-use rustc_passes::liveness::IrMaps;
+use rustc_passes::liveness::{IrMaps, LocalInfo, Variable};
 use rustc_span::Span;
 use smallvec::SmallVec;
 
@@ -152,6 +152,23 @@ impl<'a, 'atcx, 'tcx> InteriorVisitor<'a, 'atcx, 'tcx> {
             }
         }
     }
+
+    fn var_scope(&self, var: Variable) -> Option<Scope> {
+        if let Some(kind) = self.liveness.ir.var_kinds.get(var) {
+            match kind {
+                rustc_passes::liveness::VarKind::Param(hir_id, _)
+                | rustc_passes::liveness::VarKind::Local(LocalInfo { id: hir_id, .. })
+                | rustc_passes::liveness::VarKind::Upvar(hir_id, _) => {
+                    Some(self.region_scope_tree.var_scope(hir_id.local_id))
+                }
+                rustc_passes::liveness::VarKind::Temporary(hir_id) => {
+                    self.region_scope_tree.temporary_scope(hir_id.local_id)
+                }
+            }
+        } else {
+            None
+        }
+    }
 }
 
 pub fn resolve_interior<'a, 'tcx>(
@@ -189,10 +206,9 @@ pub fn resolve_interior<'a, 'tcx>(
         let mut types = visitor.live_across_yield;
 
         // Now add in any temporaries that implement Drop
-        for ty in visitor.types.drain(..) {
-            if ty.ty.has_significant_drop(fcx.tcx, fcx.param_env) {
-                // FIXME: need scope span for this type.
-                types.insert(GeneratorInteriorTypeCause { scope_span: None, ..ty });
+        for cause in visitor.types.drain(..) {
+            if cause.ty.has_significant_drop(fcx.tcx, fcx.param_env) {
+                types.insert(cause);
             }
         }
         types
@@ -321,7 +337,6 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         let mut guard_borrowing_from_pattern = false;
-        let scope = self.region_scope_tree.temporary_scope(expr.hir_id.local_id);
         match &expr.kind {
             ExprKind::Call(callee, args) => match &callee.kind {
                 ExprKind::Path(qpath) => {
@@ -379,7 +394,7 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
                         );
 
                         let var_hir_id = self.liveness.ir.variable_hir_id(var);
-
+                        let scope = self.var_scope(var);
                         let cause = ty::GeneratorInteriorTypeCause {
                             ty,
                             span: self.fcx.tcx.hir().span(var_hir_id),
@@ -436,6 +451,8 @@ impl<'a, 'atcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'atcx, 'tcx> {
         }
 
         self.expr_count += 1;
+
+        let scope = self.region_scope_tree.temporary_scope(expr.hir_id.local_id);
 
         // If there are adjustments, then record the final type --
         // this is the actual value that is being produced.
