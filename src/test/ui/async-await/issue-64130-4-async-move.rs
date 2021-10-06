@@ -1,4 +1,5 @@
 // edition:2018
+// build-pass
 use std::any::Any;
 use std::future::Future;
 
@@ -13,7 +14,6 @@ impl Client {
 async fn get() { }
 
 pub fn foo() -> impl Future + Send {
-    //~^ ERROR future cannot be sent between threads safely
     let client = Client(Box::new(true));
     async move {
         match client.status() {

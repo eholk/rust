@@ -181,7 +181,6 @@ pub fn resolve_interior<'a, 'tcx>(
     let body = fcx.tcx.hir().body(body_id);
     let types = {
         let mut ir_maps = IrMaps::new(fcx.tcx);
-        // FIXME: use this to inform capture information
         let typeck_results = fcx.inh.typeck_results.borrow();
         let liveness = compute_body_liveness(&fcx, &mut ir_maps, body_id, &typeck_results);
         let mut visitor = InteriorVisitor {

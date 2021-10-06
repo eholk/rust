@@ -860,6 +860,9 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
             hir::ExprKind::Array(ref exprs) => self.propagate_through_exprs(exprs, succ),
 
             hir::ExprKind::Struct(_, ref fields, ref with_expr) => {
+                fields.iter().for_each(|field| {
+                    self.maybe_use_temporary(succ, field.expr.hir_id, expr.span);
+                });
                 let succ = self.propagate_through_opt_expr(with_expr.as_ref().map(|e| &**e), succ);
                 fields
                     .iter()
@@ -1145,6 +1148,9 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
     fn check_is_ty_uninhabited(&mut self, expr: &Expr<'_>, succ: LiveNode) -> LiveNode {
         let ty = self.typeck_results.expr_ty(expr);
         let m = self.ir.tcx.parent_module(expr.hir_id).to_def_id();
+        // Erase regions because not all region variable kinds are supported
+        // by stable hashing, which is be needed during incremental compilation.
+        let ty = self.ir.tcx.erase_regions(ty);
         if self.ir.tcx.is_ty_uninhabited_from(m, ty, self.param_env) { self.exit_ln } else { succ }
     }
 }
