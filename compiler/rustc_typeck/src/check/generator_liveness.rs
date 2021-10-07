@@ -761,7 +761,7 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                 self.propagate_through_expr(&cond, ln)
             }
 
-            hir::ExprKind::Match(ref e, arms, _) => {
+            hir::ExprKind::Match(ref scrutinee, arms, _) => {
                 //
                 //      (e)
                 //       |
@@ -778,22 +778,25 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                 //
                 let ln = self.live_node(expr.hir_id, expr.span);
                 self.init_empty(ln, succ);
-                self.maybe_use_temporary(succ, e.hir_id, e.span);
+                // self.maybe_use_temporary(succ, e.hir_id, e.span);
                 for arm in arms {
                     let body_succ = self.propagate_through_expr(&arm.body, succ);
-
                     let guard_succ = arm.guard.as_ref().map_or(body_succ, |g| match g {
-                        hir::Guard::If(e) => self.propagate_through_expr(e, body_succ),
+                        hir::Guard::If(e) => {
+                            self.maybe_use_temporary(body_succ, scrutinee.hir_id, scrutinee.span);
+                            self.propagate_through_expr(e, body_succ)
+                        }
                         hir::Guard::IfLet(pat, e) => {
+                            self.maybe_use_temporary(body_succ, scrutinee.hir_id, scrutinee.span);
                             let let_bind = self.define_bindings_in_pat(pat, body_succ);
                             self.propagate_through_expr(e, let_bind)
                         }
                     });
                     let arm_succ = self.define_bindings_in_pat(&arm.pat, guard_succ);
                     self.merge_from_succ(ln, arm_succ);
-                    self.maybe_use_temporary(ln, arm.body.hir_id, expr.span)
+                    // self.maybe_use_temporary(ln, arm.body.hir_id, expr.span)
                 }
-                self.propagate_through_expr(&e, ln)
+                self.propagate_through_expr(&scrutinee, ln)
             }
 
             hir::ExprKind::Ret(ref o_e) => {
@@ -844,6 +847,9 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                 self.maybe_use_temporary(succ, r.hir_id, expr.span);
                 self.maybe_use_temporary(succ, l.hir_id, expr.span);
                 // an overloaded assign op is like a method call
+                //
+                // Note that for method calls the order of evaluation is LHS then RHS,
+                // but it is RHS then LHS for non method calls.
                 if self.typeck_results.is_method_call(expr) {
                     let succ = self.propagate_through_expr(&r, succ);
                     self.propagate_through_expr(&l, succ)
@@ -851,8 +857,9 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                     // see comment on places in
                     // propagate_through_place_components()
                     let succ = self.write_place(&l, succ, ACC_WRITE | ACC_READ);
+                    let succ = self.propagate_through_place_components(&l, succ);
                     let succ = self.propagate_through_expr(&r, succ);
-                    self.propagate_through_place_components(&l, succ)
+                    succ
                 }
             }
 
@@ -872,6 +879,9 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
 
             hir::ExprKind::Call(ref f, ref args) => {
                 let succ = self.check_is_ty_uninhabited(expr, succ);
+                for arg in args.iter() {
+                    self.maybe_use_temporary(succ, arg.hir_id, arg.span);
+                }
                 let succ = self.propagate_through_exprs(args, succ);
                 self.propagate_through_expr(&f, succ)
             }
@@ -884,9 +894,16 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
                 self.propagate_through_exprs(args, succ)
             }
 
-            hir::ExprKind::Tup(ref exprs) => self.propagate_through_exprs(exprs, succ),
+            hir::ExprKind::Tup(ref exprs) => {
+                for e in exprs.iter() {
+                    self.maybe_use_temporary(succ, e.hir_id, e.span);
+                }
+                self.propagate_through_exprs(exprs, succ)
+            }
 
             hir::ExprKind::Binary(op, ref l, ref r) if op.node.is_lazy() => {
+                self.maybe_use_temporary(succ, l.hir_id, l.span);
+                self.maybe_use_temporary(succ, r.hir_id, r.span);
                 let r_succ = self.propagate_through_expr(&r, succ);
 
                 let ln = self.live_node(expr.hir_id, expr.span);
@@ -897,6 +914,8 @@ impl<'a, 'atcx, 'tcx> GeneratorLiveness<'a, 'atcx, 'tcx> {
             }
 
             hir::ExprKind::Index(ref l, ref r) | hir::ExprKind::Binary(_, ref l, ref r) => {
+                self.maybe_use_temporary(succ, l.hir_id, l.span);
+                self.maybe_use_temporary(succ, r.hir_id, r.span);
                 let r_succ = self.propagate_through_expr(&r, succ);
                 self.propagate_through_expr(&l, r_succ)
             }

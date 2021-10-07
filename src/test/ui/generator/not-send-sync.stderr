@@ -21,13 +21,15 @@ LL |     assert_sync(|| {
    |
    = help: within `[generator@$DIR/not-send-sync.rs:9:17: 15:6]`, the trait `Sync` is not implemented for `Cell<i32>`
 note: generator is not `Sync` as this value is used across a yield
-  --> $DIR/not-send-sync.rs:11:13
+  --> $DIR/not-send-sync.rs:12:9
    |
 LL |         let a = Cell::new(2);
-   |             ^
-   |             |
-   |             yield occurs here, with `a` maybe used later
-   |             has type `Cell<i32>` which is not `Sync`
+   |             - has type `Cell<i32>` which is not `Sync`
+LL |         yield;
+   |         ^^^^^ yield occurs here, with `a` maybe used later
+...
+LL |     });
+   |     - `a` is later dropped here
 note: required by a bound in `assert_sync`
   --> $DIR/not-send-sync.rs:6:23
    |

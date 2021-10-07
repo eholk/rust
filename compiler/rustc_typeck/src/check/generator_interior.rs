@@ -207,6 +207,7 @@ pub fn resolve_interior<'a, 'tcx>(
         // Now add in any temporaries that implement Drop
         for cause in visitor.types.drain(..) {
             if cause.ty.has_significant_drop(fcx.tcx, fcx.param_env) {
+                debug!("Adding type {} to generator because it has non-trivial drop", cause.ty);
                 types.insert(cause);
             }
         }
