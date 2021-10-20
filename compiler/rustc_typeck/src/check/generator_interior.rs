@@ -4,6 +4,7 @@
 //! types computed here.
 
 use super::FnCtxt;
+use hir::HirIdMap;
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
 use rustc_errors::pluralize;
 use rustc_hir as hir;
@@ -18,6 +19,10 @@ use rustc_span::symbol::sym;
 use rustc_span::Span;
 use smallvec::SmallVec;
 use tracing::debug;
+
+/// Captures information about a value that may be live across a suspend point.
+#[derive(Clone)]
+struct DroppedValue {}
 
 struct InteriorVisitor<'a, 'tcx> {
     fcx: &'a FnCtxt<'a, 'tcx>,
@@ -34,6 +39,10 @@ struct InteriorVisitor<'a, 'tcx> {
     guard_bindings: SmallVec<[SmallVec<[HirId; 4]>; 1]>,
     guard_bindings_set: HirIdSet,
     linted_values: HirIdSet,
+    /// A stack of sets variables that have been dropped at the current point in the tree.
+    ///
+    /// The hir_id refers to the pattern that binds the variable.
+    dropped_variables: Vec<HirIdMap<DroppedValue>>,
 }
 
 impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
@@ -48,10 +57,12 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
     ) {
         use rustc_span::DUMMY_SP;
 
-        debug!(
-            "generator_interior: attempting to record type {:?} {:?} {:?} {:?}",
-            ty, scope, expr, source_span
-        );
+        debug!("attempting to record type {:?} {:?} {:?} {:?}", ty, scope, expr, source_span);
+
+        if self.is_dropped(hir_id) {
+            debug!("value has been dropped; not recording");
+            return;
+        }
 
         let live_across_yield = scope
             .map(|s| {
@@ -166,6 +177,59 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
             }
         }
     }
+
+    fn record_drop(&mut self, hir_id: HirId) {
+        self.dropped_variables
+            .last_mut()
+            .expect("dropped variable stack is empty")
+            .insert(hir_id, DroppedValue {});
+    }
+
+    fn is_dropped(&self, hir_id: HirId) -> bool {
+        self.dropped_variables
+            .last()
+            .expect("dropped variable stack is empty")
+            .contains_key(&hir_id)
+    }
+
+    fn visit_call(
+        &mut self,
+        call_expr: &'tcx Expr<'tcx>,
+        callee: &'tcx Expr<'tcx>,
+        args: &'tcx [Expr<'tcx>],
+    ) {
+        match &callee.kind {
+            ExprKind::Path(qpath) => {
+                let res = self.fcx.typeck_results.borrow().qpath_res(qpath, callee.hir_id);
+                match res {
+                    // Direct calls never need to keep the callee `ty::FnDef`
+                    // ZST in a temporary, so skip its type, just in case it
+                    // can significantly complicate the generator type.
+                    Res::Def(
+                        DefKind::Fn | DefKind::AssocFn | DefKind::Ctor(_, CtorKind::Fn),
+                        _,
+                    ) => {
+                        // NOTE(eddyb) this assumes a path expression has
+                        // no nested expressions to keep track of.
+                        self.expr_count += 1;
+
+                        // Record the rest of the call expression normally.
+                        for arg in args {
+                            self.visit_expr(arg);
+                        }
+                    }
+                    _ => intravisit::walk_expr(self, call_expr),
+                }
+            }
+            _ => intravisit::walk_expr(self, call_expr),
+        }
+
+        // We can mark all of the arguments as being dropped after the call completes.
+        for arg in args {
+            debug!("marking {:?} as dropped", arg);
+            self.record_drop(arg.hir_id);
+        }
+    }
 }
 
 pub fn resolve_interior<'a, 'tcx>(
@@ -186,6 +250,7 @@ pub fn resolve_interior<'a, 'tcx>(
         guard_bindings: <_>::default(),
         guard_bindings_set: <_>::default(),
         linted_values: <_>::default(),
+        dropped_variables: vec![<_>::default()],
     };
     intravisit::walk_body(&mut visitor, body);
 
@@ -320,31 +385,7 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         let mut guard_borrowing_from_pattern = false;
         match &expr.kind {
-            ExprKind::Call(callee, args) => match &callee.kind {
-                ExprKind::Path(qpath) => {
-                    let res = self.fcx.typeck_results.borrow().qpath_res(qpath, callee.hir_id);
-                    match res {
-                        // Direct calls never need to keep the callee `ty::FnDef`
-                        // ZST in a temporary, so skip its type, just in case it
-                        // can significantly complicate the generator type.
-                        Res::Def(
-                            DefKind::Fn | DefKind::AssocFn | DefKind::Ctor(_, CtorKind::Fn),
-                            _,
-                        ) => {
-                            // NOTE(eddyb) this assumes a path expression has
-                            // no nested expressions to keep track of.
-                            self.expr_count += 1;
-
-                            // Record the rest of the call expression normally.
-                            for arg in *args {
-                                self.visit_expr(arg);
-                            }
-                        }
-                        _ => intravisit::walk_expr(self, expr),
-                    }
-                }
-                _ => intravisit::walk_expr(self, expr),
-            },
+            ExprKind::Call(callee, args) => self.visit_call(expr, callee, args),
             ExprKind::Path(qpath) => {
                 intravisit::walk_expr(self, expr);
                 let res = self.fcx.typeck_results.borrow().qpath_res(qpath, expr.hir_id);
