@@ -15,6 +15,7 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::hir_id::HirIdSet;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
+use rustc_middle::hir::place::{Place, PlaceBase};
 use rustc_middle::middle::region::{self, YieldData};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::symbol::sym;
@@ -665,14 +666,19 @@ fn check_must_not_suspend_def(
 #[derive(Default)]
 struct DropRangeVisitor {
     consumed_places: HirIdSet,
+    borrowed_places: HirIdSet,
     drop_ranges: HirIdMap<DropRange>,
     expr_count: usize,
 }
 
 impl DropRangeVisitor {
     fn record_drop(&mut self, hir_id: HirId) {
-        debug!("marking {:?} as dropped at {}", hir_id, self.expr_count);
-        self.drop_ranges.insert(hir_id, DropRange { dropped_at: self.expr_count });
+        if self.borrowed_places.contains(&hir_id) {
+            debug!("not marking {:?} as dropped because it is borrowed at some point", hir_id);
+        } else if self.consumed_places.contains(&hir_id) {
+            debug!("marking {:?} as dropped at {}", hir_id, self.expr_count);
+            self.drop_ranges.insert(hir_id, DropRange { dropped_at: self.expr_count });
+        }
     }
 
     /// ExprUseVisitor's consume callback doesn't go deep enough for our purposes in all
@@ -691,6 +697,14 @@ impl DropRangeVisitor {
     }
 }
 
+fn place_hir_id(place: &Place<'_>) -> Option<HirId> {
+    match place.base {
+        PlaceBase::Rvalue | PlaceBase::StaticItem => None,
+        PlaceBase::Local(hir_id)
+        | PlaceBase::Upvar(ty::UpvarId { var_path: ty::UpvarPath { hir_id }, .. }) => Some(hir_id),
+    }
+}
+
 impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor {
     fn consume(
         &mut self,
@@ -699,14 +713,16 @@ impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor {
     ) {
         debug!("consume {:?}; diag_expr_id={:?}", place_with_id, diag_expr_id);
         self.consumed_places.insert(place_with_id.hir_id);
+        place_hir_id(&place_with_id.place).map(|place| self.consumed_places.insert(place));
     }
 
     fn borrow(
         &mut self,
-        _place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
+        place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
         _diag_expr_id: hir::HirId,
         _bk: rustc_middle::ty::BorrowKind,
     ) {
+        place_hir_id(&place_with_id.place).map(|place| self.borrowed_places.insert(place));
     }
 
     fn mutate(
@@ -737,9 +753,9 @@ impl<'tcx> Visitor<'tcx> for DropRangeVisitor {
 
         self.expr_count += 1;
 
-        if self.consumed_places.contains(&expr.hir_id) {
-            self.consume_expr(expr);
-        }
+        // if self.consumed_places.contains(&expr.hir_id) {
+        self.consume_expr(expr);
+        // }
     }
 }
 
