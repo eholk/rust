@@ -7,7 +7,7 @@
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/borrow_check.html
 
 use rustc_ast::walk_list;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
@@ -68,11 +68,6 @@ struct RegionResolutionVisitor<'tcx> {
     /// up being contained in a DestructionScope that contains the
     /// destructor's execution.
     terminating_scopes: FxHashSet<hir::ItemLocalId>,
-
-    /// A stack of sets variables that have been dropped at the current point in the tree.
-    ///
-    /// The hir_id refers to the pattern that binds the variable.
-    dropped_variables: Vec<FxHashMap<hir::ItemLocalId, DropRanges>>,
 }
 
 /// Records the lifetime of a local variable as `cx.var_parent`
@@ -279,14 +274,6 @@ fn resolve_expr<'tcx>(visitor: &mut RegionResolutionVisitor<'tcx>, expr: &'tcx h
                 // important.
                 //
                 // record_superlifetime(new_cx, expr.callee_id);
-            }
-
-            hir::ExprKind::Call(_func, args) => {
-                // We can mark all of the arguments as being dropped after the call completes.
-                for arg in args {
-                    debug!("marking {:?} as dropped", arg);
-                    visitor.record_drop(arg.hir_id.local_id);
-                }
             }
 
             _ => {}
@@ -726,14 +713,6 @@ impl<'tcx> RegionResolutionVisitor<'tcx> {
         }
         self.enter_scope(Scope { id, data: ScopeData::Node });
     }
-
-    fn record_drop(&mut self, id: hir::ItemLocalId) {
-        debug!("record_drop: {:?} at id {}", id, self.expr_and_pat_count);
-        self.dropped_variables
-            .last_mut()
-            .expect("dropped variable stack is empty")
-            .insert(id, DropRanges { dropped_at: self.expr_and_pat_count });
-    }
 }
 
 impl<'tcx> Visitor<'tcx> for RegionResolutionVisitor<'tcx> {
@@ -852,7 +831,6 @@ fn region_scope_tree(tcx: TyCtxt<'_>, def_id: DefId) -> &ScopeTree {
             terminating_scopes: Default::default(),
             pessimistic_yield: false,
             fixup_scopes: vec![],
-            dropped_variables: vec![Default::default()],
         };
 
         let body = tcx.hir().body(body_id);
@@ -869,12 +847,6 @@ fn region_scope_tree(tcx: TyCtxt<'_>, def_id: DefId) -> &ScopeTree {
         }
 
         visitor.visit_body(body);
-
-        visitor.scope_tree.drop_ranges = visitor
-            .dropped_variables
-            .drain(..)
-            .last()
-            .expect("dropped variable stack is empty");
 
         visitor.scope_tree
     } else {

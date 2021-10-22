@@ -3,7 +3,10 @@
 //! is calculated in `rustc_const_eval::transform::generator` and may be a subset of the
 //! types computed here.
 
+use crate::expr_use_visitor::{self, ExprUseVisitor};
+
 use super::FnCtxt;
+use hir::HirIdMap;
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
 use rustc_errors::pluralize;
 use rustc_hir as hir;
@@ -34,6 +37,7 @@ struct InteriorVisitor<'a, 'tcx> {
     guard_bindings: SmallVec<[SmallVec<[HirId; 4]>; 1]>,
     guard_bindings_set: HirIdSet,
     linted_values: HirIdSet,
+    drop_ranges: HirIdMap<DropRange>,
 }
 
 impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
@@ -48,7 +52,12 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
     ) {
         use rustc_span::DUMMY_SP;
 
-        debug!("attempting to record type {:?} {:?} {:?} {:?}", ty, scope, expr, source_span);
+        let ty = self.fcx.resolve_vars_if_possible(ty);
+
+        debug!(
+            "attempting to record type ty={:?}; hir_id={:?}; scope={:?}; expr={:?}; source_span={:?}",
+            ty, hir_id, scope, expr, source_span
+        );
 
         if self.is_dropped(hir_id) {
             debug!("value has been dropped; not recording");
@@ -87,7 +96,6 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
             });
 
         if let Some(yield_data) = live_across_yield {
-            let ty = self.fcx.resolve_vars_if_possible(ty);
             debug!(
                 "type in expr = {:?}, scope = {:?}, type = {:?}, count = {}, yield_span = {:?}",
                 expr, scope, ty, self.expr_count, yield_data.span
@@ -156,7 +164,6 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
                 self.expr_count,
                 expr.map(|e| e.span)
             );
-            let ty = self.fcx.resolve_vars_if_possible(ty);
             if let Some((unresolved_type, unresolved_type_span)) =
                 self.fcx.unresolved_type_vars(&ty)
             {
@@ -170,9 +177,8 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
     }
 
     fn is_dropped(&self, hir_id: HirId) -> bool {
-        self.region_scope_tree
-            .drop_ranges
-            .get(&hir_id.local_id)
+        self.drop_ranges
+            .get(&hir_id)
             .map_or(false, |drop_range| drop_range.contains(self.expr_count))
     }
 
@@ -210,6 +216,86 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
     }
 }
 
+struct DropRange {
+    /// The post-order id of the point where this expression is dropped.
+    ///
+    /// We can consider the value dropped at any post-order id greater than dropped_at.
+    dropped_at: usize,
+}
+
+impl DropRange {
+    fn contains(&self, id: usize) -> bool {
+        id >= self.dropped_at
+    }
+}
+
+/// This struct facilitates computing the ranges for which a place is uninitialized.
+struct FindDropRanges {
+    expr_count: usize,
+    ranges: HirIdMap<DropRange>,
+}
+
+impl FindDropRanges {
+    /// ExprUseVisitor's consume callback doesn't go deep enough for our purposes in all
+    /// expressions. This method consumes a little deeper into the expression when needed.
+    fn consume_expr(&mut self, expr: &hir::Expr<'_>) {
+        match expr.kind {
+            hir::ExprKind::Path(hir::QPath::Resolved(
+                _,
+                hir::Path { res: hir::def::Res::Local(hir_id), .. },
+            )) => {
+                self.ranges.insert(*hir_id, DropRange { dropped_at: self.expr_count });
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'tcx> expr_use_visitor::Delegate<'tcx> for FindDropRanges {
+    fn consume(
+        &mut self,
+        place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
+        diag_expr_id: hir::HirId,
+    ) {
+        debug!(
+            "consume {:?}; expr_count={:?}; diag_expr_id={:?}",
+            place_with_id, self.expr_count, diag_expr_id
+        );
+        self.ranges.insert(place_with_id.hir_id, DropRange { dropped_at: self.expr_count });
+    }
+
+    fn borrow(
+        &mut self,
+        _place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+        _bk: rustc_middle::ty::BorrowKind,
+    ) {
+    }
+
+    fn mutate(
+        &mut self,
+        _assignee_place: &expr_use_visitor::PlaceWithHirId<'tcx>,
+        _diag_expr_id: hir::HirId,
+    ) {
+    }
+
+    fn fake_read(
+        &mut self,
+        _place: expr_use_visitor::Place<'tcx>,
+        _cause: rustc_middle::mir::FakeReadCause,
+        _diag_expr_id: hir::HirId,
+    ) {
+    }
+
+    fn visit_expr(&mut self, expr: &Expr<'_>) {
+        if self.ranges.contains_key(&expr.hir_id) {
+            self.consume_expr(expr);
+        }
+
+        self.expr_count += 1;
+    }
+}
+
 pub fn resolve_interior<'a, 'tcx>(
     fcx: &'a FnCtxt<'a, 'tcx>,
     def_id: DefId,
@@ -218,6 +304,19 @@ pub fn resolve_interior<'a, 'tcx>(
     kind: hir::GeneratorKind,
 ) {
     let body = fcx.tcx.hir().body(body_id);
+
+    let mut drop_ranges = FindDropRanges { expr_count: 0, ranges: <_>::default() };
+
+    // Run ExprUseVisitor to find where values are consumed.
+    ExprUseVisitor::new(
+        &mut drop_ranges,
+        &fcx.infcx,
+        def_id.expect_local(),
+        fcx.param_env,
+        &fcx.typeck_results.borrow(),
+    )
+    .consume_body(body);
+
     let mut visitor = InteriorVisitor {
         fcx,
         types: FxIndexSet::default(),
@@ -228,6 +327,7 @@ pub fn resolve_interior<'a, 'tcx>(
         guard_bindings: <_>::default(),
         guard_bindings_set: <_>::default(),
         linted_values: <_>::default(),
+        drop_ranges: drop_ranges.ranges,
     };
     intravisit::walk_body(&mut visitor, body);
 

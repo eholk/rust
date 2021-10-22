@@ -54,6 +54,12 @@ pub trait Delegate<'tcx> {
 
     /// The `place` should be a fake read because of specified `cause`.
     fn fake_read(&mut self, place: Place<'tcx>, cause: FakeReadCause, diag_expr_id: hir::HirId);
+
+    /// Called at the end of visiting each expression.
+    ///
+    /// Used by visitors such as generator_interior that also need to keep track of how many
+    /// expressions are visited.
+    fn visit_expr(&mut self, _expr: &hir::Expr<'_>) {}
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -437,6 +443,9 @@ impl<'a, 'tcx> ExprUseVisitor<'a, 'tcx> {
                 self.consume_expr(value);
             }
         }
+
+        // Notify the delegate that we are done with this expression.
+        self.delegate.visit_expr(expr);
     }
 
     fn walk_stmt(&mut self, stmt: &hir::Stmt<'_>) {

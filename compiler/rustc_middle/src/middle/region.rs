@@ -320,22 +320,6 @@ pub struct ScopeTree {
     /// Used to sanity check visit_expr/visit_pat call count when
     /// calculating generator interiors.
     pub body_expr_count: FxHashMap<hir::BodyId, usize>,
-
-    pub drop_ranges: FxHashMap<hir::ItemLocalId, DropRanges>,
-}
-
-#[derive(Debug, Copy, Clone, TyEncodable, TyDecodable, HashStable)]
-pub struct DropRanges {
-    /// The post-order id of the point where this expression is dropped.
-    ///
-    /// We can consider the value dropped at any post-order id greater than dropped_at.
-    pub dropped_at: usize,
-}
-
-impl DropRanges {
-    pub fn contains(&self, id: usize) -> bool {
-        id >= self.dropped_at
-    }
 }
 
 #[derive(Debug, Copy, Clone, TyEncodable, TyDecodable, HashStable)]
@@ -468,7 +452,6 @@ impl<'a> HashStable<StableHashingContext<'a>> for ScopeTree {
             ref destruction_scopes,
             ref rvalue_scopes,
             ref yield_in_scope,
-            ref drop_ranges,
         } = *self;
 
         hcx.with_node_id_hashing_mode(NodeIdHashingMode::HashDefPath, |hcx| {
@@ -482,6 +465,5 @@ impl<'a> HashStable<StableHashingContext<'a>> for ScopeTree {
         destruction_scopes.hash_stable(hcx, hasher);
         rvalue_scopes.hash_stable(hcx, hasher);
         yield_in_scope.hash_stable(hcx, hasher);
-        drop_ranges.hash_stable(hcx, hasher);
     }
 }
