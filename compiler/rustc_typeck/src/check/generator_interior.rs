@@ -38,6 +38,7 @@ struct InteriorVisitor<'a, 'tcx> {
     guard_bindings_set: HirIdSet,
     linted_values: HirIdSet,
     drop_ranges: HirIdMap<DropRange>,
+    consumed_places: HirIdSet,
 }
 
 impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
@@ -55,8 +56,8 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
         let ty = self.fcx.resolve_vars_if_possible(ty);
 
         debug!(
-            "attempting to record type ty={:?}; hir_id={:?}; scope={:?}; expr={:?}; source_span={:?}",
-            ty, hir_id, scope, expr, source_span
+            "attempting to record type ty={:?}; hir_id={:?}; scope={:?}; expr={:?}; source_span={:?}; expr_count={:?}",
+            ty, hir_id, scope, expr, source_span, self.expr_count,
         );
 
         if self.is_dropped(hir_id) {
@@ -214,6 +215,26 @@ impl<'a, 'tcx> InteriorVisitor<'a, 'tcx> {
             _ => intravisit::walk_expr(self, call_expr),
         }
     }
+
+    fn record_drop(&mut self, hir_id: HirId) {
+        debug!("marking {:?} as dropped at {}", hir_id, self.expr_count);
+        self.drop_ranges.insert(hir_id, DropRange { dropped_at: self.expr_count });
+    }
+
+    /// ExprUseVisitor's consume callback doesn't go deep enough for our purposes in all
+    /// expressions. This method consumes a little deeper into the expression when needed.
+    fn consume_expr(&mut self, expr: &hir::Expr<'_>) {
+        self.record_drop(expr.hir_id);
+        match expr.kind {
+            hir::ExprKind::Path(hir::QPath::Resolved(
+                _,
+                hir::Path { res: hir::def::Res::Local(hir_id), .. },
+            )) => {
+                self.record_drop(*hir_id);
+            }
+            _ => (),
+        }
+    }
 }
 
 struct DropRange {
@@ -230,38 +251,18 @@ impl DropRange {
 }
 
 /// This struct facilitates computing the ranges for which a place is uninitialized.
-struct FindDropRanges {
-    expr_count: usize,
-    ranges: HirIdMap<DropRange>,
+struct FindConsumedPlaces {
+    consumed_places: HirIdSet,
 }
 
-impl FindDropRanges {
-    /// ExprUseVisitor's consume callback doesn't go deep enough for our purposes in all
-    /// expressions. This method consumes a little deeper into the expression when needed.
-    fn consume_expr(&mut self, expr: &hir::Expr<'_>) {
-        match expr.kind {
-            hir::ExprKind::Path(hir::QPath::Resolved(
-                _,
-                hir::Path { res: hir::def::Res::Local(hir_id), .. },
-            )) => {
-                self.ranges.insert(*hir_id, DropRange { dropped_at: self.expr_count });
-            }
-            _ => (),
-        }
-    }
-}
-
-impl<'tcx> expr_use_visitor::Delegate<'tcx> for FindDropRanges {
+impl<'tcx> expr_use_visitor::Delegate<'tcx> for FindConsumedPlaces {
     fn consume(
         &mut self,
         place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
         diag_expr_id: hir::HirId,
     ) {
-        debug!(
-            "consume {:?}; expr_count={:?}; diag_expr_id={:?}",
-            place_with_id, self.expr_count, diag_expr_id
-        );
-        self.ranges.insert(place_with_id.hir_id, DropRange { dropped_at: self.expr_count });
+        debug!("consume {:?}; diag_expr_id={:?}", place_with_id, diag_expr_id);
+        self.consumed_places.insert(place_with_id.hir_id);
     }
 
     fn borrow(
@@ -286,14 +287,6 @@ impl<'tcx> expr_use_visitor::Delegate<'tcx> for FindDropRanges {
         _diag_expr_id: hir::HirId,
     ) {
     }
-
-    fn visit_expr(&mut self, expr: &Expr<'_>) {
-        if self.ranges.contains_key(&expr.hir_id) {
-            self.consume_expr(expr);
-        }
-
-        self.expr_count += 1;
-    }
 }
 
 pub fn resolve_interior<'a, 'tcx>(
@@ -305,11 +298,11 @@ pub fn resolve_interior<'a, 'tcx>(
 ) {
     let body = fcx.tcx.hir().body(body_id);
 
-    let mut drop_ranges = FindDropRanges { expr_count: 0, ranges: <_>::default() };
+    let mut consumed_place_finder = FindConsumedPlaces { consumed_places: <_>::default() };
 
     // Run ExprUseVisitor to find where values are consumed.
     ExprUseVisitor::new(
-        &mut drop_ranges,
+        &mut consumed_place_finder,
         &fcx.infcx,
         def_id.expect_local(),
         fcx.param_env,
@@ -327,7 +320,8 @@ pub fn resolve_interior<'a, 'tcx>(
         guard_bindings: <_>::default(),
         guard_bindings_set: <_>::default(),
         linted_values: <_>::default(),
-        drop_ranges: drop_ranges.ranges,
+        drop_ranges: <_>::default(),
+        consumed_places: consumed_place_finder.consumed_places,
     };
     intravisit::walk_body(&mut visitor, body);
 
@@ -461,6 +455,11 @@ impl<'a, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'tcx> {
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         let mut guard_borrowing_from_pattern = false;
+
+        if self.consumed_places.contains(&expr.hir_id) {
+            self.consume_expr(expr);
+        }
+
         match &expr.kind {
             ExprKind::Call(callee, args) => self.visit_call(expr, callee, args),
             ExprKind::Path(qpath) => {
