@@ -17,7 +17,7 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::hir::place::{Place, PlaceBase};
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::ty::{self, Ty, TyCtxt, TypeckResults};
 use rustc_span::symbol::sym;
 use rustc_span::Span;
 use smallvec::SmallVec;
@@ -223,30 +223,38 @@ pub fn resolve_interior<'a, 'tcx>(
 ) {
     let body = fcx.tcx.hir().body(body_id);
 
-    let mut drop_range_visitor = DropRangeVisitor::default();
+    let mut visitor = {
+        let mut drop_range_visitor = DropRangeVisitor {
+            consumed_places: <_>::default(),
+            borrowed_places: <_>::default(),
+            drop_ranges: <_>::default(),
+            expr_count: 0,
+            typeck_results: &fcx.typeck_results.borrow(),
+        };
 
-    // Run ExprUseVisitor to find where values are consumed.
-    ExprUseVisitor::new(
-        &mut drop_range_visitor,
-        &fcx.infcx,
-        def_id.expect_local(),
-        fcx.param_env,
-        &fcx.typeck_results.borrow(),
-    )
-    .consume_body(body);
-    intravisit::walk_body(&mut drop_range_visitor, body);
+        // Run ExprUseVisitor to find where values are consumed.
+        ExprUseVisitor::new(
+            &mut drop_range_visitor,
+            &fcx.infcx,
+            def_id.expect_local(),
+            fcx.param_env,
+            &fcx.typeck_results.borrow(),
+        )
+        .consume_body(body);
+        intravisit::walk_body(&mut drop_range_visitor, body);
 
-    let mut visitor = InteriorVisitor {
-        fcx,
-        types: FxIndexSet::default(),
-        region_scope_tree: fcx.tcx.region_scope_tree(def_id),
-        expr_count: 0,
-        kind,
-        prev_unresolved_span: None,
-        guard_bindings: <_>::default(),
-        guard_bindings_set: <_>::default(),
-        linted_values: <_>::default(),
-        drop_ranges: drop_range_visitor.drop_ranges,
+        InteriorVisitor {
+            fcx,
+            types: FxIndexSet::default(),
+            region_scope_tree: fcx.tcx.region_scope_tree(def_id),
+            expr_count: 0,
+            kind,
+            prev_unresolved_span: None,
+            guard_bindings: <_>::default(),
+            guard_bindings_set: <_>::default(),
+            linted_values: <_>::default(),
+            drop_ranges: drop_range_visitor.drop_ranges,
+        }
     };
     intravisit::walk_body(&mut visitor, body);
 
@@ -663,15 +671,15 @@ fn check_must_not_suspend_def(
 }
 
 /// This struct facilitates computing the ranges for which a place is uninitialized.
-#[derive(Default)]
-struct DropRangeVisitor {
+struct DropRangeVisitor<'a, 'tcx> {
     consumed_places: HirIdSet,
     borrowed_places: HirIdSet,
     drop_ranges: HirIdMap<DropRange>,
     expr_count: usize,
+    typeck_results: &'a TypeckResults<'tcx>,
 }
 
-impl DropRangeVisitor {
+impl DropRangeVisitor<'_, '_> {
     fn record_drop(&mut self, hir_id: HirId) {
         if self.borrowed_places.contains(&hir_id) {
             debug!("not marking {:?} as dropped because it is borrowed at some point", hir_id);
@@ -705,7 +713,7 @@ fn place_hir_id(place: &Place<'_>) -> Option<HirId> {
     }
 }
 
-impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor {
+impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor<'_, 'tcx> {
     fn consume(
         &mut self,
         place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
@@ -741,21 +749,31 @@ impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor {
     }
 }
 
-impl<'tcx> Visitor<'tcx> for DropRangeVisitor {
+impl<'tcx> Visitor<'tcx> for DropRangeVisitor<'_, 'tcx> {
     type Map = intravisit::ErasedMap<'tcx>;
 
     fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
         NestedVisitorMap::None
     }
 
-    fn visit_expr(&mut self, expr: &Expr<'_>) {
-        intravisit::walk_expr(self, expr);
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        match expr.kind {
+            ExprKind::AssignOp(_, lhs, rhs) => {
+                if self.typeck_results.is_method_call(expr) {
+                    // This is an overloaded operation, so evaluation order is left to right.
+                    intravisit::walk_expr(self, lhs);
+                    intravisit::walk_expr(self, rhs);
+                } else {
+                    // This is a primitive operator, so evaluation order is right to left.
+                    intravisit::walk_expr(self, rhs);
+                    intravisit::walk_expr(self, lhs);
+                }
+            }
+            _ => intravisit::walk_expr(self, expr),
+        }
 
         self.expr_count += 1;
-
-        // if self.consumed_places.contains(&expr.hir_id) {
         self.consume_expr(expr);
-        // }
     }
 }
 
