@@ -17,7 +17,7 @@ use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind};
 use rustc_middle::hir::place::{Place, PlaceBase};
 use rustc_middle::middle::region::{self, YieldData};
-use rustc_middle::ty::{self, Ty, TyCtxt, TypeckResults};
+use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::symbol::sym;
 use rustc_span::Span;
 use smallvec::SmallVec;
@@ -227,9 +227,8 @@ pub fn resolve_interior<'a, 'tcx>(
         let mut drop_range_visitor = DropRangeVisitor {
             consumed_places: <_>::default(),
             borrowed_places: <_>::default(),
-            drop_ranges: <_>::default(),
+            drop_ranges: vec![<_>::default()],
             expr_count: 0,
-            typeck_results: &fcx.typeck_results.borrow(),
         };
 
         // Run ExprUseVisitor to find where values are consumed.
@@ -253,7 +252,7 @@ pub fn resolve_interior<'a, 'tcx>(
             guard_bindings: <_>::default(),
             guard_bindings_set: <_>::default(),
             linted_values: <_>::default(),
-            drop_ranges: drop_range_visitor.drop_ranges,
+            drop_ranges: drop_range_visitor.drop_ranges.pop().unwrap(),
         }
     };
     intravisit::walk_body(&mut visitor, body);
@@ -671,21 +670,36 @@ fn check_must_not_suspend_def(
 }
 
 /// This struct facilitates computing the ranges for which a place is uninitialized.
-struct DropRangeVisitor<'a, 'tcx> {
+struct DropRangeVisitor {
     consumed_places: HirIdSet,
     borrowed_places: HirIdSet,
-    drop_ranges: HirIdMap<DropRange>,
+    drop_ranges: Vec<HirIdMap<DropRange>>,
     expr_count: usize,
-    typeck_results: &'a TypeckResults<'tcx>,
 }
 
-impl DropRangeVisitor<'_, '_> {
+impl DropRangeVisitor {
     fn record_drop(&mut self, hir_id: HirId) {
+        let drop_ranges = self.drop_ranges.last_mut().unwrap();
         if self.borrowed_places.contains(&hir_id) {
             debug!("not marking {:?} as dropped because it is borrowed at some point", hir_id);
         } else if self.consumed_places.contains(&hir_id) {
             debug!("marking {:?} as dropped at {}", hir_id, self.expr_count);
-            self.drop_ranges.insert(hir_id, DropRange { dropped_at: self.expr_count });
+            drop_ranges.insert(hir_id, DropRange { dropped_at: self.expr_count });
+        }
+    }
+
+    fn push_drop_scope(&mut self) {
+        self.drop_ranges.push(<_>::default());
+    }
+
+    fn pop_and_merge_drop_scope(&mut self) {
+        let mut old_last = self.drop_ranges.pop().unwrap();
+        let drop_ranges = self.drop_ranges.last_mut().unwrap();
+        for (k, v) in old_last.drain() {
+            match drop_ranges.get(&k).cloned() {
+                Some(v2) => drop_ranges.insert(k, v.intersect(&v2)),
+                None => drop_ranges.insert(k, v),
+            };
         }
     }
 
@@ -713,7 +727,7 @@ fn place_hir_id(place: &Place<'_>) -> Option<HirId> {
     }
 }
 
-impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor<'_, 'tcx> {
+impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor {
     fn consume(
         &mut self,
         place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
@@ -749,7 +763,7 @@ impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor<'_, 'tcx> {
     }
 }
 
-impl<'tcx> Visitor<'tcx> for DropRangeVisitor<'_, 'tcx> {
+impl<'tcx> Visitor<'tcx> for DropRangeVisitor {
     type Map = intravisit::ErasedMap<'tcx>;
 
     fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
@@ -759,15 +773,24 @@ impl<'tcx> Visitor<'tcx> for DropRangeVisitor<'_, 'tcx> {
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
             ExprKind::AssignOp(_, lhs, rhs) => {
-                if self.typeck_results.is_method_call(expr) {
-                    // This is an overloaded operation, so evaluation order is left to right.
-                    intravisit::walk_expr(self, lhs);
-                    intravisit::walk_expr(self, rhs);
-                } else {
-                    // This is a primitive operator, so evaluation order is right to left.
-                    intravisit::walk_expr(self, rhs);
-                    intravisit::walk_expr(self, lhs);
-                }
+                // These operations are weird because their order of evaluation depends on whether
+                // the operator is overloaded. In a perfect world, we'd just ask the type checker
+                // whether this is a method call, but we also need to match the expression IDs
+                // from RegionResolutionVisitor. RegionResolutionVisitor doesn't know the order,
+                // so it runs both orders and picks the most conservative. We'll mirror that here.
+                let mut old_count = self.expr_count;
+                intravisit::walk_expr(self, lhs);
+                intravisit::walk_expr(self, rhs);
+
+                self.push_drop_scope();
+                std::mem::swap(&mut old_count, &mut self.expr_count);
+                intravisit::walk_expr(self, rhs);
+                intravisit::walk_expr(self, lhs);
+
+                // We should have visited the same number of expressions in either order.
+                assert_eq!(old_count, self.expr_count);
+
+                self.pop_and_merge_drop_scope();
             }
             _ => intravisit::walk_expr(self, expr),
         }
@@ -775,8 +798,16 @@ impl<'tcx> Visitor<'tcx> for DropRangeVisitor<'_, 'tcx> {
         self.expr_count += 1;
         self.consume_expr(expr);
     }
+
+    fn visit_pat(&mut self, pat: &'tcx Pat<'tcx>) {
+        intravisit::walk_pat(self, pat);
+
+        // Increment expr_count here to match what InteriorVisitor expects.
+        self.expr_count += 1;
+    }
 }
 
+#[derive(Clone)]
 struct DropRange {
     /// The post-order id of the point where this expression is dropped.
     ///
@@ -785,7 +816,11 @@ struct DropRange {
 }
 
 impl DropRange {
+    fn intersect(&self, other: &Self) -> Self {
+        Self { dropped_at: self.dropped_at.max(other.dropped_at) }
+    }
+
     fn contains(&self, id: usize) -> bool {
-        id >= self.dropped_at
+        id > self.dropped_at
     }
 }
