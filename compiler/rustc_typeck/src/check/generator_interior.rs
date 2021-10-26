@@ -6,7 +6,7 @@
 use crate::expr_use_visitor::{self, ExprUseVisitor};
 
 use super::FnCtxt;
-use hir::HirIdMap;
+use hir::{HirIdMap, Node};
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
 use rustc_errors::pluralize;
 use rustc_hir as hir;
@@ -693,7 +693,7 @@ impl DropRangeVisitor<'tcx> {
         let drop_ranges = self.drop_ranges.last_mut().unwrap();
         if self.borrowed_places.contains(&hir_id) {
             debug!("not marking {:?} as dropped because it is borrowed at some point", hir_id);
-        } else if self.consumed_places.contains_key(&hir_id) {
+        } else {
             debug!("marking {:?} as dropped at {}", hir_id, self.expr_count);
             drop_ranges.insert(hir_id, DropRange { dropped_at: self.expr_count });
         }
@@ -723,16 +723,17 @@ impl DropRangeVisitor<'tcx> {
             .map_or(vec![], |places| places.iter().cloned().collect());
         for place in places {
             self.record_drop(place);
-        }
-
-        match expr.kind {
-            hir::ExprKind::Path(hir::QPath::Resolved(
-                _,
-                hir::Path { res: hir::def::Res::Local(hir_id), .. },
-            )) => {
-                self.record_drop(*hir_id);
+            if let Some(Node::Expr(expr)) = self.hir.find(place) {
+                match expr.kind {
+                    hir::ExprKind::Path(hir::QPath::Resolved(
+                        _,
+                        hir::Path { res: hir::def::Res::Local(hir_id), .. },
+                    )) => {
+                        self.record_drop(*hir_id);
+                    }
+                    _ => (),
+                }
             }
-            _ => (),
         }
     }
 }
@@ -843,6 +844,6 @@ impl DropRange {
     }
 
     fn contains(&self, id: usize) -> bool {
-        id >= self.dropped_at
+        id > self.dropped_at
     }
 }
