@@ -717,6 +717,7 @@ impl DropRangeVisitor<'tcx> {
     /// ExprUseVisitor's consume callback doesn't go deep enough for our purposes in all
     /// expressions. This method consumes a little deeper into the expression when needed.
     fn consume_expr(&mut self, expr: &hir::Expr<'_>) {
+        debug!("consuming expr {:?}, count={}", expr.hir_id, self.expr_count);
         let places = self
             .consumed_places
             .get(&expr.hir_id)
@@ -752,11 +753,11 @@ impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor<'tcx> {
         place_with_id: &expr_use_visitor::PlaceWithHirId<'tcx>,
         diag_expr_id: hir::HirId,
     ) {
-        debug!("consume {:?}; diag_expr_id={:?}", place_with_id, diag_expr_id);
         let parent = match self.hir.find_parent_node(place_with_id.hir_id) {
             Some(parent) => parent,
             None => place_with_id.hir_id,
         };
+        debug!("consume {:?}; diag_expr_id={:?}, using parent {:?}", place_with_id, diag_expr_id, parent);
         self.mark_consumed(parent, place_with_id.hir_id);
         place_hir_id(&place_with_id.place).map(|place| self.mark_consumed(parent, place));
     }
@@ -795,20 +796,20 @@ impl<'tcx> Visitor<'tcx> for DropRangeVisitor<'tcx> {
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         match expr.kind {
-            ExprKind::AssignOp(_, lhs, rhs) => {
+            ExprKind::AssignOp(_op, lhs, rhs) => {
                 // These operations are weird because their order of evaluation depends on whether
                 // the operator is overloaded. In a perfect world, we'd just ask the type checker
                 // whether this is a method call, but we also need to match the expression IDs
                 // from RegionResolutionVisitor. RegionResolutionVisitor doesn't know the order,
                 // so it runs both orders and picks the most conservative. We'll mirror that here.
                 let mut old_count = self.expr_count;
-                intravisit::walk_expr(self, lhs);
-                intravisit::walk_expr(self, rhs);
+                self.visit_expr(lhs);
+                self.visit_expr(rhs);
 
                 self.push_drop_scope();
                 std::mem::swap(&mut old_count, &mut self.expr_count);
-                intravisit::walk_expr(self, rhs);
-                intravisit::walk_expr(self, lhs);
+                self.visit_expr(rhs);
+                self.visit_expr(lhs);
 
                 // We should have visited the same number of expressions in either order.
                 assert_eq!(old_count, self.expr_count);
