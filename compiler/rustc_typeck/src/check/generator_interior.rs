@@ -757,7 +757,10 @@ impl<'tcx> expr_use_visitor::Delegate<'tcx> for DropRangeVisitor<'tcx> {
             Some(parent) => parent,
             None => place_with_id.hir_id,
         };
-        debug!("consume {:?}; diag_expr_id={:?}, using parent {:?}", place_with_id, diag_expr_id, parent);
+        debug!(
+            "consume {:?}; diag_expr_id={:?}, using parent {:?}",
+            place_with_id, diag_expr_id, parent
+        );
         self.mark_consumed(parent, place_with_id.hir_id);
         place_hir_id(&place_with_id.place).map(|place| self.mark_consumed(parent, place));
     }
