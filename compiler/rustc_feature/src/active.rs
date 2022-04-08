@@ -310,6 +310,8 @@ declare_features! (
     (active, associated_type_defaults, "1.2.0", Some(29661), None),
     /// Allows `async || body` closures.
     (active, async_closure, "1.37.0", Some(62290), None),
+    /// Allows `async fn` items in traits.
+    (active, async_fn_in_traits, "1.61.0", Some(91611), None),
     /// Allows `extern "C-unwind" fn` to enable unwinding across ABI boundaries.
     (active, c_unwind, "1.52.0", Some(74990), None),
     /// Allows using C-variadics.
