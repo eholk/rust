@@ -389,6 +389,7 @@ symbols! {
         assume_init,
         async_await,
         async_closure,
+        async_fn_in_traits,
         atomic,
         atomic_mod,
         atomics,
