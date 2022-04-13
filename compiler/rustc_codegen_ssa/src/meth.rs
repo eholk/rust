@@ -67,7 +67,7 @@ impl<'a, 'tcx> VirtualIndex {
 fn get_trait_ref<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> ty::PolyExistentialTraitRef<'tcx> {
     for arg in ty.peel_refs().walk() {
         if let GenericArgKind::Type(ty) = arg.unpack() {
-            if let ty::Dynamic(trait_refs, _) = ty.kind() {
+            if let ty::Dynamic(trait_refs, _, _) = ty.kind() {
                 return trait_refs[0].map_bound(|trait_ref| match trait_ref {
                     ExistentialPredicate::Trait(tr) => tr,
                     ExistentialPredicate::Projection(proj) => proj.trait_ref(tcx),
