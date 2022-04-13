@@ -1262,6 +1262,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         trait_bounds: &[hir::PolyTraitRef<'_>],
         lifetime: &hir::Lifetime,
         borrowed: bool,
+        representation: TraitObjectRepresentation,
     ) -> Ty<'tcx> {
         let tcx = self.tcx();
 
@@ -1565,11 +1566,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         };
         debug!("region_bound: {:?}", region_bound);
 
-        let ty = tcx.mk_dynamic(
-            existential_predicates,
-            region_bound,
-            TraitObjectRepresentation::Unsized, // FIXME: check whether the source syntax was dyn or dyn*
-        );
+        let ty = tcx.mk_dynamic(existential_predicates, region_bound, representation);
         debug!("trait_object_type: {:?}", ty);
         ty
     }
@@ -2617,9 +2614,15 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                     Some(ast_ty),
                 ))
             }
-            hir::TyKind::TraitObject(bounds, ref lifetime, _) => {
+            hir::TyKind::TraitObject(bounds, ref lifetime, repr) => {
                 self.maybe_lint_bare_trait(ast_ty, in_path);
-                self.conv_object_ty_poly_trait_ref(ast_ty.span, bounds, lifetime, borrowed)
+                let repr = match repr {
+                    TraitObjectSyntax::Dyn | TraitObjectSyntax::None => {
+                        TraitObjectRepresentation::Unsized
+                    }
+                    TraitObjectSyntax::DynStar => TraitObjectRepresentation::Sized,
+                };
+                self.conv_object_ty_poly_trait_ref(ast_ty.span, bounds, lifetime, borrowed, repr)
             }
             hir::TyKind::Path(hir::QPath::Resolved(ref maybe_qself, ref path)) => {
                 debug!(?maybe_qself, ?path);
