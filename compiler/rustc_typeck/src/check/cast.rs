@@ -41,7 +41,9 @@ use rustc_middle::ty::adjustment::AllowTwoPhase;
 use rustc_middle::ty::cast::{CastKind, CastTy};
 use rustc_middle::ty::error::TypeError;
 use rustc_middle::ty::subst::SubstsRef;
-use rustc_middle::ty::{self, Ty, TypeAndMut, TypeVisitable, VariantDef};
+use rustc_middle::ty::{
+    self, TraitObjectRepresentation, Ty, TypeAndMut, TypeVisitable, VariantDef,
+};
 use rustc_session::lint;
 use rustc_session::Session;
 use rustc_span::symbol::sym;
@@ -217,7 +219,7 @@ impl<'a, 'tcx> CastCheck<'tcx> {
         // cases now. We do a more thorough check at the end, once
         // inference is more completely known.
         match cast_ty.kind() {
-            ty::Dynamic(..) | ty::Slice(..) => {
+            ty::Dynamic(_, _, TraitObjectRepresentation::Unsized) | ty::Slice(..) => {
                 let reported = check.report_cast_to_unsized_type(fcx);
                 Err(reported)
             }
