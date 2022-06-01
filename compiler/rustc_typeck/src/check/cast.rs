@@ -56,9 +56,12 @@ use rustc_trait_selection::traits::error_reporting::report_object_safety_error;
 /// a function context.
 #[derive(Debug)]
 pub struct CastCheck<'tcx> {
+    /// The expression whose value is being casted
     expr: &'tcx hir::Expr<'tcx>,
+    /// The source type for the cast expression
     expr_ty: Ty<'tcx>,
     expr_span: Span,
+    /// The target type. That is, the type we are casting to.
     cast_ty: Ty<'tcx>,
     cast_span: Span,
     span: Span,
@@ -749,8 +752,8 @@ impl<'a, 'tcx> CastCheck<'tcx> {
         use rustc_middle::ty::cast::CastTy::*;
         use rustc_middle::ty::cast::IntTy::*;
 
-        if self.cast_ty is dyn* {
-            return self.do_dyn*_check(fcx);
+        if self.cast_ty.is_dyn_star() {
+            return self.check_dyn_star_cast(fcx);
         }
 
         let (t_from, t_cast) = match (CastTy::from_ty(self.expr_ty), CastTy::from_ty(self.cast_ty))
@@ -1088,6 +1091,10 @@ impl<'a, 'tcx> CastCheck<'tcx> {
                 err.emit();
             },
         );
+    }
+
+    fn check_dyn_star_cast(&self, _fcx: &FnCtxt<'a, 'tcx>) -> Result<CastKind, CastError> {
+        Err(CastError::DifferingKinds)
     }
 }
 

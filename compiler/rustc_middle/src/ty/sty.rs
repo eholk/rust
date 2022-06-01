@@ -30,7 +30,7 @@ use ty::util::IntTypeExt;
 
 use rustc_type_ir::sty::TyKind::*;
 use rustc_type_ir::RegionKind as IrRegionKind;
-use rustc_type_ir::TyKind as IrTyKind;
+use rustc_type_ir::{TraitObjectRepresentation, TyKind as IrTyKind};
 
 // Re-export the `TyKind` from `rustc_type_ir` here for convenience
 #[rustc_diagnostic_item = "TyKind"]
@@ -1842,7 +1842,12 @@ impl<'tcx> Ty<'tcx> {
 
     #[inline]
     pub fn is_trait(self) -> bool {
-        matches!(self.kind(), Dynamic(..))
+        matches!(self.kind(), Dynamic(_, _, TraitObjectRepresentation::Unsized))
+    }
+
+    #[inline]
+    pub fn is_dyn_star(self) -> bool {
+        matches!(self.kind(), Dynamic(_, _, TraitObjectRepresentation::Sized))
     }
 
     #[inline]
