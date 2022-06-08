@@ -36,6 +36,7 @@ use hir::def_id::LOCAL_CRATE;
 use rustc_errors::{struct_span_err, Applicability, DiagnosticBuilder, ErrorGuaranteed};
 use rustc_hir as hir;
 use rustc_hir::lang_items::LangItem;
+use rustc_infer::traits::{ObligationCause, ObligationCauseCode};
 use rustc_middle::mir::Mutability;
 use rustc_middle::ty::adjustment::AllowTwoPhase;
 use rustc_middle::ty::cast::{CastKind, CastTy};
@@ -51,6 +52,7 @@ use rustc_span::Span;
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits;
 use rustc_trait_selection::traits::error_reporting::report_object_safety_error;
+use rustc_type_ir::TyKind::Dynamic;
 
 /// Reifies a cast check to be checked once we have full type information for
 /// a function context.
@@ -206,8 +208,72 @@ fn make_invalid_casting_error<'a, 'tcx>(
     )
 }
 
+pub enum CastCheckResult<'tcx> {
+    Ok,
+    Deferred(CastCheck<'tcx>),
+    Err,
+}
+
+pub fn check_cast<'tcx>(
+    fcx: &FnCtxt<'_, 'tcx>,
+    expr: &'tcx hir::Expr<'tcx>,
+    expr_ty: Ty<'tcx>,
+    cast_ty: Ty<'tcx>,
+    cast_span: Span,
+    span: Span,
+) -> CastCheckResult<'tcx> {
+    if cast_ty.is_dyn_star() {
+        check_dyn_star_cast(fcx, expr, expr_ty, cast_ty)
+    } else {
+        match CastCheck::new(fcx, expr, expr_ty, cast_ty, cast_span, span) {
+            Ok(check) => CastCheckResult::Deferred(check),
+            Err(_) => CastCheckResult::Err,
+        }
+    }
+}
+
+fn check_dyn_star_cast<'tcx>(
+    fcx: &FnCtxt<'_, 'tcx>,
+    expr: &'tcx hir::Expr<'tcx>,
+    expr_ty: Ty<'tcx>,
+    cast_ty: Ty<'tcx>,
+) -> CastCheckResult<'tcx> {
+    // Find the bounds in the dyn*
+    let trait_def_id = match match cast_ty.kind() {
+        Dynamic(predicate, _region, _) => predicate.principal_def_id(),
+        _ => panic!("Invalid dyn* cast_ty"),
+    } {
+        Some(id) => id,
+        _ => return CastCheckResult::Err,
+    };
+
+    let cause = ObligationCause::new(
+        expr.span,
+        fcx.body_id,
+        // FIXME: Use a better obligation cause code
+        ObligationCauseCode::MiscObligation,
+    );
+
+    // Create predicates or obligations for each bound
+    // Need to make an iterator of PredicateObligations
+    let predicate = traits::predicate_for_trait_def(
+        fcx.tcx,
+        fcx.param_env,
+        cause,
+        trait_def_id,
+        0,
+        expr_ty,
+        &[],
+    );
+
+    // Then register them on the fcx
+    fcx.register_predicate(predicate);
+
+    CastCheckResult::Ok
+}
+
 impl<'a, 'tcx> CastCheck<'tcx> {
-    pub fn new(
+    fn new(
         fcx: &FnCtxt<'a, 'tcx>,
         expr: &'tcx hir::Expr<'tcx>,
         expr_ty: Ty<'tcx>,
@@ -752,10 +818,6 @@ impl<'a, 'tcx> CastCheck<'tcx> {
         use rustc_middle::ty::cast::CastTy::*;
         use rustc_middle::ty::cast::IntTy::*;
 
-        if self.cast_ty.is_dyn_star() {
-            return self.check_dyn_star_cast(fcx);
-        }
-
         let (t_from, t_cast) = match (CastTy::from_ty(self.expr_ty), CastTy::from_ty(self.cast_ty))
         {
             (Some(t_from), Some(t_cast)) => (t_from, t_cast),
@@ -1091,10 +1153,6 @@ impl<'a, 'tcx> CastCheck<'tcx> {
                 err.emit();
             },
         );
-    }
-
-    fn check_dyn_star_cast(&self, _fcx: &FnCtxt<'a, 'tcx>) -> Result<CastKind, CastError> {
-        Err(CastError::DifferingKinds)
     }
 }
 
