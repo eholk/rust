@@ -36,14 +36,14 @@ use hir::def_id::LOCAL_CRATE;
 use rustc_errors::{struct_span_err, Applicability, DiagnosticBuilder, ErrorGuaranteed};
 use rustc_hir as hir;
 use rustc_hir::lang_items::LangItem;
-use rustc_infer::traits::{ObligationCause, ObligationCauseCode};
+use rustc_infer::traits::{Obligation, ObligationCause, ObligationCauseCode};
 use rustc_middle::mir::Mutability;
 use rustc_middle::ty::adjustment::AllowTwoPhase;
 use rustc_middle::ty::cast::{CastKind, CastTy};
 use rustc_middle::ty::error::TypeError;
 use rustc_middle::ty::subst::SubstsRef;
 use rustc_middle::ty::{
-    self, TraitObjectRepresentation, Ty, TypeAndMut, TypeVisitable, VariantDef,
+    self, Binder, TraitObjectRepresentation, Ty, TypeAndMut, TypeVisitable, VariantDef,
 };
 use rustc_session::lint;
 use rustc_session::Session;
@@ -52,7 +52,6 @@ use rustc_span::Span;
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits;
 use rustc_trait_selection::traits::error_reporting::report_object_safety_error;
-use rustc_type_ir::TyKind::Dynamic;
 
 /// Reifies a cast check to be checked once we have full type information for
 /// a function context.
@@ -211,7 +210,7 @@ fn make_invalid_casting_error<'a, 'tcx>(
 pub enum CastCheckResult<'tcx> {
     Ok,
     Deferred(CastCheck<'tcx>),
-    Err,
+    Err(ErrorGuaranteed),
 }
 
 pub fn check_cast<'tcx>(
@@ -227,7 +226,7 @@ pub fn check_cast<'tcx>(
     } else {
         match CastCheck::new(fcx, expr, expr_ty, cast_ty, cast_span, span) {
             Ok(check) => CastCheckResult::Deferred(check),
-            Err(_) => CastCheckResult::Err,
+            Err(e) => CastCheckResult::Err(e),
         }
     }
 }
@@ -238,13 +237,14 @@ fn check_dyn_star_cast<'tcx>(
     expr_ty: Ty<'tcx>,
     cast_ty: Ty<'tcx>,
 ) -> CastCheckResult<'tcx> {
-    // Find the bounds in the dyn*
-    let trait_def_id = match match cast_ty.kind() {
-        Dynamic(predicate, _region, _) => predicate.principal_def_id(),
+    // Find the bounds in the dyn*. For eaxmple, if we have
+    //
+    //    let x = 22_usize as dyn* (Clone + Debug + 'static)
+    //
+    // this would return `existential_predicates = [?Self: Clone, ?Self: Debug]` and `region = 'static`.
+    let (existential_predicates, region) = match cast_ty.kind() {
+        ty::Dynamic(predicates, region, TraitObjectRepresentation::Sized) => (predicates, region),
         _ => panic!("Invalid dyn* cast_ty"),
-    } {
-        Some(id) => id,
-        _ => return CastCheckResult::Err,
     };
 
     let cause = ObligationCause::new(
@@ -254,20 +254,23 @@ fn check_dyn_star_cast<'tcx>(
         ObligationCauseCode::MiscObligation,
     );
 
-    // Create predicates or obligations for each bound
-    // Need to make an iterator of PredicateObligations
-    let predicate = traits::predicate_for_trait_def(
-        fcx.tcx,
-        fcx.param_env,
-        cause,
-        trait_def_id,
-        0,
-        expr_ty,
-        &[],
-    );
+    // For each existential predicate (e.g., `?Self: Clone`) substitute
+    // the type of the expression (e.g., `usize` in our example above)
+    // and then require that the resulting predicate (e.g., `usize: Clone`)
+    // holds (it does).
+    for existential_predicate in existential_predicates.iter() {
+        let predicate = existential_predicate.with_self_ty(fcx.tcx, expr_ty);
+        fcx.register_predicate(Obligation::new(cause.clone(), fcx.param_env, predicate));
+    }
 
-    // Then register them on the fcx
-    fcx.register_predicate(predicate);
+    // Enforce the region bound `'static` (e.g., `usize: 'static`, in our example).
+    fcx.register_predicate(Obligation::new(
+        cause,
+        fcx.param_env,
+        fcx.tcx.mk_predicate(Binder::dummy(ty::PredicateKind::TypeOutlives(
+            ty::OutlivesPredicate(expr_ty, *region),
+        ))),
+    ));
 
     CastCheckResult::Ok
 }
