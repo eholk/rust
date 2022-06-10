@@ -7,7 +7,7 @@ pub fn dyn_star_parameter(_: dyn* Send) {
 }
 
 fn make_dyn_star() {
-    let i = 42;
+    let i = 42usize;
     let dyn_i: dyn* Debug = i as dyn* Debug;
 }
 

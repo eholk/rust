@@ -1272,7 +1272,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     deferred_cast_checks.push(cast_check);
                     t_cast
                 }
-                CastCheckResult::Err => self.tcx.ty_error(),
+                CastCheckResult::Err(ErrorGuaranteed { .. }) => self.tcx.ty_error(),
             }
         }
     }
