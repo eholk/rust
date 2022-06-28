@@ -1068,6 +1068,8 @@ pub enum CastKind {
     /// All sorts of pointer-to-pointer casts. Note that reference-to-raw-ptr casts are
     /// translated into `&raw mut/const *r`, i.e., they are not actually casts.
     Pointer(PointerCast),
+    /// Cast into a dyn* object.
+    DynStar,
     /// Remaining unclassified casts.
     Misc,
 }
