@@ -2679,6 +2679,7 @@ impl<'tcx> ty::Instance<'tcx> {
     // for `Instance` (e.g. typeck would use `Ty::fn_sig` instead),
     // or should go through `FnAbi` instead, to avoid losing any
     // adjustments `fn_abi_of_instance` might be performing.
+    #[tracing::instrument(level = "debug", skip(tcx, param_env))]
     fn fn_sig_for_fn_abi(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -2825,6 +2826,7 @@ impl<'tcx> ty::Instance<'tcx> {
 /// with `-Cpanic=abort` will look like they can't unwind when in fact they
 /// might (from a foreign exception or similar).
 #[inline]
+#[tracing::instrument(level = "debug", skip(tcx))]
 pub fn fn_can_unwind<'tcx>(tcx: TyCtxt<'tcx>, fn_def_id: Option<DefId>, abi: SpecAbi) -> bool {
     if let Some(did) = fn_def_id {
         // Special attribute for functions which can't unwind.
@@ -3041,6 +3043,7 @@ pub trait FnAbiOf<'tcx>: FnAbiOfHelpers<'tcx> {
     /// NB: that includes virtual calls, which are represented by "direct calls"
     /// to an `InstanceDef::Virtual` instance (of `<dyn Trait as Trait>::fn`).
     #[inline]
+    #[tracing::instrument(level = "debug", skip(self))]
     fn fn_abi_of_instance(
         &self,
         instance: ty::Instance<'tcx>,
@@ -3100,6 +3103,10 @@ fn fn_abi_of_instance<'tcx>(
 impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
     // FIXME(eddyb) perhaps group the signature/type-containing (or all of them?)
     // arguments of this method, into a separate `struct`.
+    #[tracing::instrument(
+        level = "debug",
+        skip(self, caller_location, fn_def_id, force_thin_self_ptr)
+    )]
     fn fn_abi_new_uncached(
         &self,
         sig: ty::PolyFnSig<'tcx>,
@@ -3109,8 +3116,6 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
         // FIXME(eddyb) replace this with something typed, like an `enum`.
         force_thin_self_ptr: bool,
     ) -> Result<&'tcx FnAbi<'tcx, Ty<'tcx>>, FnAbiError<'tcx>> {
-        debug!("fn_abi_new_uncached({:?}, {:?})", sig, extra_args);
-
         let sig = self.tcx.normalize_erasing_late_bound_regions(self.param_env, sig);
 
         let conv = conv_from_spec_abi(self.tcx(), sig.abi);
@@ -3158,6 +3163,9 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
                                       layout: TyAndLayout<'tcx>,
                                       offset: Size,
                                       is_return: bool| {
+            let span = tracing::debug_span!("adjust_for_rust_scalar");
+            let _enter = span.enter();
+
             // Booleans are always a noundef i1 that needs to be zero-extended.
             if scalar.is_bool() {
                 attrs.ext(ArgExtension::Zext);
@@ -3238,6 +3246,8 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
         };
 
         let arg_of = |ty: Ty<'tcx>, arg_idx: Option<usize>| -> Result<_, FnAbiError<'tcx>> {
+            let span = tracing::debug_span!("arg_of");
+            let _entered = span.enter();
             let is_return = arg_idx.is_none();
 
             let layout = self.layout_of(ty)?;
@@ -3294,6 +3304,7 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
         Ok(self.tcx.arena.alloc(fn_abi))
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     fn fn_abi_adjust_for_abi(
         &self,
         fn_abi: &mut FnAbi<'tcx, Ty<'tcx>>,
@@ -3368,6 +3379,7 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
     }
 }
 
+#[tracing::instrument(level = "Debug", skip(cx))]
 fn make_thin_self_ptr<'tcx>(
     cx: &(impl HasTyCtxt<'tcx> + HasParamEnv<'tcx>),
     layout: TyAndLayout<'tcx>,
