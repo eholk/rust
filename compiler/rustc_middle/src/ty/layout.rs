@@ -3379,7 +3379,7 @@ impl<'tcx> LayoutCx<'tcx, TyCtxt<'tcx>> {
     }
 }
 
-#[tracing::instrument(level = "Debug", skip(cx))]
+#[tracing::instrument(level = "debug", skip(cx))]
 fn make_thin_self_ptr<'tcx>(
     cx: &(impl HasTyCtxt<'tcx> + HasParamEnv<'tcx>),
     layout: TyAndLayout<'tcx>,
@@ -3391,7 +3391,7 @@ fn make_thin_self_ptr<'tcx>(
         tcx.mk_mut_ptr(layout.ty)
     } else {
         match layout.abi {
-            Abi::ScalarPair(..) => (),
+            Abi::ScalarPair(..) | Abi::Scalar(..) => (),
             _ => bug!("receiver type has unsupported layout: {:?}", layout),
         }
 
