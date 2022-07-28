@@ -17,7 +17,7 @@ use rustc_middle::mir::AssertKind;
 use rustc_middle::mir::{self, SwitchTargets};
 use rustc_middle::ty::layout::{HasTyCtxt, LayoutOf};
 use rustc_middle::ty::print::{with_no_trimmed_paths, with_no_visible_paths};
-use rustc_middle::ty::{self, Instance, Ty, TypeVisitable, TraitObjectRepresentation};
+use rustc_middle::ty::{self, Instance, TraitObjectRepresentation, Ty, TypeVisitable};
 use rustc_span::source_map::Span;
 use rustc_span::{sym, Symbol};
 use rustc_symbol_mangling::typeid::typeid_for_fnabi;
@@ -462,7 +462,9 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 debug!("drop_fn = {:?}", drop_fn);
                 debug!("args = {:?}", args);
                 let fn_abi = bx.fn_abi_of_instance(virtual_drop, ty::List::empty());
-                let vtable = args[1];
+                let data = args[0];
+                let vtable_ptr = bx.gep(bx.type_isize(), data, &[bx.cx().const_usize(8)]);
+                let vtable = bx.load(bx.type_isize(), vtable_ptr, abi::Align::ONE);
                 // Truncate vtable off of args list
                 args = &args[..1];
                 debug!("args' = {:?}", args);
