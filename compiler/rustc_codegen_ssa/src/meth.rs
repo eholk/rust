@@ -64,7 +64,8 @@ impl<'a, 'tcx> VirtualIndex {
     }
 }
 
-fn get_trait_ref<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> ty::PolyExistentialTraitRef<'tcx> {
+/// Converts a ty to a trait ref that can be used with [`get_vtable`]
+pub fn get_trait_ref<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> ty::PolyExistentialTraitRef<'tcx> {
     for arg in ty.peel_refs().walk() {
         if let GenericArgKind::Type(ty) = arg.unpack() {
             if let ty::Dynamic(trait_refs, _, _) = ty.kind() {
@@ -90,14 +91,13 @@ fn get_trait_ref<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> ty::PolyExistentialTr
 /// The `trait_ref` encodes the erased self type. Hence if we are
 /// making an object `Foo<dyn Trait>` from a value of type `Foo<T>`, then
 /// `trait_ref` would map `T: Trait`.
+#[instrument(level = "debug", skip(cx))]
 pub fn get_vtable<'tcx, Cx: CodegenMethods<'tcx>>(
     cx: &Cx,
     ty: Ty<'tcx>,
     trait_ref: Option<ty::PolyExistentialTraitRef<'tcx>>,
 ) -> Cx::Value {
     let tcx = cx.tcx();
-
-    debug!("get_vtable(ty={:?}, trait_ref={:?})", ty, trait_ref);
 
     // Check the cache.
     if let Some(&val) = cx.vtables().borrow().get(&(ty, trait_ref)) {
