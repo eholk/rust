@@ -463,8 +463,9 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 debug!("args = {:?}", args);
                 let fn_abi = bx.fn_abi_of_instance(virtual_drop, ty::List::empty());
                 let data = args[0];
+                let data_ty = bx.cx().backend_type(place.layout);
                 let vtable_ptr =
-                    bx.gep(bx.type_i8p(), data, &[bx.cx().const_usize(0), bx.cx().const_usize(1)]);
+                    bx.gep(data_ty, data, &[bx.cx().const_i32(0), bx.cx().const_i32(1)]);
                 let vtable = bx.load(bx.type_i8p(), vtable_ptr, abi::Align::ONE);
                 // Truncate vtable off of args list
                 args = &args[..1];
