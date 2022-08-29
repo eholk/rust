@@ -4,7 +4,7 @@ use super::{FunctionCx, LocalRef};
 
 use crate::base;
 use crate::common::{self, IntPredicate};
-use crate::meth::{get_trait_ref, get_vtable};
+use crate::meth::get_vtable;
 use crate::traits::*;
 use crate::MemFlags;
 
@@ -278,9 +278,13 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                             OperandValue::Immediate(v) => v,
                             OperandValue::Pair(_, _) => todo!(),
                         };
-                        // FIXME: find the real vtable!
-                        let trait_ref = get_trait_ref(bx.tcx(), mir_cast_ty);
-                        let vtable = get_vtable(bx.cx(), source.ty(self.mir, bx.tcx()), Some(trait_ref));
+                        let trait_ref =
+                            if let ty::Dynamic(data, _, ty::TraitObjectRepresentation::Sized) = cast.ty.kind() {
+                                data.principal()
+                            } else {
+                                bug!("Only valid to do a DynStar cast into a DynStar type")
+                            };
+                        let vtable = get_vtable(bx.cx(), source.ty(self.mir, bx.tcx()), trait_ref);
                         OperandValue::Pair(data, vtable)
                     }
                     mir::CastKind::Pointer(
