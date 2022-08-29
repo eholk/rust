@@ -913,7 +913,7 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                     llargs.push(data_ptr);
                     continue;
                 } else {
-                    span_bug!(span, "can't codegen a virtual call on {:?}", op);
+                    span_bug!(span, "can't codegen a virtual call on {:#?}", op);
                 }
             }
 
