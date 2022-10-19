@@ -518,6 +518,7 @@ fn run_runtime_lowering_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         // `AddRetag` needs to run after `ElaborateDrops`. Otherwise it should run fairly late,
         // but before optimizations begin.
         &elaborate_box_derefs::ElaborateBoxDerefs,
+        &lower_intrinsics::LowerIntrinsics,
         &generator::StateTransform,
         &add_retag::AddRetag,
         // Deaggregator is necessary for const prop. We may want to consider implementing

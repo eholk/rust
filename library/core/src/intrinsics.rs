@@ -2174,6 +2174,10 @@ extern "rust-intrinsic" {
     where
         G: FnOnce<ARG, Output = RET>,
         F: FnOnce<ARG, Output = RET>;
+
+    /// Expands to a call to `core::mem::drop(arg)` followed by `StorageDead(arg)` in MIR.
+    #[cfg(not(bootstrap))]
+    pub fn drop_dead<T: Copy>(arg: T);
 }
 
 // Some functions are defined here because they accidentally got made

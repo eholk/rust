@@ -649,6 +649,7 @@ symbols! {
         dreg_low16,
         dreg_low8,
         drop,
+        drop_dead,
         drop_in_place,
         drop_types_in_const,
         dropck_eyepatch,

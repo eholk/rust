@@ -194,6 +194,7 @@ pub fn check_intrinsic_type(tcx: TyCtxt<'_>, it: &hir::ForeignItem<'_>) {
                 (1, Vec::new(), tcx.mk_unit())
             }
             sym::forget => (1, vec![param(0)], tcx.mk_unit()),
+            sym::drop_dead => (1, vec![param(0)], tcx.mk_unit()),
             sym::transmute => (2, vec![param(0)], param(1)),
             sym::prefetch_read_data
             | sym::prefetch_write_data

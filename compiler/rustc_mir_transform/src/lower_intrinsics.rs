@@ -142,6 +142,22 @@ impl<'tcx> MirPass<'tcx> for LowerIntrinsics {
                             terminator.kind = TerminatorKind::Goto { target };
                         }
                     }
+                    sym::drop_dead => match block.statements.iter().last() {
+                        Some(Statement { kind: StatementKind::Assign(args), .. }) => {
+                            match &**args {
+                                (_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                                    block.statements.push(Statement {
+                                        source_info: terminator.source_info,
+                                        kind: StatementKind::StorageDead(place.local),
+                                    });
+                                    let target = target.unwrap();
+                                    terminator.kind = TerminatorKind::Goto { target };
+                                }
+                                other => bug!("invalid argument to drop_dead: {other:?}"),
+                            }
+                        }
+                        other => bug!("unexpected context for calling drop_dead: {other:?}"),
+                    },
                     _ if intrinsic_name.as_str().starts_with("simd_shuffle") => {
                         validate_simd_shuffle(tcx, args, terminator.source_info.span);
                     }
