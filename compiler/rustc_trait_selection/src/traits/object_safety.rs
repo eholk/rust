@@ -849,7 +849,13 @@ pub fn contains_illegal_impl_trait_in_trait<'tcx>(
     // This would be caught below, but rendering the error as a separate
     // `async-specific` message is better.
     if tcx.asyncness(fn_def_id).is_async() {
-        return Some(MethodViolationCode::AsyncFn);
+        if tcx.features().async_fn_in_dyn_trait {
+            // FIXME(afidt): need to walk explicit_item_bounds to find any nested RPITITs.
+            // We need to catch cases like `async fn foo(&self) -> impl Debug`
+            return None;
+        } else {
+            return Some(MethodViolationCode::AsyncFn);
+        }
     }
 
     // FIXME(RPITIT): Perhaps we should use a visitor here?
