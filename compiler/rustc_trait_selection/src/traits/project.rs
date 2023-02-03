@@ -26,6 +26,7 @@ use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::def::DefKind;
 use rustc_hir::lang_items::LangItem;
+use rustc_hir::IsAsync;
 use rustc_infer::infer::at::At;
 use rustc_infer::infer::resolve::OpportunisticRegionResolver;
 use rustc_infer::traits::ImplSourceBuiltinData;
@@ -33,6 +34,9 @@ use rustc_middle::traits::select::OverflowError;
 use rustc_middle::ty::fold::{TypeFoldable, TypeFolder, TypeSuperFoldable};
 use rustc_middle::ty::visit::{MaxUniverse, TypeVisitable};
 use rustc_middle::ty::DefIdTree;
+use rustc_middle::ty::ExistentialPredicate;
+use rustc_middle::ty::ExistentialProjection;
+use rustc_middle::ty::ExistentialTraitRef;
 use rustc_middle::ty::{self, Term, ToPredicate, Ty, TyCtxt};
 use rustc_span::symbol::sym;
 
@@ -95,10 +99,12 @@ enum ProjectionCandidate<'tcx> {
 
 #[derive(PartialEq, Eq, Debug)]
 enum ImplTraitInTraitCandidate<'tcx> {
-    // The `impl Trait` from a trait function's default body
+    /// The `impl Trait` from a trait function's default body
     Trait,
-    // A concrete type provided from a trait's `impl Trait` from an impl
+    /// A concrete type provided from a trait's `impl Trait` from an impl
     Impl(ImplSourceUserDefinedData<'tcx, PredicateObligation<'tcx>>),
+    /// The `impl Trait` is from an `async fn` called on a `dyn Trait` object
+    DynAsync,
 }
 
 enum ProjectionCandidateSet<'tcx> {
@@ -1284,6 +1290,7 @@ fn project<'cx, 'tcx>(
 /// If the predicate's item is an `ImplTraitPlaceholder`, we do a select on the
 /// corresponding trait ref. If this yields an `impl`, then we're able to project
 /// to a concrete type, since we have an `impl`'s method  to provide the RPITIT.
+#[instrument(level = "info", skip(selcx, candidate_set))]
 fn assemble_candidate_for_impl_trait_in_trait<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &ProjectionTyObligation<'tcx>,
@@ -1294,7 +1301,8 @@ fn assemble_candidate_for_impl_trait_in_trait<'cx, 'tcx>(
         let trait_fn_def_id = tcx.impl_trait_in_trait_parent(obligation.predicate.def_id);
         // If we are trying to project an RPITIT with trait's default `Self` parameter,
         // then we must be within a default trait body.
-        if obligation.predicate.self_ty()
+        let self_ty = obligation.predicate.self_ty();
+        if self_ty
             == ty::InternalSubsts::identity_for_item(tcx, obligation.predicate.def_id).type_at(0)
             && tcx.associated_item(trait_fn_def_id).defaultness(tcx).has_value()
         {
@@ -1310,7 +1318,14 @@ fn assemble_candidate_for_impl_trait_in_trait<'cx, 'tcx>(
         // FIXME(named-returns): Binders
         let trait_predicate = ty::Binder::dummy(tcx.mk_trait_ref(trait_def_id, trait_substs));
 
-        let _ = selcx.infcx.commit_if_ok(|_| {
+        debug!(
+            "is_dyn_async: is_dyn = {}, asyncness = {:?}",
+            self_ty.is_dyn(),
+            tcx.asyncness(trait_fn_def_id)
+        );
+        let is_dyn_async = self_ty.is_dyn() && IsAsync::Async == tcx.asyncness(trait_fn_def_id);
+
+        let result = selcx.infcx.commit_if_ok(|_| {
             match selcx.select(&obligation.with(tcx, trait_predicate)) {
                 Ok(Some(super::ImplSource::UserDefined(data))) => {
                     candidate_set.push_candidate(ProjectionCandidate::ImplTraitInTrait(
@@ -1319,20 +1334,31 @@ fn assemble_candidate_for_impl_trait_in_trait<'cx, 'tcx>(
                     Ok(())
                 }
                 Ok(None) => {
+                    debug!("ambiguous selection");
                     candidate_set.mark_ambiguous();
-                    return Err(());
+                    Err(())
                 }
-                Ok(Some(_)) => {
+                Ok(Some(obligation)) => {
                     // Don't know enough about the impl to provide a useful signature
-                    return Err(());
+                    debug!(?obligation, "not enough information for useful signature");
+
+                    if is_dyn_async {
+                        candidate_set.push_candidate(ProjectionCandidate::ImplTraitInTrait(
+                            ImplTraitInTraitCandidate::DynAsync,
+                        ));
+                        Ok(())
+                    } else {
+                        Err(())
+                    }
                 }
                 Err(e) => {
                     debug!(error = ?e, "selection error");
                     candidate_set.mark_error(e);
-                    return Err(());
+                    Err(())
                 }
             }
         });
+        debug!(commit_if_okay = ?result);
     }
 }
 
@@ -1787,6 +1813,56 @@ fn confirm_candidate<'cx, 'tcx>(
                 .into(),
             obligations: vec![],
         },
+        ProjectionCandidate::ImplTraitInTrait(ImplTraitInTraitCandidate::DynAsync) => {
+            debug!(?obligation, "handling dyn async trait method");
+            let tcx = selcx.tcx();
+
+            let trait_def_id = obligation.predicate.def_id;
+            // FIXME(afidt): ReStatic is wrong here.
+            let lifetime = tcx.mk_region(ty::ReStatic);
+
+            //let ty = object_ty_for_trait(tcx, trait_def_id, lifetime, ty::DynStar);
+
+            // let trait_ref = ty::TraitRef::identity(tcx, trait_def_id);
+            // debug!(?trait_ref);
+
+            let mut bounds = tcx
+                .explicit_item_bounds(trait_def_id)
+                .iter()
+                .filter_map(|(pred, _span)| {
+                    debug!(?pred);
+                    match (pred.to_opt_poly_projection_pred(), pred.to_opt_poly_trait_pred()) {
+                        (Some(projection), None) => {
+                            // let projection = projection.skip_binder();
+                            Some(projection.rebind(ExistentialPredicate::Projection(
+                                ExistentialProjection::erase_self_ty(tcx, projection.skip_binder()),
+                            )))
+                        }
+                        (None, Some(trait_pred)) => {
+                            let trait_ref = trait_pred.skip_binder().trait_ref;
+                            // Filter out the `Sized` bound
+                            (tcx.lang_items().sized_trait().unwrap() != trait_ref.def_id).then(
+                                || {
+                                    trait_pred.rebind(ExistentialPredicate::Trait(
+                                        ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
+                                    ))
+                                },
+                            )
+                        }
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            bounds.sort_by(|a, b| a.skip_binder().stable_cmp(tcx, &b.skip_binder()));
+            bounds.dedup();
+            debug!(?bounds);
+
+            let bounds = tcx.mk_poly_existential_predicates(bounds.into_iter());
+            let ty = tcx.mk_dynamic(&bounds, lifetime, ty::DynStar);
+
+            Progress { term: ty.into(), obligations: vec![] }
+        }
     };
 
     // When checking for cycle during evaluation, we compare predicates with

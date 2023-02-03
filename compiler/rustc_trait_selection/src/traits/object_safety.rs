@@ -19,7 +19,7 @@ use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::subst::{GenericArg, InternalSubsts};
 use rustc_middle::ty::{
-    self, EarlyBinder, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor,
+    self, DynKind, EarlyBinder, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor,
 };
 use rustc_middle::ty::{Predicate, ToPredicate};
 use rustc_session::lint::builtin::WHERE_CLAUSES_OBJECT_SAFETY;
@@ -506,7 +506,7 @@ fn virtual_call_violation_for_method<'tcx>(
             }
 
             let trait_object_ty =
-                object_ty_for_trait(tcx, trait_def_id, tcx.mk_region(ty::ReStatic));
+                object_ty_for_trait(tcx, trait_def_id, tcx.mk_region(ty::ReStatic), ty::Dyn);
 
             // e.g., `Rc<dyn Trait>`
             let trait_object_receiver =
@@ -574,6 +574,7 @@ fn object_ty_for_trait<'tcx>(
     tcx: TyCtxt<'tcx>,
     trait_def_id: DefId,
     lifetime: ty::Region<'tcx>,
+    repr: DynKind,
 ) -> Ty<'tcx> {
     let trait_ref = ty::TraitRef::identity(tcx, trait_def_id);
     debug!(?trait_ref);
@@ -606,7 +607,7 @@ fn object_ty_for_trait<'tcx>(
         .mk_poly_existential_predicates(iter::once(trait_predicate).chain(elaborated_predicates));
     debug!(?existential_predicates);
 
-    tcx.mk_dynamic(existential_predicates, lifetime, ty::Dyn)
+    tcx.mk_dynamic(existential_predicates, lifetime, repr)
 }
 
 /// Checks the method's receiver (the `self` argument) can be dispatched on when `Self` is a

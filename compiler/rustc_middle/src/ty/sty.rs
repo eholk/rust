@@ -1951,6 +1951,12 @@ impl<'tcx> Ty<'tcx> {
         matches!(self.kind(), Dynamic(_, _, ty::Dyn))
     }
 
+    /// Returns `true` if this type is a `dyn Trait` or `dyn* Trait` type.
+    #[inline]
+    pub fn is_dyn(self) -> bool {
+        matches!(self.kind(), Dynamic(_, _, _))
+    }
+
     #[inline]
     pub fn is_dyn_star(self) -> bool {
         matches!(self.kind(), Dynamic(_, _, ty::DynStar))

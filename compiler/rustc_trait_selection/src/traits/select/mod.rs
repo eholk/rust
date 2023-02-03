@@ -259,7 +259,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     // 2. If the output type parameters in the obligation do not match
     //    those specified by the impl/bound. For example, if the obligation
     //    is `Vec<Foo>: Iterable<Bar>`, but the impl specifies
-    //    `impl<T> Iterable<T> for Vec<T>`, than an error would result.
+    //    `impl<T> Iterable<T> for Vec<T>`, then an error would result.
 
     /// Attempts to satisfy the obligation. If successful, this will affect the surrounding
     /// type environment by performing unification.

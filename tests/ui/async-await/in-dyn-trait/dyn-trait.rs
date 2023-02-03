@@ -15,6 +15,6 @@ impl MyTrait for i32 {
 }
 
 fn main() {
-    let _x = &0 as &dyn MyTrait;
-    // let _f = x.foo(42);
+    let x = &0 as &dyn MyTrait;
+    let _f = x.foo(42);
 }
