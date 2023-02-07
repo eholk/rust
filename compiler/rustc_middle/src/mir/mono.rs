@@ -372,6 +372,7 @@ impl<'tcx> CodegenUnit<'tcx> {
                             // unstable.
                             InstanceDef::Item(def) => def.did.as_local().map(Idx::index),
                             InstanceDef::VTableShim(..)
+                            | InstanceDef::AsyncVTableShim(..)
                             | InstanceDef::ReifyShim(..)
                             | InstanceDef::Intrinsic(..)
                             | InstanceDef::FnPtrShim(..)

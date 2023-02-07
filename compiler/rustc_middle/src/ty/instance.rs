@@ -50,6 +50,15 @@ pub enum InstanceDef<'tcx> {
     /// and dereference the argument to call the original function.
     VTableShim(DefId),
 
+    /// `<T as Trait>::method` where `method` receives unsizeable `self: Self` (part of the
+    /// `unsized_locals` feature).
+    ///
+    /// The generated shim will take `Self` via `*mut Self` - conceptually this is `&owned Self` -
+    /// and dereference the argument to call the original function.
+    ///
+    /// Upon return, the shim will coerce the function result to a dyn*.
+    AsyncVTableShim(DefId),
+
     /// `fn()` pointer where the function itself cannot be turned into a pointer.
     ///
     /// One example is `<dyn Trait as Trait>::fn`, where the shim contains
@@ -145,6 +154,7 @@ impl<'tcx> InstanceDef<'tcx> {
         match self {
             InstanceDef::Item(def) => def.did,
             InstanceDef::VTableShim(def_id)
+            | InstanceDef::AsyncVTableShim(def_id)
             | InstanceDef::ReifyShim(def_id)
             | InstanceDef::FnPtrShim(def_id, _)
             | InstanceDef::Virtual(def_id, _)
@@ -161,6 +171,7 @@ impl<'tcx> InstanceDef<'tcx> {
             ty::InstanceDef::Item(def) => Some(def.did),
             ty::InstanceDef::DropGlue(def_id, Some(_)) => Some(def_id),
             InstanceDef::VTableShim(..)
+            | InstanceDef::AsyncVTableShim(..)
             | InstanceDef::ReifyShim(..)
             | InstanceDef::FnPtrShim(..)
             | InstanceDef::Virtual(..)
@@ -176,6 +187,7 @@ impl<'tcx> InstanceDef<'tcx> {
         match self {
             InstanceDef::Item(def) => def,
             InstanceDef::VTableShim(def_id)
+            | InstanceDef::AsyncVTableShim(def_id)
             | InstanceDef::ReifyShim(def_id)
             | InstanceDef::FnPtrShim(def_id, _)
             | InstanceDef::Virtual(def_id, _)
@@ -272,7 +284,8 @@ impl<'tcx> InstanceDef<'tcx> {
             | InstanceDef::Intrinsic(..)
             | InstanceDef::ReifyShim(..)
             | InstanceDef::Virtual(..)
-            | InstanceDef::VTableShim(..) => true,
+            | InstanceDef::VTableShim(..)
+            | InstanceDef::AsyncVTableShim(..) => true,
         }
     }
 }
@@ -294,6 +307,7 @@ fn fmt_instance(
     match instance.def {
         InstanceDef::Item(_) => Ok(()),
         InstanceDef::VTableShim(_) => write!(f, " - shim(vtable)"),
+        InstanceDef::AsyncVTableShim(_) => write!(f, " - shim(async vtable)"),
         InstanceDef::ReifyShim(_) => write!(f, " - shim(reify)"),
         InstanceDef::Intrinsic(_) => write!(f, " - intrinsic"),
         InstanceDef::Virtual(_, num) => write!(f, " - virtual#{}", num),
@@ -452,20 +466,29 @@ impl<'tcx> Instance<'tcx> {
         })
     }
 
+    #[instrument(level = "debug", skip(tcx, param_env), ret)]
     pub fn resolve_for_vtable(
         tcx: TyCtxt<'tcx>,
         param_env: ty::ParamEnv<'tcx>,
         def_id: DefId,
         substs: SubstsRef<'tcx>,
     ) -> Option<Instance<'tcx>> {
-        debug!("resolve_for_vtable(def_id={:?}, substs={:?})", def_id, substs);
         let fn_sig = tcx.fn_sig(def_id);
+        // We need a VTableShim if the method takes self by value, since it's an unsized parameter.
+        //
+        // We detect this case by checking that the method signature looks like `fn foo(self, ..)`,
+        // relying on the fact that the `Self` type is always the first generic parameter.
+        // If the first parameter were something like `&Self`, then the `is_param(0)` check below
+        // would return false, since `&` is not a type parameter.
         let is_vtable_shim = !fn_sig.inputs().skip_binder().is_empty()
             && fn_sig.input(0).skip_binder().is_param(0)
             && tcx.generics_of(def_id).has_self;
         if is_vtable_shim {
             debug!(" => associated item with unsizeable self: Self");
             Some(Instance { def: InstanceDef::VTableShim(def_id), substs })
+        } else if tcx.asyncness(def_id).is_async() {
+            debug!(" => associated async fn");
+            Some(Instance { def: InstanceDef::AsyncVTableShim(def_id), substs })
         } else {
             Instance::resolve(tcx, param_env, def_id, substs).ok().flatten().map(|mut resolved| {
                 match resolved.def {
@@ -634,8 +657,8 @@ impl<'tcx> Instance<'tcx> {
 
     /// Returns a new `Instance` where generic parameters in `instance.substs` are replaced by
     /// identity parameters if they are determined to be unused in `instance.def`.
+    #[instrument(level = "debug", skip(tcx))]
     pub fn polymorphize(self, tcx: TyCtxt<'tcx>) -> Self {
-        debug!("polymorphize: running polymorphization analysis");
         if !tcx.sess.opts.unstable_opts.polymorphize {
             return self;
         }

@@ -80,6 +80,7 @@ pub(crate) fn mir_callgraph_reachable<'tcx>(
                 // again, a function item can end up getting inlined. Thus we'll be able to cause
                 // a cycle that way
                 InstanceDef::VTableShim(_)
+                | InstanceDef::AsyncVTableShim(_)
                 | InstanceDef::ReifyShim(_)
                 | InstanceDef::FnPtrShim(..)
                 | InstanceDef::ClosureOnceShim { .. }

@@ -27,14 +27,14 @@ pub fn provide(providers: &mut Providers) {
     providers.mir_shims = make_shim;
 }
 
+#[instrument(level = "debug", skip(tcx))]
 fn make_shim<'tcx>(tcx: TyCtxt<'tcx>, instance: ty::InstanceDef<'tcx>) -> Body<'tcx> {
-    debug!("make_shim({:?})", instance);
-
     let mut result = match instance {
         ty::InstanceDef::Item(..) => bug!("item {:?} passed to make_shim", instance),
         ty::InstanceDef::VTableShim(def_id) => {
             build_call_shim(tcx, instance, Some(Adjustment::Deref), CallKind::Direct(def_id))
         }
+        ty::InstanceDef::AsyncVTableShim(def_id) => build_async_vtable_shim(tcx, def_id),
         ty::InstanceDef::FnPtrShim(def_id, ty) => {
             let trait_ = tcx.trait_of_item(def_id).unwrap();
             let adjustment = match tcx.fn_trait_kind_from_def_id(trait_) {
@@ -854,6 +854,214 @@ pub fn build_adt_ctor(tcx: TyCtxt<'_>, ctor_id: DefId) -> Body<'_> {
     );
 
     crate::pass_manager::dump_mir_for_phase_change(tcx, &body);
+
+    body
+}
+
+#[instrument(level = "debug", skip(tcx), ret)]
+fn build_async_vtable_shim<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Body<'tcx> {
+    let rcvr_adjustment = Some(Adjustment::Deref);
+    let instance = ty::InstanceDef::AsyncVTableShim(def_id);
+    let call_kind = CallKind::Direct(def_id);
+    // `FnPtrShim` contains the fn pointer type that a call shim is being built for - this is used
+    // to substitute into the signature of the shim. It is not necessary for users of this
+    // MIR body to perform further substitutions (see `InstanceDef::has_polymorphic_mir_body`).
+    let (sig_substs, untuple_args) = if let ty::InstanceDef::FnPtrShim(_, ty) = instance {
+        let sig = tcx.erase_late_bound_regions(ty.fn_sig(tcx));
+
+        let untuple_args = sig.inputs();
+
+        // Create substitutions for the `Self` and `Args` generic parameters of the shim body.
+        let arg_tup = tcx.mk_tup(untuple_args.iter());
+
+        (Some([ty.into(), arg_tup.into()]), Some(untuple_args))
+    } else {
+        (None, None)
+    };
+
+    let def_id = instance.def_id();
+    let sig = tcx.bound_fn_sig(def_id);
+    let sig = sig.map_bound(|sig| tcx.erase_late_bound_regions(sig));
+
+    assert_eq!(sig_substs.is_some(), !instance.has_polymorphic_mir_body());
+    let mut sig =
+        if let Some(sig_substs) = sig_substs { sig.subst(tcx, &sig_substs) } else { sig.0 };
+
+    if let CallKind::Indirect(fnty) = call_kind {
+        // `sig` determines our local decls, and thus the callee type in the `Call` terminator. This
+        // can only be an `FnDef` or `FnPtr`, but currently will be `Self` since the types come from
+        // the implemented `FnX` trait.
+
+        // Apply the opposite adjustment to the MIR input.
+        let mut inputs_and_output = sig.inputs_and_output.to_vec();
+
+        // Initial signature is `fn(&? Self, Args) -> Self::Output` where `Args` is a tuple of the
+        // fn arguments. `Self` may be passed via (im)mutable reference or by-value.
+        assert_eq!(inputs_and_output.len(), 3);
+
+        // `Self` is always the original fn type `ty`. The MIR call terminator is only defined for
+        // `FnDef` and `FnPtr` callees, not the `Self` type param.
+        let self_arg = &mut inputs_and_output[0];
+        *self_arg = match rcvr_adjustment.unwrap() {
+            Adjustment::Identity => fnty,
+            Adjustment::Deref => tcx.mk_imm_ptr(fnty),
+            Adjustment::RefMut => tcx.mk_mut_ptr(fnty),
+        };
+        sig.inputs_and_output = tcx.intern_type_list(&inputs_and_output);
+    }
+
+    // FIXME(eddyb) avoid having this snippet both here and in
+    // `Instance::fn_sig` (introduce `InstanceDef::fn_sig`?).
+    if let ty::InstanceDef::VTableShim(..) = instance {
+        // Modify fn(self, ...) to fn(self: *mut Self, ...)
+        let mut inputs_and_output = sig.inputs_and_output.to_vec();
+        let self_arg = &mut inputs_and_output[0];
+        debug_assert!(tcx.generics_of(def_id).has_self && *self_arg == tcx.types.self_param);
+        *self_arg = tcx.mk_mut_ptr(*self_arg);
+        sig.inputs_and_output = tcx.intern_type_list(&inputs_and_output);
+    }
+
+    let span = tcx.def_span(def_id);
+
+    debug!(?sig);
+
+    let mut local_decls = local_decls_for_sig(&sig, span);
+    let source_info = SourceInfo::outermost(span);
+
+    let rcvr_place = || {
+        assert!(rcvr_adjustment.is_some());
+        Place::from(Local::new(1 + 0))
+    };
+    let mut statements = vec![];
+
+    let rcvr = rcvr_adjustment.map(|rcvr_adjustment| match rcvr_adjustment {
+        Adjustment::Identity => Operand::Move(rcvr_place()),
+        Adjustment::Deref => Operand::Move(tcx.mk_place_deref(rcvr_place())),
+        Adjustment::RefMut => {
+            // let rcvr = &mut rcvr;
+            let ref_rcvr = local_decls.push(
+                LocalDecl::new(
+                    tcx.mk_ref(
+                        tcx.lifetimes.re_erased,
+                        ty::TypeAndMut { ty: sig.inputs()[0], mutbl: hir::Mutability::Mut },
+                    ),
+                    span,
+                )
+                .immutable(),
+            );
+            let borrow_kind = BorrowKind::Mut { allow_two_phase_borrow: false };
+            statements.push(Statement {
+                source_info,
+                kind: StatementKind::Assign(Box::new((
+                    Place::from(ref_rcvr),
+                    Rvalue::Ref(tcx.lifetimes.re_erased, borrow_kind, rcvr_place()),
+                ))),
+            });
+            Operand::Move(Place::from(ref_rcvr))
+        }
+    });
+
+    let (callee, mut args) = match call_kind {
+        // `FnPtr` call has no receiver. Args are untupled below.
+        CallKind::Indirect(_) => (rcvr.unwrap(), vec![]),
+
+        // `FnDef` call with optional receiver.
+        CallKind::Direct(def_id) => {
+            let ty = tcx.type_of(def_id);
+            (
+                Operand::Constant(Box::new(Constant {
+                    span,
+                    user_ty: None,
+                    literal: ConstantKind::zero_sized(ty),
+                })),
+                rcvr.into_iter().collect::<Vec<_>>(),
+            )
+        }
+    };
+
+    let mut arg_range = 0..sig.inputs().len();
+
+    // Take the `self` ("receiver") argument out of the range (it's adjusted above).
+    if rcvr_adjustment.is_some() {
+        arg_range.start += 1;
+    }
+
+    // Take the last argument, if we need to untuple it (handled below).
+    if untuple_args.is_some() {
+        arg_range.end -= 1;
+    }
+
+    // Pass all of the non-special arguments directly.
+    args.extend(arg_range.map(|i| Operand::Move(Place::from(Local::new(1 + i)))));
+
+    // Untuple the last argument, if we have to.
+    if let Some(untuple_args) = untuple_args {
+        let tuple_arg = Local::new(1 + (sig.inputs().len() - 1));
+        args.extend(untuple_args.iter().enumerate().map(|(i, ity)| {
+            Operand::Move(tcx.mk_place_field(Place::from(tuple_arg), Field::new(i), *ity))
+        }));
+    }
+
+    let n_blocks = if let Some(Adjustment::RefMut) = rcvr_adjustment { 5 } else { 2 };
+    let mut blocks = IndexVec::with_capacity(n_blocks);
+    let block = |blocks: &mut IndexVec<_, _>, statements, kind, is_cleanup| {
+        blocks.push(BasicBlockData {
+            statements,
+            terminator: Some(Terminator { source_info, kind }),
+            is_cleanup,
+        })
+    };
+
+    // BB #0
+    block(
+        &mut blocks,
+        statements,
+        TerminatorKind::Call {
+            func: callee,
+            args,
+            destination: Place::return_place(),
+            target: Some(BasicBlock::new(1)),
+            cleanup: if let Some(Adjustment::RefMut) = rcvr_adjustment {
+                Some(BasicBlock::new(3))
+            } else {
+                None
+            },
+            from_hir_call: true,
+            fn_span: span,
+        },
+        false,
+    );
+
+    if let Some(Adjustment::RefMut) = rcvr_adjustment {
+        // BB #1 - drop for Self
+        block(
+            &mut blocks,
+            vec![],
+            TerminatorKind::Drop { place: rcvr_place(), target: BasicBlock::new(2), unwind: None },
+            false,
+        );
+    }
+    // BB #1/#2 - return
+    block(&mut blocks, vec![], TerminatorKind::Return, false);
+    if let Some(Adjustment::RefMut) = rcvr_adjustment {
+        // BB #3 - drop if closure panics
+        block(
+            &mut blocks,
+            vec![],
+            TerminatorKind::Drop { place: rcvr_place(), target: BasicBlock::new(4), unwind: None },
+            true,
+        );
+
+        // BB #4 - resume
+        block(&mut blocks, vec![], TerminatorKind::Resume, true);
+    }
+
+    let mut body =
+        new_body(MirSource::from_instance(instance), blocks, local_decls, sig.inputs().len(), span);
+
+    if let Abi::RustCall = sig.abi {
+        body.spread_arg = Some(Local::new(sig.inputs().len()));
+    }
 
     body
 }

@@ -378,6 +378,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
                 M::call_intrinsic(self, instance, args, destination, target, unwind)
             }
             ty::InstanceDef::VTableShim(..)
+            | ty::InstanceDef::AsyncVTableShim(..)
             | ty::InstanceDef::ReifyShim(..)
             | ty::InstanceDef::ClosureOnceShim { .. }
             | ty::InstanceDef::FnPtrShim(..)

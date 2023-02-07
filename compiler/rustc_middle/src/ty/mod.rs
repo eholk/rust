@@ -2304,6 +2304,7 @@ impl<'tcx> TyCtxt<'tcx> {
                 }
             }
             ty::InstanceDef::VTableShim(..)
+            | ty::InstanceDef::AsyncVTableShim(..)
             | ty::InstanceDef::ReifyShim(..)
             | ty::InstanceDef::Intrinsic(..)
             | ty::InstanceDef::FnPtrShim(..)
