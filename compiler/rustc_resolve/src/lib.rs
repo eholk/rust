@@ -72,7 +72,7 @@ use rustc_session::lint::{BuiltinLintDiag, LintBuffer};
 use rustc_span::hygiene::{ExpnId, LocalExpnId, MacroKind, SyntaxContext, Transparency};
 use rustc_span::{DUMMY_SP, Ident, Span, Symbol, kw, sym};
 use smallvec::{SmallVec, smallvec};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 type Res = def::Res<NodeId>;
 
@@ -1000,7 +1000,7 @@ impl<'ra> NameBindingData<'ra> {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 struct ExternPreludeEntry<'ra> {
     binding: Option<NameBinding<'ra>>,
     introduced_by_item: bool,
@@ -1437,6 +1437,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             .filter(|(_, entry)| entry.add_prelude)
             .map(|(name, _)| (Ident::from_str(name), Default::default()))
             .collect();
+        debug!(?extern_prelude);
 
         if !attr::contains_name(attrs, sym::no_core) {
             extern_prelude.insert(Ident::with_dummy_span(sym::core), Default::default());
@@ -1900,6 +1901,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         false
     }
 
+    #[instrument(level = "debug", skip(self))]
     fn record_use(&mut self, ident: Ident, used_binding: NameBinding<'ra>, used: Used) {
         self.record_use_inner(ident, used_binding, used, used_binding.warn_ambiguity);
     }
@@ -2099,6 +2101,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     fn extern_prelude_get(&mut self, ident: Ident, finalize: bool) -> Option<NameBinding<'ra>> {
         if ident.is_path_segment_keyword() {
             // Make sure `self`, `super` etc produce an error when passed to here.
@@ -2107,6 +2110,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
 
         let norm_ident = ident.normalize_to_macros_2_0();
         let binding = self.extern_prelude.get(&norm_ident).cloned().and_then(|entry| {
+            debug!(?entry);
             Some(if let Some(binding) = entry.binding {
                 if finalize {
                     if !entry.is_import() {
@@ -2133,6 +2137,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             })
         });
 
+        debug!(?binding);
         if let Some(entry) = self.extern_prelude.get_mut(&norm_ident) {
             entry.binding = binding;
         }

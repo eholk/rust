@@ -231,7 +231,7 @@ use rustc_session::search_paths::PathKind;
 use rustc_session::utils::CanonicalizedPath;
 use rustc_span::{Span, Symbol};
 use rustc_target::spec::{Target, TargetTuple};
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::creader::{Library, MetadataLoader};
 use crate::errors;
@@ -355,6 +355,7 @@ impl<'a> CrateLocator<'a> {
         self.crate_rejections.via_invalid.clear();
     }
 
+    #[instrument(level = "debug", skip(self))]
     pub(crate) fn maybe_load_library_crate(&mut self) -> Result<Option<Library>, CrateError> {
         if !self.exact_paths.is_empty() {
             return self.find_commandline_library();
@@ -494,6 +495,7 @@ impl<'a> CrateLocator<'a> {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     fn extract_lib(
         &mut self,
         rlibs: FxIndexMap<PathBuf, PathKind>,
@@ -720,6 +722,7 @@ impl<'a> CrateLocator<'a> {
         Some(hash)
     }
 
+    #[instrument(level = "debug", skip(self))]
     fn find_commandline_library(&mut self) -> Result<Option<Library>, CrateError> {
         // First, filter out all libraries that look suspicious. We only accept
         // files which actually exist that have the correct naming scheme for

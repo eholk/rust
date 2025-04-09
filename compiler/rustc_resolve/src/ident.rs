@@ -436,6 +436,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             parent_scope,
             orig_ident.span.ctxt(),
             |this, scope, use_prelude, ctxt| {
+                debug!(?scope);
                 let ident = Ident::new(orig_ident.name, orig_ident.span.with_ctxt(ctxt));
                 let result = match scope {
                     Scope::DeriveHelpers(expn_id) => {
@@ -506,6 +507,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                             ignore_binding,
                             ignore_import,
                         );
+                        debug!(?binding);
                         match binding {
                             Ok(binding) => Ok((binding, Flags::MODULE | Flags::MISC_SUGGEST_CRATE)),
                             Err((Determinacy::Undetermined, Weak::No)) => {
@@ -533,6 +535,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                             ignore_binding,
                             ignore_import,
                         );
+                        debug!(?binding);
                         match binding {
                             Ok(binding) => {
                                 if let Some(lint_id) = derive_fallback_lint_id {
@@ -870,8 +873,15 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         };
 
         let key = BindingKey::new(ident, ns);
-        let resolution =
-            self.resolution(module, key).try_borrow_mut().map_err(|_| (Determined, Weak::No))?; // This happens when there is a cycle of imports.
+        debug!("trying to resolve {:?} in module {:?}", ident, module);
+        let res = self.resolution(module, key).try_borrow();
+        debug!("res: {:?}", res);
+        drop(res);
+        let resolution = self.resolution(module, key).try_borrow_mut().map_err(|_| {
+            debug!("got resolution error for module {:?}", module);
+            (Determined, Weak::No)
+        })?; // This happens when there is a cycle of imports.
+        debug!(?resolution);
 
         // If the primary binding is unusable, search further and return the shadowed glob
         // binding if it exists. What we really want here is having two separate scopes in
@@ -881,11 +891,13 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             .into_iter()
             .find_map(|binding| if binding == ignore_binding { None } else { binding });
 
+        debug!("finalize? {:?}", finalize);
         if let Some(Finalize { path_span, report_private, used, root_span, .. }) = finalize {
             let Some(binding) = binding else {
                 return Err((Determined, Weak::No));
             };
 
+            debug!("binding: {:?}", binding);
             if !self.is_accessible_from(binding.vis, parent_scope.module) {
                 if report_private {
                     self.privacy_errors.push(PrivacyError {
@@ -932,9 +944,11 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
 
         let check_usable = |this: &mut Self, binding: NameBinding<'ra>| {
             let usable = this.is_accessible_from(binding.vis, parent_scope.module);
+            debug!(?usable);
             if usable { Ok(binding) } else { Err((Determined, Weak::No)) }
         };
 
+        debug!(?binding);
         // Items and single imports are not shadowable, if we have one, then it's determined.
         if let Some(binding) = binding
             && !binding.is_glob_import()
@@ -947,6 +961,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         // Check if one of single imports can still define the name,
         // if it can then our result is not determined and can be invalidated.
         for single_import in &resolution.single_imports {
+            debug!("single_import: {:?}", single_import);
             if ignore_import == Some(*single_import) {
                 // This branch handles a cycle in single imports.
                 //
@@ -1037,6 +1052,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             }
         }
 
+        debug!("no resolution");
         // --- From now on we have no resolution. ---
 
         // Now we are in situation when new item/import can appear only from a glob or a macro
@@ -1553,6 +1569,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                 );
             }
 
+            debug!(?module);
             let binding = if let Some(module) = module {
                 self.resolve_ident_in_module(
                     module,
@@ -1600,6 +1617,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                 )
             };
 
+            debug!("resolve_path_with_ribs binding: {:?}", binding);
             match binding {
                 Ok(binding) => {
                     if segment_idx == 1 {

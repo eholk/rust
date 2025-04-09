@@ -34,7 +34,7 @@ use rustc_session::search_paths::PathKind;
 use rustc_span::edition::Edition;
 use rustc_span::{DUMMY_SP, Ident, Span, Symbol, sym};
 use rustc_target::spec::{PanicStrategy, Target, TargetTuple};
-use tracing::{debug, info, trace};
+use tracing::{debug, info, instrument, trace};
 
 use crate::errors;
 use crate::locator::{CrateError, CrateLocator, CratePaths};
@@ -594,6 +594,7 @@ impl<'a, 'tcx> CrateLoader<'a, 'tcx> {
         }
     }
 
+    #[instrument(level = "debug", skip(self, origin, host_lib, lib))]
     fn register_crate(
         &mut self,
         host_lib: Option<Library>,
@@ -631,6 +632,7 @@ impl<'a, 'tcx> CrateLoader<'a, 'tcx> {
             crate_paths = CratePaths::new(crate_root.name(), source.clone());
             &crate_paths
         };
+        debug!("crate_paths.name: {:?}", dep_root.name);
 
         let cnum_map =
             self.resolve_crate_deps(dep_root, &crate_root, &metadata, cnum, dep_kind, private_dep)?;
@@ -825,8 +827,10 @@ impl<'a, 'tcx> CrateLoader<'a, 'tcx> {
         }
     }
 
+    #[instrument(level = "debug", skip(self, locator))]
     fn load(&self, locator: &mut CrateLocator<'_>) -> Result<Option<LoadResult>, CrateError> {
         let Some(library) = locator.maybe_load_library_crate()? else {
+            debug!("found library using maybe_load_library_crate");
             return Ok(None);
         };
 
@@ -837,6 +841,7 @@ impl<'a, 'tcx> CrateLoader<'a, 'tcx> {
         let root = library.metadata.get_root();
         let mut result = LoadResult::Loaded(library);
         for (cnum, data) in self.cstore.iter_crate_data() {
+            debug!("checking whether {:?} matches {:?} and hashes match", data.name(), root.name());
             if data.name() == root.name() && root.hash() == data.hash() {
                 assert!(locator.hash.is_none());
                 info!("load success, going to previous cnum: {}", cnum);

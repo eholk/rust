@@ -24,7 +24,7 @@ use rustc_middle::ty::Feed;
 use rustc_middle::{bug, ty};
 use rustc_span::hygiene::{ExpnId, LocalExpnId, MacroKind};
 use rustc_span::{Ident, Span, Symbol, kw, sym};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::Namespace::{MacroNS, TypeNS, ValueNS};
 use crate::def_collector::collect_definitions;
@@ -70,11 +70,13 @@ impl<'ra, Id: Into<DefId>> ToNameBinding<'ra> for (Res, ty::Visibility<Id>, Span
 impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     /// Defines `name` in namespace `ns` of module `parent` to be `def` if it is not yet defined;
     /// otherwise, reports an error.
+    #[instrument(level = "debug", skip(self, def))]
     pub(crate) fn define<T>(&mut self, parent: Module<'ra>, ident: Ident, ns: Namespace, def: T)
     where
         T: ToNameBinding<'ra>,
     {
         let binding = def.to_name_binding(self.arenas);
+        debug!(?binding);
         let key = self.new_disambiguated_key(ident, ns);
         if let Err(old_binding) = self.try_define(parent, key, binding, false) {
             self.report_conflict(parent, ident, ns, old_binding, binding);
@@ -196,8 +198,25 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         visitor.parent_scope.macro_rules
     }
 
+    #[instrument(level = "debug", skip(self))]
     pub(crate) fn build_reduced_graph_external(&mut self, module: Module<'ra>) {
+        if let Some(res) = module.res() {
+            match res {
+                Res::Def(def_kind, def_id) => {
+                    debug!("def_kind: {:?}", def_kind);
+                    debug!("is crate root? {:?}", def_id.is_crate_root());
+
+                    // TODO if this is a crate root I need to check whether open namespace
+                    // exists and add its module children here too under `bar`.
+                    // This assumes that for --extern foo::bar we have actually added
+                    // `foo` as a crate root though.
+                }
+                _ => {}
+            }
+        }
+
         for child in self.tcx.module_children(module.def_id()) {
+            debug!("child module: {:?}", child);
             let parent_scope = ParentScope::module(module, self);
             self.build_reduced_graph_for_external_crate_res(child, parent_scope)
         }
@@ -423,6 +442,7 @@ impl<'a, 'ra, 'tcx> BuildReducedGraphVisitor<'a, 'ra, 'tcx> {
     }
 
     // Add an import to the current module.
+    #[instrument(level = "debug", skip(self, kind))]
     fn add_import(
         &mut self,
         module_path: Vec<Segment>,

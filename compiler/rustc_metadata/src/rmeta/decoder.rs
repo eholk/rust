@@ -33,7 +33,7 @@ use rustc_session::config::TargetModifier;
 use rustc_session::cstore::{CrateSource, ExternCrate};
 use rustc_span::hygiene::HygieneDecodeContext;
 use rustc_span::{BytePos, DUMMY_SP, Pos, SpanData, SpanDecoder, SyntaxContext, kw};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::creader::CStore;
 use crate::rmeta::table::IsDefault;
@@ -1267,6 +1267,7 @@ impl<'a> CrateMetadataRef<'a> {
     /// including both proper items and reexports.
     /// Module here is understood in name resolution sense - it can be a `mod` item,
     /// or a crate root, or an enum, or a trait.
+    #[instrument(level = "debug", skip(self, sess))]
     fn get_module_children(
         self,
         id: DefIndex,

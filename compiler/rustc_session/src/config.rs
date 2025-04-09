@@ -2193,7 +2193,7 @@ pub fn parse_externs(
         if let Some(start) = chars.next()
             && (start.is_ascii_alphabetic() || start == '_')
         {
-            chars.all(|char| char.is_ascii_alphanumeric() || char == '_')
+            chars.all(|char| char.is_ascii_alphanumeric() || char == '_' || char == ':')
         } else {
             false
         }
@@ -2206,9 +2206,26 @@ pub fn parse_externs(
             None => (arg, None),
             Some((name, path)) => (name.to_string(), Some(Path::new(path))),
         };
-        let (options, name) = match name.split_once(':') {
-            None => (None, name),
-            Some((opts, name)) => (Some(opts), name.to_string()),
+
+        // `:` can be used both for options delimiter and for crate names (RFC 3243)
+        let (options, name) = if name.contains("::") {
+            let first_occ = name.find(":").unwrap();
+            let next_char = name.chars().nth(first_occ + 1);
+            if let Some(next_occ) = next_char
+                && next_occ != ':'
+            {
+                let (opts, name) = name.split_once(":").unwrap();
+
+                (Some(opts), name.to_string())
+            } else {
+                (None, name)
+            }
+        } else {
+            match name.split_once(':') {
+                None => (None, name),
+
+                Some((opts, name)) => (Some(opts), name.to_string()),
+            }
         };
 
         if !is_ascii_ident(&name) {
