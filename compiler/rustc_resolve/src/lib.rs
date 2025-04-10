@@ -61,11 +61,11 @@ use rustc_metadata::creader::{CStore, CrateLoader};
 use rustc_middle::metadata::ModChild;
 use rustc_middle::middle::privacy::EffectiveVisibilities;
 use rustc_middle::query::Providers;
-use rustc_middle::span_bug;
 use rustc_middle::ty::{
     self, DelegationFnSig, Feed, MainDefinition, RegisteredTools, ResolverGlobalCtxt,
     ResolverOutputs, TyCtxt, TyCtxtFeed,
 };
+use rustc_middle::{bug, span_bug};
 use rustc_query_system::ich::StableHashingContext;
 use rustc_session::lint::builtin::PRIVATE_MACRO_USE;
 use rustc_session::lint::{BuiltinLintDiag, LintBuffer};
@@ -509,6 +509,14 @@ enum ModuleKind {
     /// * A trait or an enum (it implicitly contains associated types, methods and variant
     ///   constructors).
     Def(DefKind, DefId, Option<Symbol>),
+    /// A virtual module for an external crate that only exists in a namespaced crate name
+    /// and whose crate name cannot be resolved using the CrateLoader. This variant allows
+    /// the `Resolver` to infer that the namespaced crate needs to be loaded when resolving
+    /// paths.
+    /// Example: Suppose we have the namespaced crate `my_api::utils`, but `my_api` is not a
+    /// dependency. In that case we resolve the `Ident` `my_api` to a `Module` of kind
+    /// `NamespaceCrate`.
+    NamespaceCrate(Symbol, DefId),
 }
 
 impl ModuleKind {
@@ -517,6 +525,7 @@ impl ModuleKind {
         match *self {
             ModuleKind::Block => None,
             ModuleKind::Def(.., name) => name,
+            ModuleKind::NamespaceCrate(name, _) => Some(name),
         }
     }
 }
@@ -615,6 +624,7 @@ impl<'ra> ModuleData<'ra> {
     ) -> Self {
         let is_foreign = match kind {
             ModuleKind::Def(_, def_id, _) => !def_id.is_local(),
+            ModuleKind::NamespaceCrate(..) => true,
             ModuleKind::Block => false,
         };
         ModuleData {
@@ -669,6 +679,7 @@ impl<'ra> Module<'ra> {
     fn res(self) -> Option<Res> {
         match self.kind {
             ModuleKind::Def(kind, def_id, _) => Some(Res::Def(kind, def_id)),
+            ModuleKind::NamespaceCrate(_, def_id) => Some(Res::Def(DefKind::Mod, def_id)),
             _ => None,
         }
     }
@@ -681,6 +692,7 @@ impl<'ra> Module<'ra> {
     fn opt_def_id(self) -> Option<DefId> {
         match self.kind {
             ModuleKind::Def(_, def_id, _) => Some(def_id),
+            ModuleKind::NamespaceCrate(_, def_id) => Some(def_id),
             _ => None,
         }
     }
@@ -927,6 +939,9 @@ impl<'ra> NameBindingData<'ra> {
             {
                 def_id.is_crate_root()
             }
+            NameBindingKind::Module(module) if let ModuleKind::NamespaceCrate(..) = module.kind => {
+                true
+            }
             _ => false,
         }
     }
@@ -1043,6 +1058,9 @@ pub struct Resolver<'ra, 'tcx> {
 
     prelude: Option<Module<'ra>>,
     extern_prelude: FxIndexMap<Ident, ExternPreludeEntry<'ra>>,
+
+    // Extern crates with names of the form `foo::bar`
+    namespaced_crate_names: FxHashMap<&'tcx str, Vec<&'tcx str>>,
 
     /// N.B., this is used only for better diagnostics, not name resolution itself.
     field_names: LocalDefIdMap<Vec<Ident>>,
@@ -1429,13 +1447,51 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         let mut invocation_parents = FxHashMap::default();
         invocation_parents.insert(LocalExpnId::ROOT, InvocationParent::ROOT);
 
+        let namespaced_crate_names: FxHashMap<&str, Vec<&str>> = tcx
+            .sess
+            .opts
+            .externs
+            .iter()
+            .filter(|(name, _)| is_namespaced_crate(name))
+            .map(|(name, _)| {
+                let main_crate_name = name
+                    .split("::")
+                    .nth(0)
+                    .expect(&format!("namespaced crate name has unexpected form {}", name));
+                (main_crate_name, name.as_str())
+            })
+            .fold(
+                FxHashMap::default(), // Start with an empty map
+                |mut acc_map, (main_name, full_name)| {
+                    acc_map.entry(main_name).or_insert_with(Vec::new).push(full_name); // Push the full namespaced name onto the Vec
+                    acc_map
+                },
+            );
+
+        // We use the main crate name for namespaced crate names (i.e. `foo` in `foo::bar`)
+        // in `extern_prelude` to allow us to resolve the `Ident` corresponding to the main crate.
+        // See the documentation of `build_reduced_graph_external` for how we resolve
+        // namespaced crate names.
         let mut extern_prelude: FxIndexMap<Ident, ExternPreludeEntry<'_>> = tcx
             .sess
             .opts
             .externs
             .iter()
             .filter(|(_, entry)| entry.add_prelude)
-            .map(|(name, _)| (Ident::from_str(name), Default::default()))
+            .map(|(name, _)| {
+                if is_namespaced_crate(name) {
+                    let crate_name =
+                        name.split("::").nth(0).expect("namespaced crate name should contain '::'");
+
+                    if !namespaced_crate_names.contains_key(crate_name) {
+                        panic!("{} should be in `namespaced_crates`", name);
+                    }
+
+                    (Ident::from_str(crate_name), Default::default())
+                } else {
+                    (Ident::from_str(name), Default::default())
+                }
+            })
             .collect();
         debug!(?extern_prelude);
 
@@ -1461,6 +1517,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             graph_root,
             prelude: None,
             extern_prelude,
+            namespaced_crate_names,
 
             field_names: Default::default(),
             field_visibility_spans: FxHashMap::default(),
@@ -1863,6 +1920,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         BindingKey { ident, ns, disambiguator }
     }
 
+    #[instrument(level = "debug", skip(self))]
     fn resolutions(&mut self, module: Module<'ra>) -> &'ra Resolutions<'ra> {
         if module.populate_on_access.get() {
             module.populate_on_access.set(false);
@@ -1928,6 +1986,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                 self.ambiguity_errors.push(ambiguity_error);
             }
         }
+
         if let NameBindingKind::Import { import, binding } = used_binding.kind {
             if let ImportKind::MacroUse { warn_private: true } = import.kind {
                 self.lint_buffer().buffer_lint(
@@ -2073,6 +2132,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         vis.is_accessible_from(module.nearest_parent_mod(), self.tcx)
     }
 
+    #[instrument(level = "debug", skip(self, module))]
     fn set_binding_parent_module(&mut self, binding: NameBinding<'ra>, module: Module<'ra>) {
         if let Some(old_module) = self.binding_parent_modules.insert(binding, module) {
             if module != old_module {
@@ -2102,7 +2162,12 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     }
 
     #[instrument(level = "debug", skip(self))]
-    fn extern_prelude_get(&mut self, ident: Ident, finalize: bool) -> Option<NameBinding<'ra>> {
+    fn extern_prelude_get(
+        &mut self,
+        ident: Ident,
+        finalize: bool,
+        parent_scope: Option<ParentScope<'ra>>,
+    ) -> Option<NameBinding<'ra>> {
         if ident.is_path_segment_keyword() {
             // Make sure `self`, `super` etc produce an error when passed to here.
             return None;
@@ -2114,24 +2179,60 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             Some(if let Some(binding) = entry.binding {
                 if finalize {
                     if !entry.is_import() {
-                        self.crate_loader(|c| c.process_path_extern(ident.name, ident.span));
+                        match binding.kind {
+                            NameBindingKind::Module(module) => match module.kind {
+                                ModuleKind::NamespaceCrate(..) => {
+                                    // This is a virtual module
+                                }
+                                _ => {
+                                    self.crate_loader(|c| {
+                                        c.process_path_extern(ident.name, ident.span)
+                                    });
+                                }
+                            },
+                            _ => {
+                                self.crate_loader(|c| {
+                                    c.process_path_extern(ident.name, ident.span)
+                                });
+                            }
+                        }
                     } else if entry.introduced_by_item {
                         self.record_use(ident, binding, Used::Other);
                     }
                 }
                 binding
             } else {
-                let crate_id = if finalize {
-                    let Some(crate_id) =
-                        self.crate_loader(|c| c.process_path_extern(ident.name, ident.span))
-                    else {
-                        return Some(self.dummy_binding);
-                    };
-                    crate_id
+                let crate_root = if finalize {
+                    if let Some(crate_id) =
+                        self.crate_loader(|c| c.maybe_process_path_extern(ident.name))
+                    {
+                        self.expect_module(crate_id.as_def_id())
+                    } else {
+                        if self.namespaced_crate_names.contains_key(ident.name.as_str()) {
+                            self.create_namespaced_crate_module(ident, parent_scope)
+                        } else {
+                            // no crate found. Run `process_path_extern` to output error message
+                            self.crate_loader(|c| c.process_path_extern(ident.name, ident.span));
+                            return Some(self.dummy_binding);
+                        }
+                    }
                 } else {
-                    self.crate_loader(|c| c.maybe_process_path_extern(ident.name))?
+                    let opt_crate_id =
+                        self.crate_loader(|c| c.maybe_process_path_extern(ident.name));
+
+                    // This could be a namespaced crate
+                    if opt_crate_id.is_none() {
+                        if self.namespaced_crate_names.contains_key(ident.name.as_str()) {
+                            self.create_namespaced_crate_module(ident, parent_scope)
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        self.expect_module(opt_crate_id.unwrap().as_def_id())
+                    }
                 };
-                let crate_root = self.expect_module(crate_id.as_def_id());
+
+                debug!(?crate_root);
                 let vis = ty::Visibility::<DefId>::Public;
                 (crate_root, vis, DUMMY_SP, LocalExpnId::ROOT).to_name_binding(self.arenas)
             })
@@ -2143,6 +2244,67 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         }
 
         binding
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    fn create_namespaced_crate_module(
+        &mut self,
+        ident: Ident,
+        parent_scope: Option<ParentScope<'ra>>,
+    ) -> Module<'ra> {
+        if parent_scope.is_none() {
+            bug!("namespaced crate should have a parent")
+        }
+
+        let namespaced_crate_names = self
+            .namespaced_crate_names
+            .get(ident.name.as_str())
+            .map(|cnames| cnames.iter().map(|cname| cname.to_string().clone()).collect::<Vec<_>>());
+        if namespaced_crate_names.is_none() {
+            bug!("shouldn't have called `create_namespaced_crate_module` for {}", ident)
+        };
+
+        // Make sure the namespaced crates exist
+        let mut crate_nums = vec![];
+        for crate_name in namespaced_crate_names.clone().unwrap() {
+            let crate_num =
+                self.crate_loader(|c| c.maybe_process_path_extern(Symbol::intern(&crate_name)));
+            if crate_num.is_none() {
+                bug!(
+                    "namespaced crate {} doesn't exist. namespaced_crate_names: {:?}",
+                    crate_name,
+                    &namespaced_crate_names
+                );
+            }
+
+            crate_nums
+                .push(crate_num.expect(&format!("namespaced crate {} doesn't exist", crate_name)));
+        }
+
+        // When we have multiple namespaced crates with the same main crate name, we use
+        // the first namespaced crate's DefId.
+        // FIXME We never use a `NamespaceCrate`'s DefId in the compiler, but rustdoc might
+        // depend on it? We would need to propagate the full path in which an `Ident` appears to
+        // identify the correct underlying namespaced crate.
+        let namespaced_crate_def_id = crate_nums.iter().nth(0).unwrap().as_def_id();
+        let parent_module = parent_scope.unwrap().module;
+        let namespaced_crate = self.expect_module(namespaced_crate_def_id);
+        let span = self.def_span(namespaced_crate_def_id);
+        let kind = ModuleKind::NamespaceCrate(ident.name, namespaced_crate_def_id);
+        let expn_id = namespaced_crate.expansion;
+        let no_implicit_prelude = parent_module.no_implicit_prelude;
+
+        let namespaced_crate_module =
+            self.new_module(Some(parent_module), kind, expn_id, span, no_implicit_prelude);
+
+        #[cfg(debug_assertions)]
+        match &namespaced_crate_module.kind {
+            ModuleKind::NamespaceCrate(name, _) => debug!("NameSpaceCrate: {:?}", name),
+            _ => unreachable!(),
+        }
+
+        debug!(?namespaced_crate_module);
+        namespaced_crate_module
     }
 
     /// Rustdoc uses this to resolve doc link paths in a recoverable way. `PathResult<'a>`
@@ -2262,6 +2424,10 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         }
         self.main_def = Some(MainDefinition { res, is_import, span });
     }
+}
+
+pub(crate) fn is_namespaced_crate(crate_name: &str) -> bool {
+    crate_name.contains("::")
 }
 
 fn names_to_string(names: impl Iterator<Item = Symbol>) -> String {

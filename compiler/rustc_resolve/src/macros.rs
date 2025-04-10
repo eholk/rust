@@ -1081,6 +1081,9 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                             "the crate root".to_string()
                         }
                     }
+                    ModuleKind::NamespaceCrate(name, _) => {
+                        format!("{}", name)
+                    }
                     ModuleKind::Block => "this scope".to_string(),
                 };
                 self.tcx.sess.psess.buffer_lint(

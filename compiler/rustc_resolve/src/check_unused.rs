@@ -34,6 +34,7 @@ use rustc_session::lint::builtin::{
     MACRO_USE_EXTERN_CRATE, UNUSED_EXTERN_CRATES, UNUSED_IMPORTS, UNUSED_QUALIFICATIONS,
 };
 use rustc_span::{DUMMY_SP, Ident, Span, kw};
+use tracing::{debug, instrument};
 
 use crate::imports::{Import, ImportKind};
 use crate::{LexicalScopeBinding, NameBindingKind, Resolver, module_to_string};
@@ -80,6 +81,7 @@ struct ExternCrateToLint {
 impl<'a, 'ra, 'tcx> UnusedImportCheckVisitor<'a, 'ra, 'tcx> {
     // We have information about whether `use` (import) items are actually
     // used now. If an import is not used at all, we signal a lint error.
+    #[instrument(level = "debug", skip(self))]
     fn check_import(&mut self, id: ast::NodeId) {
         let used = self.r.used_imports.contains(&id);
         let def_id = self.r.local_def_id(id);
@@ -212,6 +214,7 @@ impl<'a, 'ra, 'tcx> UnusedImportCheckVisitor<'a, 'ra, 'tcx> {
 }
 
 impl<'a, 'ra, 'tcx> Visitor<'a> for UnusedImportCheckVisitor<'a, 'ra, 'tcx> {
+    #[instrument(level = "debug", skip(self))]
     fn visit_item(&mut self, item: &'a ast::Item) {
         match item.kind {
             // Ignore is_public import statements because there's no way to be sure
@@ -220,6 +223,7 @@ impl<'a, 'ra, 'tcx> Visitor<'a> for UnusedImportCheckVisitor<'a, 'ra, 'tcx> {
             // compiler and we don't need to consider them.
             ast::ItemKind::Use(..) if item.span.is_dummy() => return,
             ast::ItemKind::ExternCrate(orig_name, ident) => {
+                debug!("adding extern crate item: {:?}, {:?}, {:?}", orig_name, ident, item);
                 self.extern_crate_items.push(ExternCrateToLint {
                     id: item.id,
                     span: item.span,
@@ -237,6 +241,7 @@ impl<'a, 'ra, 'tcx> Visitor<'a> for UnusedImportCheckVisitor<'a, 'ra, 'tcx> {
         visit::walk_item(self, item);
     }
 
+    #[instrument(level = "debug", skip(self))]
     fn visit_use_tree(&mut self, use_tree: &'a ast::UseTree, id: ast::NodeId, nested: bool) {
         // Use the base UseTree's NodeId as the item id
         // This allows the grouping of all the lints in the same item

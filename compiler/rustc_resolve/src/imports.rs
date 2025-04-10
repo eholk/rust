@@ -878,6 +878,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     ///
     /// Optionally returns an unresolved import error. This error is buffered and used to
     /// consolidate multiple unresolved import errors into a single diagnostic.
+    #[instrument(level = "debug", skip(self))]
     fn finalize_import(&mut self, import: Import<'ra>) -> Option<UnresolvedImportError> {
         let ignore_binding = match &import.kind {
             ImportKind::Single { target_bindings, .. } => target_bindings[TypeNS].get(),
