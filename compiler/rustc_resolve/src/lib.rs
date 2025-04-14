@@ -2256,29 +2256,30 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             bug!("namespaced crate should have a parent")
         }
 
-        let namespaced_crate_names = self
+        let Some(namespaced_crate_names) = self
             .namespaced_crate_names
             .get(ident.name.as_str())
-            .map(|cnames| cnames.iter().map(|cname| cname.to_string().clone()).collect::<Vec<_>>());
-        if namespaced_crate_names.is_none() {
+            .map(|cnames| cnames.iter().map(|cname| cname.to_string().clone()).collect::<Vec<_>>())
+        else {
             bug!("shouldn't have called `create_namespaced_crate_module` for {}", ident)
         };
 
         // Make sure the namespaced crates exist
         let mut crate_nums = vec![];
-        for crate_name in namespaced_crate_names.clone().unwrap() {
-            let crate_num =
-                self.crate_loader(|c| c.maybe_process_path_extern(Symbol::intern(&crate_name)));
-            if crate_num.is_none() {
+        for crate_name in &namespaced_crate_names {
+            let Some(crate_num) =
+                self.crate_loader(|c| c.maybe_process_path_extern(Symbol::intern(&crate_name)))
+            else {
+                // FIXME: This isn't a bug, this should be reported as an error just like any other
+                // time a crate is not found.
                 bug!(
                     "namespaced crate {} doesn't exist. namespaced_crate_names: {:?}",
                     crate_name,
-                    &namespaced_crate_names
+                    namespaced_crate_names
                 );
-            }
+            };
 
-            crate_nums
-                .push(crate_num.expect(&format!("namespaced crate {} doesn't exist", crate_name)));
+            crate_nums.push(crate_num);
         }
 
         // When we have multiple namespaced crates with the same main crate name, we use

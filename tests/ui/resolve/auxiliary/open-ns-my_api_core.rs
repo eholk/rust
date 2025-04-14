@@ -1,4 +1,4 @@
-#![crate_name = "my_api::core"]
+// #![crate_name = "my_api::core"]
 
 pub mod util {
     pub fn core_mod_fn() -> String {

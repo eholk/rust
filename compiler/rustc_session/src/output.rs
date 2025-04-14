@@ -62,7 +62,7 @@ pub fn validate_crate_name(sess: &Session, crate_name: Symbol, span: Option<Span
     }
 
     for c in crate_name.as_str().chars() {
-        // TODO check for '::' here
+        // FIXME(namespaced_crates): check for '::' here
         if c.is_alphanumeric() || c == '_' || c == ':' {
             continue;
         }
