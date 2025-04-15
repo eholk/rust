@@ -1,5 +1,5 @@
 pub mod utils {
-    pub fn utils_helper() {
+    pub fn root_helper() {
         println!("helper function");
     }
 }
