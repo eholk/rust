@@ -56,6 +56,8 @@ pub struct Std {
     force_recompile: bool,
     extra_rust_args: &'static [&'static str],
     is_for_mir_opt_tests: bool,
+    /// Whether to build with AddressSanitizer enabled.
+    asan: bool,
 }
 
 impl Std {
@@ -67,6 +69,7 @@ impl Std {
             force_recompile: false,
             extra_rust_args: &[],
             is_for_mir_opt_tests: false,
+            asan: false,
         }
     }
 
@@ -107,6 +110,11 @@ impl Std {
     pub fn should_be_uplifted_from_stage_1(builder: &Builder<'_>, stage: u32) -> bool {
         stage > 1 && !builder.config.full_bootstrap
     }
+
+    pub fn asan(mut self, asan: bool) -> Self {
+        self.asan = asan;
+        self
+    }
 }
 
 impl Step for Std {
@@ -143,6 +151,7 @@ impl Step for Std {
             force_recompile,
             extra_rust_args: &[],
             is_for_mir_opt_tests: false,
+            asan: false,
         });
     }
 
@@ -183,7 +192,7 @@ impl Step for Std {
             && !self.force_recompile
         {
             let sysroot =
-                builder.ensure(Sysroot { compiler: build_compiler, force_recompile: false });
+                builder.ensure(Sysroot { compiler: build_compiler, force_recompile: false, asan: self.asan });
             cp_rustc_component_to_ci_sysroot(
                 builder,
                 &sysroot,
@@ -268,6 +277,9 @@ impl Step for Std {
                 Kind::Build,
             );
             std_cargo(builder, target, &mut cargo, &self.crates);
+            if self.asan {
+                cargo.rustflag("-Zsanitizer=address");
+            }
             cargo
         };
 
@@ -722,6 +734,8 @@ pub struct StdLink {
     crates: Vec<String>,
     /// See [`Std::force_recompile`].
     force_recompile: bool,
+    /// Whether to build with AddressSanitizer enabled.
+    asan: bool,
 }
 
 impl StdLink {
@@ -732,6 +746,7 @@ impl StdLink {
             target: std.target,
             crates: std.crates,
             force_recompile: std.force_recompile,
+            asan: std.asan,
         }
     }
 }
@@ -759,16 +774,25 @@ impl Step for StdLink {
         // NOTE: intentionally does *not* check `target == builder.build` to avoid having to add the same check in `test::Crate`.
         let (libdir, hostdir) = if !self.force_recompile && builder.download_rustc() {
             // NOTE: copies part of `sysroot_libdir` to avoid having to add a new `force_recompile` argument there too
-            let lib = builder.sysroot_libdir_relative(self.compiler);
+            let lib = if self.asan {
+                builder.sysroot_asan_libdir_relative(self.compiler)
+            } else {
+                builder.sysroot_libdir_relative(self.compiler)
+            };
             let sysroot = builder.ensure(crate::core::build_steps::compile::Sysroot {
                 compiler: self.compiler,
                 force_recompile: self.force_recompile,
+                asan: self.asan,
             });
             let libdir = sysroot.join(lib).join("rustlib").join(target).join("lib");
             let hostdir = sysroot.join(lib).join("rustlib").join(compiler.host).join("lib");
             (libdir, hostdir)
         } else {
-            let libdir = builder.sysroot_target_libdir(target_compiler, target);
+            let libdir = if self.asan {
+                builder.sysroot_target_asan_libdir(target_compiler, target)
+            } else {
+                builder.sysroot_target_libdir(target_compiler, target)
+            };
             let hostdir = builder.sysroot_target_libdir(target_compiler, compiler.host);
             (libdir, hostdir)
         };
@@ -1059,8 +1083,11 @@ impl Step for Rustc {
         if builder.download_rustc() && build_compiler.stage != 0 {
             trace!(stage = build_compiler.stage, "`download_rustc` requested");
 
-            let sysroot =
-                builder.ensure(Sysroot { compiler: build_compiler, force_recompile: false });
+            let sysroot = builder.ensure(Sysroot {
+                compiler: build_compiler,
+                force_recompile: false,
+                asan: false,
+            });
             cp_rustc_component_to_ci_sysroot(
                 builder,
                 &sysroot,
@@ -1072,6 +1099,7 @@ impl Step for Rustc {
         // Build a standard library for `target` using the `build_compiler`.
         // This will be the standard library that the rustc which we build *links to*.
         builder.std(build_compiler, target);
+        builder.std_maybe_asan(build_compiler, target, true);
 
         if builder.config.keep_stage.contains(&build_compiler.stage) {
             trace!(stage = build_compiler.stage, "`keep-stage` requested");
@@ -1827,11 +1855,13 @@ pub struct Sysroot {
     pub compiler: Compiler,
     /// See [`Std::force_recompile`].
     force_recompile: bool,
+    /// Whether to build with AddressSanitizer enabled.
+    asan: bool,
 }
 
 impl Sysroot {
     pub(crate) fn new(compiler: Compiler) -> Self {
-        Sysroot { compiler, force_recompile: false }
+        Sysroot { compiler, force_recompile: false, asan: false }
     }
 }
 
@@ -1849,7 +1879,7 @@ impl Step for Sysroot {
         let compiler = self.compiler;
         let host_dir = builder.out.join(compiler.host);
 
-        let sysroot_dir = |stage| {
+        let sysroot_dir = |stage, asan| {
             if stage == 0 {
                 host_dir.join("stage0-sysroot")
             } else if self.force_recompile && stage == compiler.stage {
@@ -1857,10 +1887,10 @@ impl Step for Sysroot {
             } else if builder.download_rustc() && compiler.stage != builder.top_stage {
                 host_dir.join("ci-rustc-sysroot")
             } else {
-                host_dir.join(format!("stage{stage}"))
+                host_dir.join(format!("stage{stage}{}", if asan { "-asan" } else { "" }))
             }
         };
-        let sysroot = sysroot_dir(compiler.stage);
+        let sysroot = sysroot_dir(compiler.stage, self.asan);
         trace!(stage = ?compiler.stage, ?sysroot);
 
         builder.do_if_verbose(|| {
@@ -1889,7 +1919,7 @@ impl Step for Sysroot {
             // #102002, cleanup old toolchain folders when using download-rustc so people don't use them by accident.
             for stage in 0..=2 {
                 if stage != compiler.stage {
-                    let dir = sysroot_dir(stage);
+                    let dir = sysroot_dir(stage, self.asan);
                     if !dir.ends_with("ci-rustc-sysroot") {
                         let _ = fs::remove_dir_all(dir);
                     }
@@ -2149,8 +2179,11 @@ impl Step for Assemble {
             trace!("`download-rustc` requested, reusing CI compiler for stage > 0");
 
             builder.std(target_compiler, target_compiler.host);
-            let sysroot =
-                builder.ensure(Sysroot { compiler: target_compiler, force_recompile: false });
+            let sysroot = builder.ensure(Sysroot {
+                compiler: target_compiler,
+                force_recompile: false,
+                asan: false,
+            });
             // Ensure that `libLLVM.so` ends up in the newly created target directory,
             // so that tools using `rustc_private` can use it.
             dist::maybe_install_llvm_target(builder, target_compiler.host, &sysroot);
@@ -2249,11 +2282,7 @@ impl Step for Assemble {
             })
             .collect::<HashSet<_>>();
 
-        let sysroot = builder.sysroot(target_compiler);
-        let rustc_libdir = builder.rustc_libdir(target_compiler);
-        t!(fs::create_dir_all(&rustc_libdir));
-        let src_libdir = builder.sysroot_target_libdir(build_compiler, host);
-        for f in builder.read_dir(&src_libdir) {
+        let copy_link = |f: fs::DirEntry, rustc_libdir: &Path| {
             let filename = f.file_name().into_string().unwrap();
 
             let is_proc_macro = proc_macros.contains(&filename);
@@ -2275,6 +2304,24 @@ impl Step for Assemble {
             if is_dylib_or_debug && can_be_rustc_dynamic_dep && !is_proc_macro {
                 builder.copy_link(&f.path(), &rustc_libdir.join(&filename), FileType::Regular);
             }
+        };
+
+        // Copy non-ASAN libraries to the sysroot.
+        let sysroot = builder.sysroot(target_compiler);
+        let rustc_libdir = builder.rustc_libdir(target_compiler);
+        t!(fs::create_dir_all(&rustc_libdir));
+        let src_libdir = builder.sysroot_target_libdir(build_compiler, host);
+        for f in builder.read_dir(&src_libdir) {
+            copy_link(f, &rustc_libdir);
+        }
+
+        // Copy ASAN libraries to the sysroot
+        let rustc_libdir = builder.sysroot_target_asan_libdir(build_compiler, host);
+        t!(fs::create_dir_all(&rustc_libdir));
+        let src_libdir =
+            builder.sysroot_target_asan_libdir(build_compiler, host);
+        for f in builder.read_dir(&src_libdir) {
+            copy_link(f, &rustc_libdir);
         }
 
         {

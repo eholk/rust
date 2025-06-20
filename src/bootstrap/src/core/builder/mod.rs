@@ -1474,7 +1474,11 @@ impl<'a> Builder<'a> {
             ),
         ),
     )]
-    pub fn std(&self, compiler: Compiler, target: TargetSelection) -> Option<BuildStamp> {
+pub fn std(&self, compiler: Compiler, target: TargetSelection) -> Option<BuildStamp> {
+        self.std_maybe_asan(compiler, target, false)
+    }
+
+    pub fn std_maybe_asan(&self, compiler: Compiler, target: TargetSelection, asan: bool) -> Option<BuildStamp> {
         // FIXME: make the `Std` step return some type-level "proof" that std was indeed built,
         // and then require passing that to all Cargo invocations that we do.
 
@@ -1505,7 +1509,7 @@ Alternatively, you can set `build.local-rebuild=true` and use a stage0 compiler 
         } else {
             // This step both compiles the std and links it into the compiler's sysroot.
             // Yes, it's quite magical and side-effecty.. would be nice to refactor later.
-            self.ensure(Std::new(compiler, target))
+            self.ensure(Std::new(compiler, target).asan(asan))
         }
     }
 
@@ -1522,6 +1526,16 @@ Alternatively, you can set `build.local-rebuild=true` and use a stage0 compiler 
     /// found for a compiler's sysroot.
     pub fn sysroot_target_libdir(&self, compiler: Compiler, target: TargetSelection) -> PathBuf {
         self.ensure(Libdir { compiler, target }).join(target).join("lib")
+    }
+
+    /// Returns the libdir where the asan-enabled standard library and other artifacts are
+    /// found for a compiler's sysroot.
+    pub fn sysroot_target_asan_libdir(
+        &self,
+        compiler: Compiler,
+        target: TargetSelection,
+    ) -> PathBuf {
+        self.ensure(Libdir { compiler, target }).join(target).join("lib-asan")
     }
 
     pub fn sysroot_codegen_backends(&self, compiler: Compiler) -> PathBuf {
@@ -1571,6 +1585,20 @@ Alternatively, you can set `build.local-rebuild=true` and use a stage0 compiler 
             Some(relative_libdir) if compiler.stage >= 1 => relative_libdir,
             _ if compiler.stage == 0 => &self.build.initial_relative_libdir,
             _ => Path::new("lib"),
+        }
+    }
+
+    /// Returns the compiler's relative libdir where the ASAN-enabled standard library and other
+    /// artifacts are found for a compiler's sysroot.
+    ///
+    /// For example this returns `lib-asan` on Unix and Windows.
+    pub fn sysroot_asan_libdir_relative(&self, compiler: Compiler) -> &Path {
+        match self.config.libdir_relative() {
+            Some(_relative_libdir) if compiler.stage >= 1 => {
+                panic!("ASAN libdir is not supported when libdir_relative is specified")
+            }
+            _ if compiler.stage == 0 => panic!("ASAN libdir is not supported for stage 0"),
+            _ => Path::new("lib-asan"),
         }
     }
 
