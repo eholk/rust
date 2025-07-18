@@ -1093,7 +1093,8 @@ pub fn build_session(
     let host_triple = config::host_tuple();
     let target_triple = sopts.target_triple.tuple();
     // FIXME use host sysroot?
-    let host_tlib_path = Arc::new(SearchPath::from_sysroot_and_triple(sopts.sysroot.path(), host_triple));
+    let host_tlib_path =
+        Arc::new(SearchPath::from_sysroot_and_triple(sopts.sysroot.path(), host_triple));
     let target_tlib_path = if asan {
         // If ASAN is enabled, we need to use the target lib path with ASAN
         // enabled, which is different from the host lib path.

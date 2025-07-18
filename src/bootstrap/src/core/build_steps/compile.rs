@@ -1025,11 +1025,18 @@ pub struct Rustc {
     /// Using it within bootstrap can lead to confusing situation where lints are replayed
     /// in two different steps.
     crates: Vec<String>,
+    /// Whether to build with AddressSanitizer enabled.
+    asan: bool,
 }
 
 impl Rustc {
     pub fn new(build_compiler: Compiler, target: TargetSelection) -> Self {
-        Self { target, build_compiler, crates: Default::default() }
+        Self { target, build_compiler, crates: Default::default(), asan: false }
+    }
+
+    pub fn asan(mut self, asan: bool) -> Self {
+        self.asan = asan;
+        self
     }
 }
 
@@ -1066,6 +1073,7 @@ impl Step for Rustc {
                 .compiler(run.builder.top_stage.saturating_sub(1), run.build_triple()),
             target: run.target,
             crates,
+            asan: false,
         });
     }
 
@@ -1086,7 +1094,7 @@ impl Step for Rustc {
             let sysroot = builder.ensure(Sysroot {
                 compiler: build_compiler,
                 force_recompile: false,
-                asan: false,
+                asan: self.asan,
             });
             cp_rustc_component_to_ci_sysroot(
                 builder,
@@ -1098,8 +1106,7 @@ impl Step for Rustc {
 
         // Build a standard library for `target` using the `build_compiler`.
         // This will be the standard library that the rustc which we build *links to*.
-        builder.std(build_compiler, target);
-        builder.std_maybe_asan(build_compiler, target, true);
+        builder.std_maybe_asan(build_compiler, target, self.asan);
 
         if builder.config.keep_stage.contains(&build_compiler.stage) {
             trace!(stage = build_compiler.stage, "`keep-stage` requested");
@@ -1140,6 +1147,7 @@ impl Step for Rustc {
                 build_compiler,
                 target,
                 self.crates,
+                self.asan,
             ));
 
             // Here we have performed an uplift, so we return the actual build compiler that "built"
@@ -1170,6 +1178,14 @@ impl Step for Rustc {
 
         // NB: all RUSTFLAGS should be added to `rustc_cargo()` so they will be
         // consistently applied by check/doc/test modes too.
+
+        if self.asan && build_compiler.stage > 0 {
+            cargo.rustflag("-Zsanitizer=address");
+            cargo.rustflag(&format!(
+                "-L{}",
+                builder.sysroot_asan_libdir_relative(build_compiler).display()
+            ));
+        }
 
         for krate in &*self.crates {
             cargo.arg("-p").arg(krate);
@@ -1551,6 +1567,8 @@ struct RustcLink {
     target: TargetSelection,
     /// Not actually used; only present to make sure the cache invalidation is correct.
     crates: Vec<String>,
+    /// Whether to build with AddressSanitizer enabled.
+    asan: bool,
 }
 
 impl RustcLink {
@@ -1562,6 +1580,7 @@ impl RustcLink {
             sysroot_compiler: rustc.build_compiler,
             target: rustc.target,
             crates: rustc.crates,
+            asan: rustc.asan,
         }
     }
 
@@ -1571,8 +1590,9 @@ impl RustcLink {
         sysroot_compiler: Compiler,
         target: TargetSelection,
         crates: Vec<String>,
+        asan: bool,
     ) -> Self {
-        Self { build_compiler, sysroot_compiler, target, crates }
+        Self { build_compiler, sysroot_compiler, target, crates, asan }
     }
 }
 
@@ -1588,10 +1608,23 @@ impl Step for RustcLink {
         let build_compiler = self.build_compiler;
         let sysroot_compiler = self.sysroot_compiler;
         let target = self.target;
+
+        let target_libdir = if self.asan {
+            builder.sysroot_target_asan_libdir(sysroot_compiler, target)
+        } else {
+            builder.sysroot_target_libdir(sysroot_compiler, target)
+        };
+
+        let host_libdir = if self.asan {
+            builder.sysroot_target_asan_libdir(sysroot_compiler, build_compiler.host)
+        } else {
+            builder.sysroot_target_libdir(sysroot_compiler, build_compiler.host)
+        };
+
         add_to_sysroot(
             builder,
-            &builder.sysroot_target_libdir(sysroot_compiler, target),
-            &builder.sysroot_target_libdir(sysroot_compiler, sysroot_compiler.host),
+            &target_libdir,
+            &host_libdir,
             &build_stamp::librustc_stamp(builder, build_compiler, target),
         );
     }
@@ -2248,6 +2281,11 @@ impl Step for Assemble {
             "building compiler libraries to link to"
         );
 
+        // Build ASAN-enabled rustc to populate the ASAN sysroot
+        if target_compiler.stage > 0 {
+            builder.ensure(Rustc::new(build_compiler, target_compiler.host).asan(true));
+        }
+
         // It is possible that an uplift has happened, so we override build_compiler here.
         let BuiltRustc { build_compiler } =
             builder.ensure(Rustc::new(build_compiler, target_compiler.host));
@@ -2318,8 +2356,7 @@ impl Step for Assemble {
         // Copy ASAN libraries to the sysroot
         let rustc_libdir = builder.sysroot_target_asan_libdir(build_compiler, host);
         t!(fs::create_dir_all(&rustc_libdir));
-        let src_libdir =
-            builder.sysroot_target_asan_libdir(build_compiler, host);
+        let src_libdir = builder.sysroot_target_asan_libdir(build_compiler, host);
         for f in builder.read_dir(&src_libdir) {
             copy_link(f, &rustc_libdir);
         }
