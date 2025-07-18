@@ -5,7 +5,7 @@ use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 use rustc_target::spec::TargetTuple;
 
 use crate::EarlyDiagCtxt;
-use crate::filesearch::make_target_lib_path;
+use crate::filesearch::{make_target_lib_path, make_target_lib_path_with_asan};
 
 #[derive(Clone, Debug)]
 pub struct SearchPath {
@@ -129,6 +129,10 @@ impl SearchPath {
 
     pub fn from_sysroot_and_triple(sysroot: &Path, triple: &str) -> Self {
         Self::new(PathKind::All, make_target_lib_path(sysroot, triple))
+    }
+
+    pub fn from_sysroot_and_triple_with_asan(sysroot: &Path, triple: &str) -> Self {
+        Self::new(PathKind::All, make_target_lib_path_with_asan(sysroot, triple))
     }
 
     pub fn new(kind: PathKind, dir: PathBuf) -> Self {

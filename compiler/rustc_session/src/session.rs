@@ -1088,12 +1088,17 @@ pub fn build_session(
     let mut psess = ParseSess::with_dcx(dcx, source_map);
     psess.assume_incomplete_release = sopts.unstable_opts.assume_incomplete_release;
 
+    let asan = sopts.unstable_opts.sanitizer.contains(SanitizerSet::ADDRESS);
+
     let host_triple = config::host_tuple();
     let target_triple = sopts.target_triple.tuple();
     // FIXME use host sysroot?
-    let host_tlib_path =
-        Arc::new(SearchPath::from_sysroot_and_triple(sopts.sysroot.path(), host_triple));
-    let target_tlib_path = if host_triple == target_triple {
+    let host_tlib_path = Arc::new(SearchPath::from_sysroot_and_triple(sopts.sysroot.path(), host_triple));
+    let target_tlib_path = if asan {
+        // If ASAN is enabled, we need to use the target lib path with ASAN
+        // enabled, which is different from the host lib path.
+        Arc::new(SearchPath::from_sysroot_and_triple_with_asan(sopts.sysroot.path(), target_triple))
+    } else if host_triple == target_triple {
         // Use the same `SearchPath` if host and target triple are identical to avoid unnecessary
         // rescanning of the target lib path and an unnecessary allocation.
         Arc::clone(&host_tlib_path)

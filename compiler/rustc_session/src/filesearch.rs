@@ -49,6 +49,11 @@ pub fn make_target_lib_path(sysroot: &Path, target_triple: &str) -> PathBuf {
     sysroot.join(rustlib_path).join("lib")
 }
 
+pub fn make_target_lib_path_with_asan(sysroot: &Path, target_triple: &str) -> PathBuf {
+    let rustlib_path = rustc_target::relative_target_rustlib_path(sysroot, target_triple);
+    sysroot.join(rustlib_path).join("lib-asan")
+}
+
 /// Returns a path to the target's `bin` folder within its `rustlib` path in the sysroot. This is
 /// where binaries are usually installed, e.g. the self-contained linkers, lld-wrappers, LLVM tools,
 /// etc.

@@ -424,6 +424,7 @@ impl<'a> CrateLocator<'a> {
         // given that `extra_filename` comes from the `-C extra-filename`
         // option and thus can be anything, and the incorrect match will be
         // handled safely in `extract_one`.
+        debug!("looking for crate `{}` with path kind `{:?}`", self.crate_name, self.path_kind);
         for search_path in self.filesearch.search_paths(self.path_kind) {
             debug!("searching {}", search_path.dir.display());
             let spf = &search_path.files;
