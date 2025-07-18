@@ -1193,7 +1193,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                         }
                     }
                 }
-                Scope::Module(module, _) => {
+                Scope::NonGlobModule(module, _) | Scope::GlobModule(module, _) => {
                     this.add_module_candidates(module, suggestions, filter_fn, None);
                 }
                 Scope::MacroUsePrelude => {
