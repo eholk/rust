@@ -862,6 +862,9 @@
 #
 #rust.parallel-frontend-threads = 1
 
+# Whether to build an ASAN-enabled version of the standard library.
+#rust.std-asan = false
+
 # =============================================================================
 # Distribution options
 #

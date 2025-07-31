@@ -2282,7 +2282,7 @@ impl Step for Assemble {
         );
 
         // Build ASAN-enabled rustc to populate the ASAN sysroot
-        if target_compiler.stage > 0 {
+        if target_compiler.stage > 0 && builder.config.std_asan {
             builder.ensure(Rustc::new(build_compiler, target_compiler.host).asan(true));
         }
 
