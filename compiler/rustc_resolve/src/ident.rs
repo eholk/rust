@@ -194,15 +194,13 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                     }
                     MacroRulesScope::Empty => Scope::NonGlobModule(module, None),
                 },
-                Scope::NonGlobModule(..) | Scope::GlobModule(..) if module_and_extern_prelude => {
-                    match ns {
-                        TypeNS => {
-                            ctxt.adjust(ExpnId::root());
-                            Scope::ExternPreludeItems
-                        }
-                        ValueNS | MacroNS => break,
+                Scope::GlobModule(..) if module_and_extern_prelude => match ns {
+                    TypeNS => {
+                        ctxt.adjust(ExpnId::root());
+                        Scope::ExternPreludeItems
                     }
-                }
+                    ValueNS | MacroNS => break,
+                },
                 Scope::NonGlobModule(module, prev_lint_id) => {
                     use_prelude = !module.no_implicit_prelude;
                     Scope::GlobModule(module, prev_lint_id)
