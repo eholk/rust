@@ -39,6 +39,18 @@ enum Shadowing {
     Unrestricted,
 }
 
+impl<'ra> ScopeSet<'ra> {
+    const fn shadowing(&self) -> Shadowing {
+        match self {
+            ScopeSet::All(..)
+            | ScopeSet::ModuleAndExternPrelude(..)
+            | ScopeSet::ExternPrelude
+            | ScopeSet::Macro(_) => Shadowing::Restricted,
+            ScopeSet::Module(..) => Shadowing::Unrestricted,
+        }
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
     struct Flags: u8 {
@@ -521,10 +533,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                             ident,
                             ns,
                             adjusted_parent_scope,
-                            match scope_set {
-                                ScopeSet::Module(..) => Shadowing::Unrestricted,
-                                _ => Shadowing::Restricted,
-                            },
+                            scope_set.shadowing(),
                             adjusted_finalize,
                             ignore_binding,
                         );
@@ -583,10 +592,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                             ident,
                             ns,
                             adjusted_parent_scope,
-                            match scope_set {
-                                ScopeSet::Module(..) => Shadowing::Unrestricted,
-                                _ => Shadowing::Restricted,
-                            },
+                            scope_set.shadowing(),
                             finalize.map(|finalize| Finalize { used: Used::Scope, ..finalize }),
                             ignore_binding,
                             ignore_import,
@@ -1012,11 +1018,10 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                     shadowing,
                 );
             } else {
-                let usable = self.is_accessible_from(binding.vis, parent_scope.module);
-                if usable {
-                    return Ok(binding);
+                return if self.is_accessible_from(binding.vis, parent_scope.module) {
+                    Ok(binding)
                 } else {
-                    return Err((Determined, Weak::No));
+                    Err((Determined, Weak::No))
                 };
             }
         }
@@ -1044,7 +1049,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             .map_err(|_| (Determined, Weak::No))?; // This happens when there is a cycle of imports.
 
         if let Some(binding) = resolution.glob_binding
-            && ignore_binding.map_or(true, |b| binding != b)
+            && ignore_binding != Some(binding)
         {
             if let Some(finalize) = finalize {
                 return self.get_mut().finalize_module_binding(
@@ -1083,16 +1088,15 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             // progress, we have to ignore those potential unresolved invocations from other modules
             // and prohibit access to macro-expanded `macro_export` macros instead (unless restricted
             // shadowing is enabled, see `macro_expanded_macro_export_errors`).
-            if binding.determined() || ns == MacroNS || shadowing == Shadowing::Restricted {
-                let usable = self.is_accessible_from(binding.vis, parent_scope.module);
-                if usable {
-                    return Ok(binding);
+            return if binding.determined() || ns == MacroNS || shadowing == Shadowing::Restricted {
+                if self.is_accessible_from(binding.vis, parent_scope.module) {
+                    Ok(binding)
                 } else {
-                    return Err((Determined, Weak::No));
-                };
+                    Err((Determined, Weak::No))
+                }
             } else {
-                return Err((Undetermined, Weak::No));
-            }
+                Err((Undetermined, Weak::No))
+            };
         } else if finalize.is_some() {
             return Err((Determined, Weak::No));
         } else {
@@ -1197,7 +1201,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         &mut self,
         ident: Ident,
         binding: NameBinding<'ra>,
-        glob_binding: Option<NameBinding<'ra>>,
+        shadowed_glob: Option<NameBinding<'ra>>,
         parent_scope: &ParentScope<'ra>,
         module: Module<'ra>,
         finalize: Finalize,
@@ -1224,7 +1228,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         // Forbid expanded shadowing to avoid time travel.
         // FIXME it should be possible to output a MoreExpandedVsOuter ambiguity error
         // instead of GlobVsExpanded, but that presumably has to be done in a different location.
-        if let Some(shadowed_glob) = glob_binding
+        if let Some(shadowed_glob) = shadowed_glob
             && shadowing == Shadowing::Restricted
             && finalize.stage == Stage::Early
             && binding.expansion != LocalExpnId::ROOT
