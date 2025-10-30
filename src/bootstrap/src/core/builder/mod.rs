@@ -1474,11 +1474,16 @@ impl<'a> Builder<'a> {
             ),
         ),
     )]
-pub fn std(&self, compiler: Compiler, target: TargetSelection) -> Option<BuildStamp> {
+    pub fn std(&self, compiler: Compiler, target: TargetSelection) -> Option<BuildStamp> {
         self.std_maybe_asan(compiler, target, false)
     }
 
-    pub fn std_maybe_asan(&self, compiler: Compiler, target: TargetSelection, asan: bool) -> Option<BuildStamp> {
+    pub fn std_maybe_asan(
+        &self,
+        compiler: Compiler,
+        target: TargetSelection,
+        asan: bool,
+    ) -> Option<BuildStamp> {
         // FIXME: make the `Std` step return some type-level "proof" that std was indeed built,
         // and then require passing that to all Cargo invocations that we do.
 

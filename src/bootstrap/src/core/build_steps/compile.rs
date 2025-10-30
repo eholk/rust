@@ -191,8 +191,11 @@ impl Step for Std {
             && builder.config.is_host_target(target)
             && !self.force_recompile
         {
-            let sysroot =
-                builder.ensure(Sysroot { compiler: build_compiler, force_recompile: false, asan: self.asan });
+            let sysroot = builder.ensure(Sysroot {
+                compiler: build_compiler,
+                force_recompile: false,
+                asan: self.asan,
+            });
             cp_rustc_component_to_ci_sysroot(
                 builder,
                 &sysroot,
